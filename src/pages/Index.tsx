@@ -360,7 +360,19 @@ const Index = () => {
                 </div>
                 <div className="md:col-span-2 space-y-1">
                   <Label className="text-xs">Role / Title</Label>
-                  <Input value={e.role} onChange={ev => updateEmployee(e.id, { role: ev.target.value })} />
+                  <Select value={e.role} onValueChange={v => updateEmployee(e.id, { role: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="LOA">LOA</SelectItem>
+                      <SelectItem value="Loan Partner">Loan Partner</SelectItem>
+                      <SelectItem value="Processor">Processor</SelectItem>
+                      <SelectItem value="Junior Processor">Junior Processor</SelectItem>
+                      <SelectItem value="Underwriter">Underwriter</SelectItem>
+                      <SelectItem value="Closer">Closer</SelectItem>
+                      <SelectItem value="Marketing">Marketing</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="md:col-span-2 space-y-1">
                   <Label className="text-xs">Annual Salary</Label>
