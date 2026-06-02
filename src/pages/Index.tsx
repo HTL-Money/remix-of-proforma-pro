@@ -498,7 +498,7 @@ const Index = () => {
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Non-QM/file</Label>
-                        <Input type="number" value={e.nonQmBonus} onChange={ev => updateEmployee(e.id, { nonQmBonus: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.nonQmBonus} onChange={v => updateEmployee(e.id, { nonQmBonus: v })} />
                       </div>
                     </>
                   ) : (
