@@ -649,9 +649,6 @@ const Index = () => {
             </div>
           </div>
 
-          {holdbackShortfall && (
-            <div className="mt-4"><Warn>Holdback does not cover broker-paid support costs. Shortfall of {fmtUSD(Math.abs(calc.holdbackSurplus))} will be deducted from LO payout.</Warn></div>
-          )}
         </Section>
 
 
