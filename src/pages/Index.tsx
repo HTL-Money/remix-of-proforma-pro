@@ -136,13 +136,13 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 md:py-10">
           <div className="flex flex-wrap items-center justify-between gap-6">
             <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg gold-accent flex items-center justify-center shadow-gold">
-                <Building2 className="h-6 w-6 text-accent-foreground" />
+              <div className="h-14 w-14 rounded-lg bg-white flex items-center justify-center shadow-soft p-1.5">
+                <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold">Hometown Lending</p>
                 <h1 className="font-display text-3xl md:text-4xl font-bold leading-tight">LO Recruiting Pro Forma</h1>
-                <p className="text-sm text-primary-foreground/70 mt-1">Executive compensation & internal profitability model</p>
+                <p className="text-sm text-primary-foreground/70 mt-1">Executive compensation &amp; internal profitability model</p>
               </div>
             </div>
 
