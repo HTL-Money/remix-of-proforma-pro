@@ -432,9 +432,9 @@ const Index = () => {
                   )}
                 </div>
               </div>
-              <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
+              <div className="premium-card p-5 bg-primary text-primary-foreground border-0">
                 <p className="stat-label !text-accent">Hometown Lending</p>
-                <p className="stat-value !text-primary-foreground mt-1">{fmtUSD(calc.htlAnnual)}</p>
+                <p className="stat-value !text-accent mt-1">{fmtUSD(calc.htlAnnual)}</p>
                 <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
                 <div className="mt-3 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/20 pt-3">
                   <div className="flex justify-between"><span>LO net pre-holdback</span><span className="tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</span></div>
