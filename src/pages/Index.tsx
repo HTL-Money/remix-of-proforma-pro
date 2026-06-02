@@ -363,20 +363,34 @@ const Index = () => {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>QM Loan Mix (%)</Label>
-              <Input
-                className="max-w-[200px]"
-                type="number"
-                min={0}
-                max={100}
-                step="1"
-                value={state.qmPct}
-                onChange={e => setState(s => ({ ...s, qmPct: Math.min(100, Math.max(0, +e.target.value || 0)) }))}
-              />
-              <p className="text-xs text-muted-foreground">
-                {state.qmPct}% QM · {100 - state.qmPct}% Non-QM
-              </p>
+            <div className="space-y-2 md:col-span-2 lg:col-span-4">
+              <Label>Loan Type Mix (%)</Label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl">
+                {(["fha","va","conv","nonqm"] as const).map(k => {
+                  const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
+                  return (
+                    <div key={k} className="space-y-1">
+                      <Label className="text-xs">{labels[k]}</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="1"
+                        value={state.loanTypeMix[k]}
+                        onChange={e => setState(s => ({ ...s, loanTypeMix: { ...s.loanTypeMix, [k]: Math.min(100, Math.max(0, +e.target.value || 0)) } }))}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {(() => {
+                const sum = state.loanTypeMix.fha + state.loanTypeMix.va + state.loanTypeMix.conv + state.loanTypeMix.nonqm;
+                return (
+                  <p className={`text-xs ${sum === 100 ? "text-muted-foreground" : "text-warning"}`}>
+                    Mix totals {sum}%{sum !== 100 ? " — should equal 100%." : "."} FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
+                  </p>
+                );
+              })()}
             </div>
           </div>
         </Section>
