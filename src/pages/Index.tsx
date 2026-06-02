@@ -430,68 +430,91 @@ const Index = () => {
               </p>
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
-              <Label>Loan Type Mix (%)</Label>
+              <Label>Loan Type Mix (Files)</Label>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl">
                 {(["fha","va","conv","nonqm"] as const).map(k => {
                   const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
                   const order: Array<"fha"|"va"|"conv"|"nonqm"> = ["fha","va","conv","nonqm"];
+                  const total = Math.max(0, Math.round(state.annualFiles || 0));
+                  const counts: Record<"fha"|"va"|"conv"|"nonqm", number> = (() => {
+                    const c: any = {};
+                    let used = 0;
+                    order.forEach((key, i) => {
+                      if (i === order.length - 1) c[key] = Math.max(0, total - used);
+                      else { c[key] = Math.round(total * (state.loanTypeMix[key] / 100)); used += c[key]; }
+                    });
+                    return c;
+                  })();
+                  const pct = total > 0 ? (counts[k] / total) * 100 : state.loanTypeMix[k];
                   return (
                     <div key={k} className="space-y-1">
                       <Label className="text-xs">{labels[k]}</Label>
                       <Input
                         type="number"
                         min={0}
-                        max={100}
                         step="1"
-                        value={state.loanTypeMix[k]}
+                        value={counts[k]}
                         onChange={e => setState(s => {
-                          const raw = Math.min(100, Math.max(0, +e.target.value || 0));
+                          const tot = Math.max(0, Math.round(s.annualFiles || 0));
+                          if (tot <= 0) return s;
+                          const raw = Math.min(tot, Math.max(0, Math.round(+e.target.value || 0)));
                           const idx = order.indexOf(k);
-                          const next = { ...s.loanTypeMix, [k]: raw };
-                          // Auto-balance: distribute remaining across keys AFTER this one,
-                          // preserving the relative weights of those trailing fields.
+                          const cur: any = {};
+                          let used0 = 0;
+                          order.forEach((key, i) => {
+                            if (i === order.length - 1) cur[key] = Math.max(0, tot - used0);
+                            else { cur[key] = Math.round(tot * (s.loanTypeMix[key] / 100)); used0 += cur[key]; }
+                          });
+                          const nextCounts: any = { ...cur, [k]: raw };
+                          const headSum = order.slice(0, idx).reduce((a, key) => a + nextCounts[key], 0);
                           const trailing = order.slice(idx + 1);
-                          let remaining = 100 - raw - order.slice(0, idx).reduce((a, key) => a + next[key], 0);
-                          remaining = Math.max(0, Math.round(remaining));
+                          const remaining = Math.max(0, tot - headSum - raw);
                           if (trailing.length === 0) {
-                            // Last field: force-balance by adjusting earlier fields proportionally if over 100.
-                            const headSum = order.slice(0, idx).reduce((a, key) => a + next[key], 0);
-                            if (headSum + raw > 100 && headSum > 0) {
-                              const scale = (100 - raw) / headSum;
-                              order.slice(0, idx).forEach(key => { next[key] = Math.max(0, Math.round(next[key] * scale)); });
+                            if (headSum + raw > tot && headSum > 0) {
+                              const scale = (tot - raw) / headSum;
+                              order.slice(0, idx).forEach(key => { nextCounts[key] = Math.max(0, Math.round(nextCounts[key] * scale)); });
                             }
                           } else {
-                            const trailSum = trailing.reduce((a, key) => a + s.loanTypeMix[key], 0);
+                            const trailSum = trailing.reduce((a, key) => a + cur[key], 0);
                             if (trailSum > 0) {
                               let allocated = 0;
                               trailing.forEach((key, i) => {
-                                if (i === trailing.length - 1) {
-                                  next[key] = Math.max(0, remaining - allocated);
-                                } else {
-                                  const share = Math.round((s.loanTypeMix[key] / trailSum) * remaining);
-                                  next[key] = Math.max(0, share);
-                                  allocated += next[key];
-                                }
+                                if (i === trailing.length - 1) nextCounts[key] = Math.max(0, remaining - allocated);
+                                else { nextCounts[key] = Math.max(0, Math.round((cur[key] / trailSum) * remaining)); allocated += nextCounts[key]; }
                               });
                             } else {
-                              // Even split across trailing fields
                               const base = Math.floor(remaining / trailing.length);
                               const rem = remaining - base * trailing.length;
-                              trailing.forEach((key, i) => { next[key] = base + (i === trailing.length - 1 ? rem : 0); });
+                              trailing.forEach((key, i) => { nextCounts[key] = base + (i === trailing.length - 1 ? rem : 0); });
                             }
                           }
-                          return { ...s, loanTypeMix: next };
+                          const nextMix = {
+                            fha: (nextCounts.fha / tot) * 100,
+                            va: (nextCounts.va / tot) * 100,
+                            conv: (nextCounts.conv / tot) * 100,
+                            nonqm: (nextCounts.nonqm / tot) * 100,
+                          };
+                          return { ...s, loanTypeMix: nextMix };
                         })}
                       />
+                      <p className="text-[10px] text-muted-foreground">{pct.toFixed(1)}%</p>
                     </div>
                   );
                 })}
               </div>
               {(() => {
-                const sum = state.loanTypeMix.fha + state.loanTypeMix.va + state.loanTypeMix.conv + state.loanTypeMix.nonqm;
+                const total = Math.max(0, Math.round(state.annualFiles || 0));
+                const order: Array<"fha"|"va"|"conv"|"nonqm"> = ["fha","va","conv","nonqm"];
+                let used = 0;
+                const counts: any = {};
+                order.forEach((key, i) => {
+                  if (i === order.length - 1) counts[key] = Math.max(0, total - used);
+                  else { counts[key] = Math.round(total * (state.loanTypeMix[key] / 100)); used += counts[key]; }
+                });
+                const sum = counts.fha + counts.va + counts.conv + counts.nonqm;
                 return (
-                  <p className={`text-xs ${sum === 100 ? "text-muted-foreground" : "text-warning"}`}>
-                    Mix totals {sum}% (auto-balances to 100%). FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
+                  <p className={`text-xs ${sum === total ? "text-muted-foreground" : "text-warning"}`}>
+                    Files total {sum} of {total} (auto-balances to match Annual Funded File Count). FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
                   </p>
                 );
               })()}
