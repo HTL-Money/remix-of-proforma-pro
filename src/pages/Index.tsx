@@ -301,9 +301,12 @@ const Index = () => {
               </div>
               <div className="pt-2">
                 <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
-                <p className="font-display font-semibold mt-4 text-primary-foreground" style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)", lineHeight: 1.1 }}>LO Pro Forma:</p>
-                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">Your Production's True Value.</p>
+                <p className="font-display font-semibold mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
+                  <span style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)" }}>LO Pro Forma:</span>
+                  <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1rem, 1.8vw, 1.5rem)" }}>Your Production's True Value</span>
+                </p>
               </div>
+
             </div>
 
             <Button
@@ -431,6 +434,7 @@ const Index = () => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl">
                 {(["fha","va","conv","nonqm"] as const).map(k => {
                   const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
+                  const order: Array<"fha"|"va"|"conv"|"nonqm"> = ["fha","va","conv","nonqm"];
                   return (
                     <div key={k} className="space-y-1">
                       <Label className="text-xs">{labels[k]}</Label>
@@ -440,7 +444,44 @@ const Index = () => {
                         max={100}
                         step="1"
                         value={state.loanTypeMix[k]}
-                        onChange={e => setState(s => ({ ...s, loanTypeMix: { ...s.loanTypeMix, [k]: Math.min(100, Math.max(0, +e.target.value || 0)) } }))}
+                        onChange={e => setState(s => {
+                          const raw = Math.min(100, Math.max(0, +e.target.value || 0));
+                          const idx = order.indexOf(k);
+                          const next = { ...s.loanTypeMix, [k]: raw };
+                          // Auto-balance: distribute remaining across keys AFTER this one,
+                          // preserving the relative weights of those trailing fields.
+                          const trailing = order.slice(idx + 1);
+                          let remaining = 100 - raw - order.slice(0, idx).reduce((a, key) => a + next[key], 0);
+                          remaining = Math.max(0, Math.round(remaining));
+                          if (trailing.length === 0) {
+                            // Last field: force-balance by adjusting earlier fields proportionally if over 100.
+                            const headSum = order.slice(0, idx).reduce((a, key) => a + next[key], 0);
+                            if (headSum + raw > 100 && headSum > 0) {
+                              const scale = (100 - raw) / headSum;
+                              order.slice(0, idx).forEach(key => { next[key] = Math.max(0, Math.round(next[key] * scale)); });
+                            }
+                          } else {
+                            const trailSum = trailing.reduce((a, key) => a + s.loanTypeMix[key], 0);
+                            if (trailSum > 0) {
+                              let allocated = 0;
+                              trailing.forEach((key, i) => {
+                                if (i === trailing.length - 1) {
+                                  next[key] = Math.max(0, remaining - allocated);
+                                } else {
+                                  const share = Math.round((s.loanTypeMix[key] / trailSum) * remaining);
+                                  next[key] = Math.max(0, share);
+                                  allocated += next[key];
+                                }
+                              });
+                            } else {
+                              // Even split across trailing fields
+                              const base = Math.floor(remaining / trailing.length);
+                              const rem = remaining - base * trailing.length;
+                              trailing.forEach((key, i) => { next[key] = base + (i === trailing.length - 1 ? rem : 0); });
+                            }
+                          }
+                          return { ...s, loanTypeMix: next };
+                        })}
                       />
                     </div>
                   );
@@ -450,7 +491,7 @@ const Index = () => {
                 const sum = state.loanTypeMix.fha + state.loanTypeMix.va + state.loanTypeMix.conv + state.loanTypeMix.nonqm;
                 return (
                   <p className={`text-xs ${sum === 100 ? "text-muted-foreground" : "text-warning"}`}>
-                    Mix totals {sum}%{sum !== 100 ? " — should equal 100%." : "."} FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
+                    Mix totals {sum}% (auto-balances to 100%). FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
                   </p>
                 );
               })()}
