@@ -399,12 +399,10 @@ const Index = () => {
                 <tr className="text-left text-muted-foreground border-b border-border">
                   <th className="py-3 pr-3 font-semibold">Bucket</th>
                   <th className="py-3 px-2 font-semibold">Active</th>
-                  <th className="py-3 px-2 font-semibold">Files</th>
                   <th className="py-3 px-2 font-semibold">Vol %</th>
                   <th className="py-3 px-2 font-semibold">$ Volume</th>
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
                   <th className="py-3 px-2 font-semibold">Comp %</th>
-                  <th className="py-3 px-2 font-semibold">Per-File Fee</th>
                   <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
                   <th className="py-3 px-2 font-semibold">Holdback</th>
                   <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
@@ -418,10 +416,9 @@ const Index = () => {
                     <tr key={b.key} className={`border-b border-border/60 ${!b.active ? "opacity-50" : ""}`}>
                       <td className="py-3 pr-3 align-top">
                         <div className="font-semibold text-primary">{b.label}</div>
-                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType}</div>
+                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.loanType === "QM" ? QM_FEE : NONQM_FEE}/file</div>
                       </td>
-                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => toggleBucketActive(b.key, v)} /></td>
-                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.fileCount} onChange={e => updateBucket(b.key, { fileCount: +e.target.value || 0 })} disabled={!b.active} /></td>
+                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} /></td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
@@ -438,7 +435,6 @@ const Index = () => {
                           title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
                         />
                       </td>
-                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.perFileFee} onChange={e => updateBucket(b.key, { perFileFee: +e.target.value || 0 })} disabled={!b.active} /></td>
                       <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
                       <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
                       <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
@@ -449,10 +445,8 @@ const Index = () => {
               <tfoot>
                 <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
                   <td className="py-3 pr-3" colSpan={2}>Totals</td>
-                  <td className="px-2 tabular-nums">{fmtNum(totalBucketFiles)}</td>
                   <td className="px-2 tabular-nums">100%</td>
                   <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
-                  <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
@@ -463,7 +457,7 @@ const Index = () => {
             </table>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Volume % is derived from file counts. Broker comp is capped at {BROKER_CAP}%. Correspondent comp must be between {CORR_MIN}% and {CORR_MAX}%. Deactivating a channel moves its files to the matching Broker bucket.
+            Files are allocated automatically from your QM mix. Per-file fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). If both Broker and Correspondent for a loan type are active, files default to Broker — deactivate the Broker bucket to route that loan type to Correspondent.
           </p>
         </Section>
 
