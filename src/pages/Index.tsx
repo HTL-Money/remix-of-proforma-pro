@@ -453,17 +453,13 @@ const Index = () => {
                 </div>
                 <div className="md:col-span-2 space-y-1">
                   <Label className="text-xs">Role / Title</Label>
-                  <Select value={e.role} onValueChange={v => updateEmployee(e.id, { role: v })}>
+                  <Select value={ROLE_OPTIONS.includes(e.role) ? e.role : "Other"} onValueChange={v => updateEmployee(e.id, { role: v })}>
                     <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="LOA">LOA</SelectItem>
-                      <SelectItem value="Loan Partner">Loan Partner</SelectItem>
-                      <SelectItem value="Processor">Processor</SelectItem>
-                      <SelectItem value="Junior Processor">Junior Processor</SelectItem>
-                      <SelectItem value="Underwriter">Underwriter</SelectItem>
-                      <SelectItem value="Closer">Closer</SelectItem>
-                      <SelectItem value="Marketing">Marketing</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
+                      {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                      {!ROLE_OPTIONS.includes(e.role) && e.role && (
+                        <SelectItem value={e.role}>{e.role}</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
