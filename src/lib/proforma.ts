@@ -224,7 +224,7 @@ export const calculate = (s: ModelState): Calc => {
   const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (brokerPaidTotal / totals.loNetBeforeHoldback) * 100 : 0;
 
   const currentPlatformAnnual = s.currentSplit != null
-    ? s.annualVolume * (s.currentSplit / 100) - brokerPaidSalaries
+    ? s.annualVolume * (s.currentSplit / 100) - brokerPaidTotal
     : null;
   const currentPlatformMonthly = currentPlatformAnnual != null ? currentPlatformAnnual / 12 : null;
   const htlAnnual = finalLoNetComp;
