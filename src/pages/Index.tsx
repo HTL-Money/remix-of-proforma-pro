@@ -519,7 +519,7 @@ const Index = () => {
                       </div>
                       <div className="md:col-span-1 space-y-1">
                         <Label className="text-xs">$/file</Label>
-                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.extraBonus} onChange={v => updateEmployee(e.id, { extraBonus: v })} />
                       </div>
                     </>
                   )}
