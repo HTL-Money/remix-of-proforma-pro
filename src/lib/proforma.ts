@@ -36,8 +36,9 @@ export interface ModelState {
   avgLoanAmount: number;
   avgLoanOverride: boolean;
   loSplit: number;
-  currentSplit: number | null;
+  currentSplit: number | null; // stored as percent of loan amount (BPS / 50)
   holdbackPct: number;
+  qmPct: number; // 0–100, % of annual files that are QM
   buckets: Bucket[];
   employees: Employee[];
 }
@@ -46,18 +47,22 @@ export const BROKER_CAP = 2.75;
 export const CORR_MIN = 2.0;
 export const CORR_MAX = 8.0;
 
+// Fixed per-file fees (not user-editable)
+export const QM_FEE = 650;
+export const NONQM_FEE = 950;
+
 export const PER_FILE_DEFAULTS: Record<ChannelKey, number> = {
-  broker_qm: 650,
-  broker_nonqm: 950,
-  corr_qm: 250,
-  corr_nonqm: 250,
+  broker_qm: QM_FEE,
+  broker_nonqm: NONQM_FEE,
+  corr_qm: QM_FEE,
+  corr_nonqm: NONQM_FEE,
 };
 
 export const defaultBuckets = (): Bucket[] => [
-  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: 650 },
-  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: 950 },
-  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: true, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: 250 },
-  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: 250 },
+  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: QM_FEE },
+  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: NONQM_FEE },
+  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: QM_FEE },
+  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: NONQM_FEE },
 ];
 
 export const defaultEmployees = (): Employee[] => [];
@@ -71,6 +76,10 @@ export const PROCESSOR_DEFAULTS = {
   extraBonus: 0,
 };
 
+// Extra per-file bonus the broker must pay for these support roles
+export const LOA_EXTRA_BONUS = 100;
+export const LOAN_PARTNER_EXTRA_BONUS = 150;
+
 export const defaultState = (): ModelState => ({
   recruitName: "",
   annualVolume: 0,
@@ -80,6 +89,7 @@ export const defaultState = (): ModelState => ({
   loSplit: 90,
   currentSplit: null,
   holdbackPct: 10,
+  qmPct: 70,
   buckets: defaultBuckets(),
   employees: defaultEmployees(),
 });
