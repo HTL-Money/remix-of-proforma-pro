@@ -15,7 +15,7 @@ import {
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v4";
+const STORAGE_KEY = "htl_lo_proforma_v5";
 
 const loadState = (): ModelState => {
   try {
