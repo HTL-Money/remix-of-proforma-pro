@@ -15,6 +15,7 @@ import {
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
+import { CurrencyInput } from "@/components/CurrencyInput";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 
@@ -171,15 +172,15 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
               <>
                 <div className="space-y-1">
                   <Label className="text-xs">Annual Salary (HTL-paid)</Label>
-                  <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+                  <CurrencyInput value={salary} onChange={setSalary} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">QM Per-File Bonus (HTL-paid)</Label>
-                  <Input type="number" value={qmBonus} onChange={e => setQmBonus(+e.target.value || 0)} />
+                  <CurrencyInput value={qmBonus} onChange={setQmBonus} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Non-QM Per-File Bonus (HTL-paid)</Label>
-                  <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
+                  <CurrencyInput value={nonQmBonus} onChange={setNonQmBonus} />
                 </div>
               </>
             )}
@@ -187,7 +188,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
               <>
                 <div className="space-y-1">
                   <Label className="text-xs">Annual Salary</Label>
-                  <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+                  <CurrencyInput value={salary} onChange={setSalary} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Salary Paid By</Label>
@@ -201,7 +202,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
                 </div>
                 <div className="space-y-1 col-span-2">
                   <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
-                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+                  <CurrencyInput value={extraBonus} onChange={setExtraBonus} />
                 </div>
               </>
             )}
@@ -299,9 +300,9 @@ const Index = () => {
                 <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
               <div className="pt-2">
-                <h1 className="font-display font-bold leading-none tracking-tight underline decoration-2 underline-offset-[10px]" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
+                <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
                 <p className="font-display font-semibold mt-4 text-primary-foreground" style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)", lineHeight: 1.1 }}>LO Pro Forma:</p>
-                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">Your production's true value at Hometown Lending.</p>
+                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">Your Production's True Value.</p>
               </div>
             </div>
 
@@ -353,12 +354,11 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>Annual Funded Volume</Label>
-              <Input
+              <CurrencyInput
                 className="max-w-[200px]"
-                type="number"
-                value={state.annualVolume || ""}
-                placeholder="48000000"
-                onChange={e => setState(s => ({ ...s, annualVolume: +e.target.value || 0 }))}
+                value={state.annualVolume}
+                placeholder="48,000,000"
+                onChange={v => setState(s => ({ ...s, annualVolume: v }))}
               />
             </div>
             <div className="space-y-2">
@@ -374,10 +374,9 @@ const Index = () => {
             <div className="space-y-2">
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
               <div className="flex gap-2 max-w-[200px]">
-                <Input
-                  type="number"
+                <CurrencyInput
                   value={Math.round(state.avgLoanAmount)}
-                  onChange={e => setState(s => ({ ...s, avgLoanAmount: +e.target.value || 0, avgLoanOverride: true }))}
+                  onChange={v => setState(s => ({ ...s, avgLoanAmount: v, avgLoanOverride: true }))}
                 />
                 {state.avgLoanOverride && (
                   <Button variant="outline" size="sm" onClick={() => setState(s => ({ ...s, avgLoanOverride: false }))}>Auto</Button>
@@ -491,22 +490,22 @@ const Index = () => {
                     <>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Salary (HTL)</Label>
-                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.salary} onChange={v => updateEmployee(e.id, { salary: v })} />
                       </div>
                       <div className="md:col-span-1 space-y-1">
                         <Label className="text-xs">QM/file</Label>
-                        <Input type="number" value={e.qmBonus} onChange={ev => updateEmployee(e.id, { qmBonus: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.qmBonus} onChange={v => updateEmployee(e.id, { qmBonus: v })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Non-QM/file</Label>
-                        <Input type="number" value={e.nonQmBonus} onChange={ev => updateEmployee(e.id, { nonQmBonus: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.nonQmBonus} onChange={v => updateEmployee(e.id, { nonQmBonus: v })} />
                       </div>
                     </>
                   ) : (
                     <>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Annual Salary</Label>
-                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.salary} onChange={v => updateEmployee(e.id, { salary: v })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Salary Paid By</Label>
@@ -520,7 +519,7 @@ const Index = () => {
                       </div>
                       <div className="md:col-span-1 space-y-1">
                         <Label className="text-xs">$/file</Label>
-                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.extraBonus} onChange={v => updateEmployee(e.id, { extraBonus: v })} />
                       </div>
                     </>
                   )}
