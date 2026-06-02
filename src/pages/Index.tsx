@@ -350,7 +350,16 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>HTL LO Split (%)</Label>
-              <Input className="max-w-[200px]" type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
+              <div className="max-w-[200px]">
+                <Select value={String(state.loSplit)} onValueChange={v => setState(s => ({ ...s, loSplit: +v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="90">90%</SelectItem>
+                    <SelectItem value="85">85%</SelectItem>
+                    <SelectItem value="80">80%</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Team-Support Holdback</Label>
@@ -360,6 +369,7 @@ const Index = () => {
                   <SelectContent>
                     <SelectItem value="0">0%</SelectItem>
                     <SelectItem value="10">10%</SelectItem>
+                    <SelectItem value="20">20%</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
