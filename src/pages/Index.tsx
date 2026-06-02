@@ -271,9 +271,9 @@ const Index = () => {
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
                   <th className="py-3 px-2 font-semibold">Comp %</th>
                   <th className="py-3 px-2 font-semibold">Per-File Fee</th>
-                  <th className="py-3 px-2 font-semibold">Channel Fees</th>
-                  <th className="py-3 px-2 font-semibold">Gross Rev</th>
-                  <th className="py-3 px-2 font-semibold">LO Split $</th>
+                  {mode === "internal" && <th className="py-3 px-2 font-semibold">Channel Fees</th>}
+                  {mode === "internal" && <th className="py-3 px-2 font-semibold">Gross Rev</th>}
+                  {mode === "internal" && <th className="py-3 px-2 font-semibold">LO Split $</th>}
                   <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
                   <th className="py-3 px-2 font-semibold">Holdback</th>
                   <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
@@ -308,9 +308,9 @@ const Index = () => {
                         />
                       </td>
                       <td className="px-2 align-top"><Input className="w-24" type="number" value={b.perFileFee} onChange={e => updateBucket(b.key, { perFileFee: +e.target.value || 0 })} /></td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.channelFees) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.grossRevenue) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.loGrossSplit) : "—"}</td>
+                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.channelFees) : "—"}</td>}
+                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.grossRevenue) : "—"}</td>}
+                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.loGrossSplit) : "—"}</td>}
                       <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
                       <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
                       <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
@@ -327,9 +327,9 @@ const Index = () => {
                   <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2"></td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.channelFees)}</td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.grossRevenue)}</td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</td>
+                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.channelFees)}</td>}
+                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.grossRevenue)}</td>}
+                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</td>}
                   <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
                   <td className="px-2 tabular-nums text-accent">{fmtUSD(calc.totals.teamHoldback)}</td>
                   <td className="pl-2 tabular-nums text-success">{fmtUSD(calc.totals.initialLoCash)}</td>
