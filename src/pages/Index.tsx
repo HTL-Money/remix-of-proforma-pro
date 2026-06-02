@@ -550,10 +550,26 @@ const Index = () => {
                       </div>
                     </>
                   ) : (
-                    <div className="md:col-span-5 space-y-1">
-                      <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
-                      <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
-                    </div>
+                    <>
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Annual Salary</Label>
+                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                      </div>
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Salary Paid By</Label>
+                        <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as PaySource })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Broker">Broker</SelectItem>
+                            <SelectItem value="HTL">Hometown Lending</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="md:col-span-1 space-y-1">
+                        <Label className="text-xs">$/file</Label>
+                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
+                      </div>
+                    </>
                   )}
                   <div className="md:col-span-1 flex items-end justify-end">
                     <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
