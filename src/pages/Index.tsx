@@ -8,14 +8,14 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import {
-  ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
+  ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct, fmtNum,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
-  LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE,
+  LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v5";
+const STORAGE_KEY = "htl_lo_proforma_v6";
 
 const loadState = (): ModelState => {
   try {
