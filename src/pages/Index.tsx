@@ -308,7 +308,7 @@ const Index = () => {
         </div>
 
         {/* Your Numbers */}
-        <Section icon={<Calculator className="h-5 w-5" />} title="Your Numbers">
+        <Section icon={<Calculator className="h-5 w-5" />} title="Production Numbers">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Loan Officer Name</Label>
