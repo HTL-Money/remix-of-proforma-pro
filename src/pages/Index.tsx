@@ -312,11 +312,12 @@ const Index = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Loan Officer Name</Label>
-              <Input value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
+              <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
             </div>
             <div className="space-y-2">
               <Label>Annual Funded Volume</Label>
               <Input
+                className="max-w-[200px]"
                 type="number"
                 value={state.annualVolume || ""}
                 placeholder="48000000"
@@ -326,6 +327,7 @@ const Index = () => {
             <div className="space-y-2">
               <Label>Annual Funded File Count</Label>
               <Input
+                className="max-w-[200px]"
                 type="number"
                 value={state.annualFiles || ""}
                 placeholder="0"
@@ -334,7 +336,7 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 max-w-[200px]">
                 <Input
                   type="number"
                   value={Math.round(state.avgLoanAmount)}
@@ -347,21 +349,24 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>HTL LO Split (%)</Label>
-              <Input type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
+              <Input className="max-w-[200px]" type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
             </div>
             <div className="space-y-2">
               <Label>Team-Support Holdback</Label>
-              <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">0%</SelectItem>
-                  <SelectItem value="10">10%</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="max-w-[200px]">
+                <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">0%</SelectItem>
+                    <SelectItem value="10">10%</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>QM Loan Mix (%)</Label>
               <Input
+                className="max-w-[200px]"
                 type="number"
                 min={0}
                 max={100}
