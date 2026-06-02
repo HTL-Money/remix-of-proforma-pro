@@ -166,10 +166,26 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
               </>
             )}
             {isSupport && (
-              <div className="space-y-1 col-span-2">
-                <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
-                <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
-              </div>
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Annual Salary</Label>
+                  <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Salary Paid By</Label>
+                  <Select value={salarySource} onValueChange={v => setSalarySource(v as PaySource)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Broker">Broker</SelectItem>
+                      <SelectItem value="HTL">Hometown Lending</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
+                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+                </div>
+              </>
             )}
           </div>
           {isProcessor && (
