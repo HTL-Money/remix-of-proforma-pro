@@ -272,24 +272,35 @@ const Index = () => {
       {/* Hero header */}
       <header className="hero-bg text-primary-foreground border-b border-border/40">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 md:py-10">
-          <div className="flex flex-wrap items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="h-14 w-14 rounded-lg bg-white flex items-center justify-center shadow-soft p-1.5">
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex items-start gap-6">
+              <div
+                className="rounded-lg bg-white flex items-center justify-center shadow-soft p-3 shrink-0"
+                style={{ width: "192px", height: "192px" }}
+              >
                 <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold">Hometown Lending</p>
-                <h1 className="font-display text-3xl md:text-4xl font-bold leading-tight">LO Recruiting Pro Forma</h1>
-                <p className="text-sm text-primary-foreground/70 mt-1">See what your production is worth at Hometown Lending.</p>
+              <div className="pt-2">
+                <p className="text-sm md:text-base uppercase tracking-[0.2em] text-accent font-bold">Hometown Lending</p>
+                <h1 className="font-display text-5xl md:text-7xl font-bold leading-none tracking-tight mt-1 text-primary-foreground">LO PRO FORMA</h1>
+                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">your production's true value</p>
               </div>
             </div>
 
-            <Button onClick={reset} variant="outline" size="sm" className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground">
-              <RotateCcw className="h-4 w-4 mr-2" /> Reset
+            <Button
+              onClick={reset}
+              variant="outline"
+              size="icon"
+              aria-label="Reset"
+              title="Reset"
+              className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+            >
+              <RotateCcw className="h-4 w-4" />
             </Button>
           </div>
         </div>
       </header>
+
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
         {/* Headline KPIs */}
