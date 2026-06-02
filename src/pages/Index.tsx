@@ -381,21 +381,38 @@ const Index = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div className="space-y-2">
               <Label>Your LO BPS on Current Platform</Label>
-              <Input
-                type="number"
-                step="1"
-                min={0}
-                max={275}
-                value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
-                placeholder="e.g. 200"
-                onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
-              />
+              <div className="flex items-center gap-3">
+                <Input
+                  className="w-32"
+                  type="number"
+                  step="1"
+                  min={0}
+                  max={275}
+                  value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
+                  placeholder="e.g. 200"
+                  onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
+                />
+                {state.currentSplit != null && (
+                  <span className="text-sm font-semibold text-accent tabular-nums">= {fmtPct(state.currentSplit, 2)}</span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
-                100 BPS = 1% of the loan amount. Platform takes 2.75% (275 BPS) gross; you receive your BPS.
+                Enter a 3-digit BPS value (e.g. 200 = 2.00%). 100 BPS = 1% of the loan amount. The platform takes 2.75% (275 BPS) gross; you receive your BPS.
               </p>
             </div>
-            <div className="rounded-md border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
-              The current platform shows your LO comp at the BPS you enter, less any broker-paid salaries for your LOA / Loan Partner. The Hometown Lending side reflects your production buckets, ${QM_FEE}/QM and ${NONQM_FEE}/Non-QM per-file fees, team-support holdback, and all broker-paid team costs.
+            <div className="space-y-2">
+              <Label>Channels to Compare</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {state.buckets.map(b => (
+                  <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs cursor-pointer">
+                    <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
+                    <span className="font-medium">{b.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Toggle Correspondent on to model the comp difference vs. the broker-only channel.
+              </p>
             </div>
           </div>
 
