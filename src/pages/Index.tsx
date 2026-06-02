@@ -561,7 +561,7 @@ const Index = () => {
                 </tr>
               </thead>
               <tbody>
-                {state.buckets.filter(b => b.active).map(b => {
+                {state.buckets.filter(b => b.active && b.key !== "broker_nonqm").map(b => {
                   const c = calc.buckets.find(x => x.bucket.key === b.key);
                   const isBroker = b.channel === "Broker";
                   return (
