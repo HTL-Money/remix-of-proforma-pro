@@ -234,25 +234,6 @@ const Index = () => {
     }));
   };
 
-  // Deactivating a bucket transfers its files to the matching Broker bucket
-  const toggleBucketActive = (key: ChannelKey, active: boolean) => {
-    setState(s => {
-      const bucket = s.buckets.find(b => b.key === key);
-      if (!bucket) return s;
-      if (active || bucket.fileCount === 0 || key === "broker_qm" || key === "broker_nonqm") {
-        return { ...s, buckets: s.buckets.map(b => b.key === key ? { ...b, active } : b) };
-      }
-      const targetKey: ChannelKey = bucket.loanType === "QM" ? "broker_qm" : "broker_nonqm";
-      return {
-        ...s,
-        buckets: s.buckets.map(b => {
-          if (b.key === key) return { ...b, active: false, fileCount: 0 };
-          if (b.key === targetKey) return { ...b, fileCount: b.fileCount + bucket.fileCount };
-          return b;
-        }),
-      };
-    });
-  };
 
   const updateEmployee = (id: string, patch: Partial<Employee>) => {
     setState(s => ({ ...s, employees: s.employees.map(e => e.id === id ? { ...e, ...patch } : e) }));
