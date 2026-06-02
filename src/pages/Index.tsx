@@ -272,24 +272,35 @@ const Index = () => {
       {/* Hero header */}
       <header className="hero-bg text-primary-foreground border-b border-border/40">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 md:py-10">
-          <div className="flex flex-wrap items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="h-14 w-14 rounded-lg bg-white flex items-center justify-center shadow-soft p-1.5">
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex items-start gap-6">
+              <div
+                className="rounded-lg bg-white flex items-center justify-center shadow-soft p-3 shrink-0"
+                style={{ width: "192px", height: "192px" }}
+              >
                 <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold">Hometown Lending</p>
-                <h1 className="font-display text-3xl md:text-4xl font-bold leading-tight">LO Recruiting Pro Forma</h1>
-                <p className="text-sm text-primary-foreground/70 mt-1">See what your production is worth at Hometown Lending.</p>
+              <div className="pt-2">
+                <p className="text-sm md:text-base uppercase tracking-[0.2em] text-accent font-bold">Hometown Lending</p>
+                <h1 className="font-display text-5xl md:text-7xl font-bold leading-none tracking-tight mt-1 text-primary-foreground">LO PRO FORMA</h1>
+                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">your production's true value</p>
               </div>
             </div>
 
-            <Button onClick={reset} variant="outline" size="sm" className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground">
-              <RotateCcw className="h-4 w-4 mr-2" /> Reset
+            <Button
+              onClick={reset}
+              variant="outline"
+              size="icon"
+              aria-label="Reset"
+              title="Reset"
+              className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+            >
+              <RotateCcw className="h-4 w-4" />
             </Button>
           </div>
         </div>
       </header>
+
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
         {/* Headline KPIs */}
@@ -449,78 +460,86 @@ const Index = () => {
 
           {state.currentSplit == null ? (
             <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> in the Production section above to see a comparison.</p>
-          ) : (
-            <div className="space-y-4">
-              {/* Current Platform */}
-              <div className="premium-card p-5">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Current Platform</p>
-                <p className="stat-label mt-1">{Math.round(state.currentSplit * 100)} BPS · {fmtPct(state.currentSplit, 2)}</p>
-                <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
-                <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
-                  <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * 0.0275)}</span></div>
-                  <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * (state.currentSplit / 100))}</span></div>
-                  {calc.brokerPaidSalaries > 0 && (
-                    <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
-                  )}
-                  {(calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
-                    <div className="flex justify-between text-destructive"><span>Less broker-paid per-file bonuses</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
+          ) : (() => {
+            const currentBrokerGross = state.annualVolume * 0.0275;
+            const currentLoComp = state.annualVolume * (state.currentSplit / 100);
+            const htlBrokerGross = calc.totals.grossRevenue;
+            const brokerGrossDelta = htlBrokerGross - currentBrokerGross;
+            const loCompDelta = calc.diffAnnual ?? 0;
+            const monthlyDelta = calc.diffMonthly ?? 0;
+            return (
+              <div className="space-y-6">
+                {/* Side-by-side platform cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Current Platform */}
+                  <div className="premium-card p-6 flex flex-col">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Current Platform</p>
+                    <p className="stat-label mt-1">{Math.round(state.currentSplit * 100)} BPS · {fmtPct(state.currentSplit, 2)}</p>
+                    <p className="text-3xl font-bold text-foreground tabular-nums mt-3">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                    <div className="mt-4 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                      <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(currentBrokerGross)}</span></div>
+                      <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(currentLoComp)}</span></div>
+                      {calc.brokerPaidSalaries > 0 && (
+                        <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                      )}
+                      {(calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
+                        <div className="flex justify-between text-destructive"><span>Less broker-paid per-file bonuses</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hometown Lending */}
+                  <div className="premium-card p-6 bg-primary text-primary-foreground border-0 flex flex-col">
+                    <p className="text-xs uppercase tracking-wider text-accent font-semibold">Hometown Lending</p>
+                    <p className="text-xs text-primary-foreground/70 mt-1">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
+                    <p className="text-3xl font-bold text-accent tabular-nums mt-3">{fmtUSD(calc.finalLoNetComp)}</p>
+                    <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.monthlyLoNet)} / month</p>
+                    <div className="mt-4 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/15 pt-3">
+                      <div className="flex justify-between"><span>Broker gross</span><span className="tabular-nums">{fmtUSD(htlBrokerGross)}</span></div>
+                      <div className="flex justify-between"><span>LO gross split ({state.loSplit}%)</span><span className="tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</span></div>
+                      <div className="flex justify-between"><span>Less channel fees</span><span className="tabular-nums">−{fmtUSD(calc.totals.channelFees)}</span></div>
+                      {(calc.brokerPaidSalaries + calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
+                        <div className="flex justify-between"><span>Less broker-paid support</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries + calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Grandiose delta box */}
+                <div
+                  className="rounded-xl p-8 md:p-10 border-2 border-accent/40 text-center"
+                  style={{ background: "var(--gradient-gold)" }}
+                >
+                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">More Money at Hometown Lending</p>
+                  <p className={`font-display font-bold tabular-nums mt-3 ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`} style={{ fontSize: "clamp(2.5rem, 6vw, 4.5rem)", lineHeight: 1 }}>
+                    {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
+                  </p>
+                  <p className="text-sm md:text-base text-accent-foreground/90 mt-2 tabular-nums">
+                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month more in your pocket
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6 max-w-2xl mx-auto">
+                    <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">
+                      <p className="text-[10px] uppercase tracking-wider text-accent-foreground/70 font-semibold">Broker Gross Uplift</p>
+                      <p className={`text-lg font-bold tabular-nums ${brokerGrossDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`}>
+                        {brokerGrossDelta >= 0 ? "+" : ""}{fmtUSD(brokerGrossDelta)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">
+                      <p className="text-[10px] uppercase tracking-wider text-accent-foreground/70 font-semibold">LO Comp Uplift</p>
+                      <p className={`text-lg font-bold tabular-nums ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`}>
+                        {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
+                      </p>
+                    </div>
+                  </div>
+                  {corrActive && (
+                    <p className="text-xs text-accent-foreground/80 mt-4 italic">Correspondent uplift over HTL Broker-Only: <span className="font-semibold">{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></p>
                   )}
                 </div>
               </div>
+            );
+          })()}
 
-              {/* Hometown Lending — larger comparison card */}
-              {(() => {
-                const currentBrokerGross = state.annualVolume * 0.0275;
-                const htlBrokerGross = calc.totals.grossRevenue;
-                const brokerGrossDelta = htlBrokerGross - currentBrokerGross;
-                const loCompDelta = calc.diffAnnual ?? 0;
-                return (
-                  <div className="premium-card p-6 md:p-8 bg-primary text-primary-foreground border-0">
-                    <div className="flex flex-wrap items-baseline justify-between gap-3">
-                      <div>
-                        <p className="text-xs uppercase tracking-wider font-semibold text-accent">Hometown Lending</p>
-                        <p className="text-sm text-primary-foreground/80 mt-0.5">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="stat-value !text-accent">{fmtUSD(calc.finalLoNetComp)}</p>
-                        <p className="text-xs text-primary-foreground/80">{fmtUSD(calc.monthlyLoNet)} / month</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                      <div className="rounded-lg bg-primary-foreground/5 border border-primary-foreground/10 p-4">
-                        <p className="text-xs uppercase tracking-wider text-primary-foreground/70 font-semibold">Broker Gross — More You Make</p>
-                        <p className={`stat-value mt-2 ${brokerGrossDelta >= 0 ? "!text-success" : "!text-destructive"}`}>
-                          {brokerGrossDelta >= 0 ? "+" : ""}{fmtUSD(brokerGrossDelta)}
-                        </p>
-                        <div className="mt-2 space-y-0.5 text-xs text-primary-foreground/70">
-                          <div className="flex justify-between"><span>HTL gross</span><span className="tabular-nums">{fmtUSD(htlBrokerGross)}</span></div>
-                          <div className="flex justify-between"><span>Current gross (2.75%)</span><span className="tabular-nums">{fmtUSD(currentBrokerGross)}</span></div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg bg-primary-foreground/5 border border-primary-foreground/10 p-4">
-                        <p className="text-xs uppercase tracking-wider text-primary-foreground/70 font-semibold">LO Compensation — More You Make</p>
-                        <p className={`stat-value mt-2 ${loCompDelta >= 0 ? "!text-success" : "!text-destructive"}`}>
-                          {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
-                        </p>
-                        <div className="mt-2 space-y-0.5 text-xs text-primary-foreground/70">
-                          <div className="flex justify-between"><span>HTL LO net</span><span className="tabular-nums">{fmtUSD(calc.finalLoNetComp)}</span></div>
-                          <div className="flex justify-between"><span>Current LO net</span><span className="tabular-nums">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</span></div>
-                          <div className="flex justify-between pt-1"><span>Monthly delta</span><span className={`tabular-nums font-semibold ${(calc.diffMonthly ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>{(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)}</span></div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {corrActive && (
-                      <p className="text-xs text-primary-foreground/70 mt-4 italic">Correspondent uplift over HTL Broker-Only: <span className="font-semibold text-accent">{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></p>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          )}
         </Section>
 
 
@@ -542,7 +561,7 @@ const Index = () => {
                 </tr>
               </thead>
               <tbody>
-                {state.buckets.filter(b => b.active).map(b => {
+                {state.buckets.filter(b => b.active && b.key !== "broker_nonqm").map(b => {
                   const c = calc.buckets.find(x => x.bucket.key === b.key);
                   const isBroker = b.channel === "Broker";
                   return (

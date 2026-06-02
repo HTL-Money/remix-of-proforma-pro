@@ -78,8 +78,8 @@ export const PROCESSOR_DEFAULTS = {
 };
 
 // Extra per-file bonus the broker must pay for these support roles
-export const LOA_EXTRA_BONUS = 100;
-export const LOAN_PARTNER_EXTRA_BONUS = 150;
+export const LOA_EXTRA_BONUS = 300;
+export const LOAN_PARTNER_EXTRA_BONUS = 350;
 
 export const defaultState = (): ModelState => ({
   recruitName: "",
