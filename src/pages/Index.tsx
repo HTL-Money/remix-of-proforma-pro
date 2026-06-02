@@ -601,10 +601,31 @@ const Index = () => {
             })}
           </div>
 
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="premium-card p-4"><Stat label="Broker-Paid Per-File Bonuses" value={fmtUSD(calc.extraBonusTotal)} /></div>
-            <div className="premium-card p-4"><Stat label="Broker-Paid Total (deducted from LO)" value={fmtUSD(calc.brokerPaidTotal)} /></div>
-          </div>
+          {state.employees.length > 0 && (
+            <div className="mt-6">
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Annual Cost Per Employee</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {state.employees.map(e => {
+                  const totalFiles = calc.totals.qmFiles + calc.totals.nonQmFiles;
+                  const bonusAnnual = e.role === "Processor"
+                    ? calc.totals.qmFiles * (e.qmBonus || 0) + calc.totals.nonQmFiles * (e.nonQmBonus || 0)
+                    : (e.extraBonus || 0) * totalFiles;
+                  const total = (e.salary || 0) + bonusAnnual;
+                  return (
+                    <div key={e.id} className="premium-card p-4">
+                      <p className="text-xs text-muted-foreground">{e.role}</p>
+                      <p className="font-semibold text-primary">{e.name || "Unnamed"}</p>
+                      <p className="stat-value text-accent mt-2 tabular-nums">{fmtUSD(total)}</p>
+                      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                        <div className="flex justify-between"><span>Salary ({e.salarySource})</span><span className="tabular-nums">{fmtUSD(e.salary || 0)}</span></div>
+                        <div className="flex justify-between"><span>Per-file bonuses</span><span className="tabular-nums">{fmtUSD(bonusAnnual)}</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </Section>
 
         {/* LO Economics Summary */}
