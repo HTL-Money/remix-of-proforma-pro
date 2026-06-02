@@ -139,8 +139,30 @@ export interface Calc {
   diffMonthly: number | null;
 }
 
+// Derive each bucket's fileCount from annualFiles + qmPct + which buckets are active.
+// Rule: if both Broker and Corr for a given loan type are active, all files go to Broker.
+// Deactivate Broker QM to route QM into Corr QM (and same for Non-QM).
+const allocateFiles = (s: ModelState): Record<ChannelKey, number> => {
+  const qmTotal = Math.round(s.annualFiles * (s.qmPct / 100));
+  const nonQmTotal = Math.max(0, s.annualFiles - qmTotal);
+  const out: Record<ChannelKey, number> = { broker_qm: 0, broker_nonqm: 0, corr_qm: 0, corr_nonqm: 0 };
+  const byKey = (k: ChannelKey) => s.buckets.find(b => b.key === k);
+  if (byKey("broker_qm")?.active) out.broker_qm = qmTotal;
+  else if (byKey("corr_qm")?.active) out.corr_qm = qmTotal;
+  if (byKey("broker_nonqm")?.active) out.broker_nonqm = nonQmTotal;
+  else if (byKey("corr_nonqm")?.active) out.corr_nonqm = nonQmTotal;
+  return out;
+};
+
 export const calculate = (s: ModelState): Calc => {
-  const activeBuckets = s.buckets.filter(b => b.active);
+  const allocation = allocateFiles(s);
+  // Apply fixed per-file fees and derived file counts so downstream math is consistent.
+  const bucketsResolved: Bucket[] = s.buckets.map(b => ({
+    ...b,
+    fileCount: allocation[b.key],
+    perFileFee: b.loanType === "QM" ? QM_FEE : NONQM_FEE,
+  }));
+  const activeBuckets = bucketsResolved.filter(b => b.active);
   const totalActiveFiles = activeBuckets.reduce((a, b) => a + b.fileCount, 0);
 
   const bucketCalcs: BucketCalc[] = activeBuckets.map(b => {
@@ -169,18 +191,18 @@ export const calculate = (s: ModelState): Calc => {
   }, { grossRevenue: 0, loGrossSplit: 0, channelFees: 0, loNetBeforeHoldback: 0, teamHoldback: 0, initialLoCash: 0, qmFiles: 0, nonQmFiles: 0, totalActiveFiles });
 
   let brokerPaidSalaries = 0, htlPaidSalaries = 0, brokerPaidBonuses = 0, htlPaidBonuses = 0, extraBonusTotal = 0;
+  const totalFiles = totals.qmFiles + totals.nonQmFiles;
   s.employees.forEach(e => {
     if (e.salarySource === "Broker") brokerPaidSalaries += e.salary;
     else htlPaidSalaries += e.salary;
-    const isProcessor = e.role === "Processor";
-    if (isProcessor) {
+    if (e.role === "Processor") {
       const bonusCost = totals.qmFiles * e.qmBonus + totals.nonQmFiles * e.nonQmBonus;
       if (e.bonusSource === "Broker") brokerPaidBonuses += bonusCost;
       else htlPaidBonuses += bonusCost;
-      extraBonusTotal += (e.extraBonus || 0) * (totals.qmFiles + totals.nonQmFiles);
     }
+    // Extra per-file bonus applies to any role; always broker-paid.
+    extraBonusTotal += (e.extraBonus || 0) * totalFiles;
   });
-  // extra bonus is always broker-paid (on top); it raises required holdback
   const brokerPaidTotal = brokerPaidSalaries + brokerPaidBonuses + extraBonusTotal;
   const htlPaidTotal = htlPaidSalaries + htlPaidBonuses;
 
@@ -189,7 +211,7 @@ export const calculate = (s: ModelState): Calc => {
   const monthlyLoNet = finalLoNetComp / 12;
   const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (brokerPaidTotal / totals.loNetBeforeHoldback) * 100 : 0;
 
-  // Current platform: gross split minus the salaries the broker is already paying
+  // Current platform comp = LO's take on volume (BPS-derived %) minus broker-paid salaries.
   const currentPlatformAnnual = s.currentSplit != null
     ? s.annualVolume * (s.currentSplit / 100) - brokerPaidSalaries
     : null;
