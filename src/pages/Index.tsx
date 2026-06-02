@@ -494,7 +494,7 @@ const Index = () => {
                       </div>
                       <div className="md:col-span-1 space-y-1">
                         <Label className="text-xs">QM/file</Label>
-                        <Input type="number" value={e.qmBonus} onChange={ev => updateEmployee(e.id, { qmBonus: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.qmBonus} onChange={v => updateEmployee(e.id, { qmBonus: v })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Non-QM/file</Label>
