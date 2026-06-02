@@ -15,7 +15,7 @@ import {
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v4";
+const STORAGE_KEY = "htl_lo_proforma_v5";
 
 const loadState = (): ModelState => {
   try {
@@ -80,6 +80,7 @@ const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
     extraBonus: extra,
   };
 };
+
 
 const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => void }) => {
   const [open, setOpen] = useState(false);
@@ -165,10 +166,26 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
               </>
             )}
             {isSupport && (
-              <div className="space-y-1 col-span-2">
-                <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
-                <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
-              </div>
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Annual Salary</Label>
+                  <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Salary Paid By</Label>
+                  <Select value={salarySource} onValueChange={v => setSalarySource(v as PaySource)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Broker">Broker</SelectItem>
+                      <SelectItem value="HTL">Hometown Lending</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
+                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+                </div>
+              </>
             )}
           </div>
           {isProcessor && (
@@ -291,7 +308,7 @@ const Index = () => {
         </div>
 
         {/* Your Numbers */}
-        <Section icon={<Calculator className="h-5 w-5" />} title="Your Numbers">
+        <Section icon={<Calculator className="h-5 w-5" />} title="Production Numbers">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Loan Officer Name</Label>
@@ -333,19 +350,6 @@ const Index = () => {
               <Input type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
             </div>
             <div className="space-y-2">
-              <Label>Current Platform Split (BPS)</Label>
-              <Input
-                type="number"
-                step="1"
-                value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 50)}
-                placeholder="e.g. 100 BPS = 2%"
-                onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 50 }))}
-              />
-              {state.currentSplit != null && (
-                <p className="text-xs text-muted-foreground">= {fmtPct(state.currentSplit)} of loan amount</p>
-              )}
-            </div>
-            <div className="space-y-2">
               <Label>Team-Support Holdback</Label>
               <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -371,6 +375,67 @@ const Index = () => {
             </div>
           </div>
         </Section>
+
+        {/* Comparison Tool */}
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="space-y-2">
+              <Label>Your LO BPS on Current Platform</Label>
+              <Input
+                type="number"
+                step="1"
+                min={0}
+                max={275}
+                value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
+                placeholder="e.g. 200"
+                onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                100 BPS = 1% of the loan amount. Platform takes 2.75% (275 BPS) gross; you receive your BPS.
+              </p>
+            </div>
+            <div className="rounded-md border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
+              The current platform shows your LO comp at the BPS you enter, less any broker-paid salaries for your LOA / Loan Partner. The Hometown Lending side reflects your production buckets, ${QM_FEE}/QM and ${NONQM_FEE}/Non-QM per-file fees, team-support holdback, and all broker-paid team costs.
+            </div>
+          </div>
+
+          {state.currentSplit == null ? (
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> above to see a side-by-side comparison.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="premium-card p-5">
+                <p className="stat-label">Current Platform · {Math.round(state.currentSplit * 100)} BPS ({fmtPct(state.currentSplit, 2)})</p>
+                <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
+                <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                  <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * 0.0275)}</span></div>
+                  <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * (state.currentSplit / 100))}</span></div>
+                  {calc.brokerPaidSalaries > 0 && (
+                    <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                  )}
+                </div>
+              </div>
+              <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
+                <p className="stat-label !text-accent">Hometown Lending</p>
+                <p className="stat-value !text-primary-foreground mt-1">{fmtUSD(calc.htlAnnual)}</p>
+                <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
+                <div className="mt-3 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/20 pt-3">
+                  <div className="flex justify-between"><span>LO net pre-holdback</span><span className="tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</span></div>
+                  <div className="flex justify-between"><span>Holdback collected</span><span className="tabular-nums">{fmtUSD(calc.totals.teamHoldback)}</span></div>
+                  <div className="flex justify-between"><span>Broker-paid team costs</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidTotal)}</span></div>
+                </div>
+              </div>
+              <div className="premium-card p-5">
+                <p className="stat-label">Annual Difference</p>
+                <p className={`stat-value mt-1 ${(calc.diffAnnual ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
+                  {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">{(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)} / month</p>
+              </div>
+            </div>
+          )}
+        </Section>
+
 
         {/* Production buckets */}
         <Section icon={<TrendingUp className="h-5 w-5" />} title="Production Buckets">
@@ -485,10 +550,26 @@ const Index = () => {
                       </div>
                     </>
                   ) : (
-                    <div className="md:col-span-5 space-y-1">
-                      <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
-                      <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
-                    </div>
+                    <>
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Annual Salary</Label>
+                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                      </div>
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Salary Paid By</Label>
+                        <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as PaySource })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Broker">Broker</SelectItem>
+                            <SelectItem value="HTL">Hometown Lending</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="md:col-span-1 space-y-1">
+                        <Label className="text-xs">$/file</Label>
+                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
+                      </div>
+                    </>
                   )}
                   <div className="md:col-span-1 flex items-end justify-end">
                     <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
@@ -532,35 +613,8 @@ const Index = () => {
           )}
         </Section>
 
-        {/* Comparison */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
-          {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split (BPS)</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × (BPS ÷ 10,000) − broker-paid salaries</em>.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="premium-card p-5">
-                <p className="stat-label">Current Platform ({Math.round(state.currentSplit * 50)} BPS · {fmtPct(state.currentSplit, 2)})</p>
-                <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD((calc.currentPlatformMonthly ?? 0))} / month</p>
-                {calc.brokerPaidSalaries > 0 && (
-                  <p className="text-xs text-muted-foreground mt-2">Less {fmtUSD(calc.brokerPaidSalaries)} broker-paid salaries</p>
-                )}
-              </div>
-              <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
-                <p className="stat-label !text-accent">Hometown Lending</p>
-                <p className="stat-value !text-primary-foreground mt-1">{fmtUSD(calc.htlAnnual)}</p>
-                <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
-              </div>
-              <div className="premium-card p-5">
-                <p className="stat-label">Annual Difference</p>
-                <p className={`stat-value mt-1 ${(calc.diffAnnual ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
-                  {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)} / month</p>
-              </div>
-            </div>
-          )}
-        </Section>
+
+
 
         <footer className="text-center text-xs text-muted-foreground py-8">
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.
