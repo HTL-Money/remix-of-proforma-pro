@@ -466,7 +466,6 @@ const Index = () => {
               <thead>
                 <tr className="text-left text-muted-foreground border-b border-border">
                   <th className="py-3 pr-3 font-semibold">Bucket</th>
-                  <th className="py-3 px-2 font-semibold">Active</th>
                   <th className="py-3 px-2 font-semibold">Vol %</th>
                   <th className="py-3 px-2 font-semibold">$ Volume</th>
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
@@ -477,16 +476,15 @@ const Index = () => {
                 </tr>
               </thead>
               <tbody>
-                {state.buckets.map(b => {
+                {state.buckets.filter(b => b.active).map(b => {
                   const c = calc.buckets.find(x => x.bucket.key === b.key);
                   const isBroker = b.channel === "Broker";
                   return (
-                    <tr key={b.key} className={`border-b border-border/60 ${!b.active ? "opacity-50" : ""}`}>
+                    <tr key={b.key} className="border-b border-border/60">
                       <td className="py-3 pr-3 align-top">
                         <div className="font-semibold text-primary">{b.label}</div>
                         <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.loanType === "QM" ? QM_FEE : NONQM_FEE}/file</div>
                       </td>
-                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} /></td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
@@ -499,7 +497,7 @@ const Index = () => {
                           max={isBroker ? BROKER_CAP : CORR_MAX}
                           value={b.compPct}
                           onChange={e => updateBucket(b.key, { compPct: +e.target.value || 0 })}
-                          disabled={isBroker || !b.active}
+                          disabled={isBroker}
                           title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
                         />
                       </td>
