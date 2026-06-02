@@ -350,19 +350,6 @@ const Index = () => {
               <Input type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
             </div>
             <div className="space-y-2">
-              <Label>Current Platform Split (BPS)</Label>
-              <Input
-                type="number"
-                step="1"
-                value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 50)}
-                placeholder="e.g. 100 BPS = 2%"
-                onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 50 }))}
-              />
-              {state.currentSplit != null && (
-                <p className="text-xs text-muted-foreground">= {fmtPct(state.currentSplit)} of loan amount</p>
-              )}
-            </div>
-            <div className="space-y-2">
               <Label>Team-Support Holdback</Label>
               <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
