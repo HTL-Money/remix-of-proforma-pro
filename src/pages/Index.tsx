@@ -293,20 +293,27 @@ const Index = () => {
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
         {/* Headline KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="premium-card p-5">
-            <Stat label="Annual Funded Volume" value={fmtUSD(state.annualVolume, { compact: true })} accent="primary" />
-          </div>
-          <div className="premium-card p-5">
-            <Stat label="Funded Files" value={fmtNum(state.annualFiles)} />
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="premium-card p-5">
             <Stat label="Annual LO Net Compensation" value={fmtUSD(calc.finalLoNetComp)} accent="gold" />
           </div>
           <div className="premium-card p-5">
-            <Stat label="Estimated Monthly LO Net" value={fmtUSD(calc.monthlyLoNet)} accent="success" />
+            <Stat label="Estimated Monthly LO Net" value={fmtUSD(calc.monthlyLoNet)} accent="primary" />
+          </div>
+          <div className="premium-card p-5">
+            <Stat
+              label="Difference vs Current Platform"
+              value={`${(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}${fmtUSD(calc.diffAnnual ?? 0)}`}
+              accent={(calc.diffAnnual ?? 0) >= 0 ? "success" : "destructive"}
+            />
+            {calc.diffAnnual != null && (
+              <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                {(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)} / month
+              </p>
+            )}
           </div>
         </div>
+
 
         {/* Your Numbers */}
         <Section icon={<Calculator className="h-5 w-5" />} title="Production Numbers">
