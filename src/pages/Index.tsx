@@ -11,10 +11,11 @@ import {
   ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
+  LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v3";
+const STORAGE_KEY = "htl_lo_proforma_v4";
 
 const loadState = (): ModelState => {
   try {
@@ -65,15 +66,18 @@ const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
   if (role === "Processor") {
     return { name: "", role, ...PROCESSOR_DEFAULTS };
   }
+  const extra = role === "Loan Officer Assistant" ? LOA_EXTRA_BONUS
+              : role === "Loan Partner" ? LOAN_PARTNER_EXTRA_BONUS
+              : 0;
   return {
     name: "",
     role,
     salary: 0,
-    salarySource: "HTL",
+    salarySource: "Broker",
     qmBonus: 0,
     nonQmBonus: 0,
-    bonusSource: "HTL",
-    extraBonus: 0,
+    bonusSource: "Broker",
+    extraBonus: extra,
   };
 };
 
@@ -88,26 +92,27 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
   const [nonQmBonus, setNonQmBonus] = useState<number>(PROCESSOR_DEFAULTS.nonQmBonus);
   const [extraBonus, setExtraBonus] = useState<number>(0);
 
-  // Auto-fill processor defaults when role flips to Processor
+  // Auto-fill defaults when role changes
   useEffect(() => {
     if (role === "Processor") {
       setSalary(PROCESSOR_DEFAULTS.salary);
-      setSalarySource(PROCESSOR_DEFAULTS.salarySource);
+      setSalarySource("HTL");
       setQmBonus(PROCESSOR_DEFAULTS.qmBonus);
       setNonQmBonus(PROCESSOR_DEFAULTS.nonQmBonus);
-      setBonusSource(PROCESSOR_DEFAULTS.bonusSource);
+      setBonusSource("HTL");
       setExtraBonus(0);
     } else {
       setSalary(0);
+      setSalarySource("Broker");
       setQmBonus(0);
       setNonQmBonus(0);
-      setExtraBonus(0);
+      setBonusSource("Broker");
+      setExtraBonus(role === "Loan Officer Assistant" ? LOA_EXTRA_BONUS
+                    : role === "Loan Partner" ? LOAN_PARTNER_EXTRA_BONUS : 0);
     }
   }, [role]);
 
-  const reset = () => {
-    setRole("Processor"); setName("");
-  };
+  const reset = () => { setRole("Processor"); setName(""); };
   const submit = () => {
     onAdd({ name, role, salary, salarySource, qmBonus, nonQmBonus, bonusSource, extraBonus });
     reset();
@@ -115,6 +120,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
   };
 
   const isProcessor = role === "Processor";
+  const isSupport = role === "Loan Officer Assistant" || role === "Loan Partner";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
@@ -142,50 +148,37 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Annual Salary</Label>
-              <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Salary Covered By</Label>
-              <Select value={salarySource} onValueChange={v => setSalarySource(v as PaySource)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="HTL">Hometown Lending</SelectItem>
-                  <SelectItem value="Broker">Broker</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             {isProcessor && (
               <>
                 <div className="space-y-1">
-                  <Label className="text-xs">QM Per-File Bonus</Label>
+                  <Label className="text-xs">Annual Salary (HTL-paid)</Label>
+                  <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">QM Per-File Bonus (HTL-paid)</Label>
                   <Input type="number" value={qmBonus} onChange={e => setQmBonus(+e.target.value || 0)} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Non-QM Per-File Bonus</Label>
+                  <Label className="text-xs">Non-QM Per-File Bonus (HTL-paid)</Label>
                   <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Extra Per-File Bonus (Broker)</Label>
-                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Bonus Covered By</Label>
-                  <Select value={bonusSource} onValueChange={v => setBonusSource(v as PaySource)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="HTL">Hometown Lending</SelectItem>
-                      <SelectItem value="Broker">Broker</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
               </>
+            )}
+            {isSupport && (
+              <div className="space-y-1 col-span-2">
+                <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
+                <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+              </div>
             )}
           </div>
           {isProcessor && (
             <p className="text-xs text-muted-foreground">
-              The Extra Per-File Bonus is paid by the broker on top of the standard bonus and is automatically deducted from the LO's compensation.
+              Processor salaries and per-file bonuses are paid by Hometown Lending.
+            </p>
+          )}
+          {isSupport && (
+            <p className="text-xs text-muted-foreground">
+              The broker must pay this per-file bonus for each {role}. It is deducted from the LO's compensation.
             </p>
           )}
         </div>
@@ -218,24 +211,7 @@ const Index = () => {
 
   const calc = useMemo(() => calculate(state), [state]);
 
-  const totalBucketFiles = state.buckets.reduce((a, b) => a + (b.active ? b.fileCount : 0), 0);
-  const fileMismatch = Math.abs(totalBucketFiles - state.annualFiles) > 0;
   const holdbackShortfall = calc.holdbackSurplus < 0;
-
-  // When annual files changes, the delta lands in Broker QM
-  const updateAnnualFiles = (next: number) => {
-    setState(s => {
-      const current = s.buckets.reduce((a, b) => a + (b.active ? b.fileCount : 0), 0);
-      const delta = next - current;
-      return {
-        ...s,
-        annualFiles: next,
-        buckets: s.buckets.map(b =>
-          b.key === "broker_qm" ? { ...b, fileCount: Math.max(0, Math.floor(b.fileCount + delta)) } : b
-        ),
-      };
-    });
-  };
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
@@ -258,25 +234,6 @@ const Index = () => {
     }));
   };
 
-  // Deactivating a bucket transfers its files to the matching Broker bucket
-  const toggleBucketActive = (key: ChannelKey, active: boolean) => {
-    setState(s => {
-      const bucket = s.buckets.find(b => b.key === key);
-      if (!bucket) return s;
-      if (active || bucket.fileCount === 0 || key === "broker_qm" || key === "broker_nonqm") {
-        return { ...s, buckets: s.buckets.map(b => b.key === key ? { ...b, active } : b) };
-      }
-      const targetKey: ChannelKey = bucket.loanType === "QM" ? "broker_qm" : "broker_nonqm";
-      return {
-        ...s,
-        buckets: s.buckets.map(b => {
-          if (b.key === key) return { ...b, active: false, fileCount: 0 };
-          if (b.key === targetKey) return { ...b, fileCount: b.fileCount + bucket.fileCount };
-          return b;
-        }),
-      };
-    });
-  };
 
   const updateEmployee = (id: string, patch: Partial<Employee>) => {
     setState(s => ({ ...s, employees: s.employees.map(e => e.id === id ? { ...e, ...patch } : e) }));
@@ -355,7 +312,7 @@ const Index = () => {
                 type="number"
                 value={state.annualFiles || ""}
                 placeholder="0"
-                onChange={e => updateAnnualFiles(+e.target.value || 0)}
+                onChange={e => setState(s => ({ ...s, annualFiles: +e.target.value || 0 }))}
               />
             </div>
             <div className="space-y-2">
@@ -398,13 +355,21 @@ const Index = () => {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          {fileMismatch && (
-            <div className="mt-4">
-              <Warn>Bucket file counts must equal total funded files ({fmtNum(state.annualFiles)}). Currently {fmtNum(totalBucketFiles)}.</Warn>
+            <div className="space-y-2">
+              <Label>QM Loan Mix (%)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step="1"
+                value={state.qmPct}
+                onChange={e => setState(s => ({ ...s, qmPct: Math.min(100, Math.max(0, +e.target.value || 0)) }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                {state.qmPct}% QM · {100 - state.qmPct}% Non-QM
+              </p>
             </div>
-          )}
+          </div>
         </Section>
 
         {/* Production buckets */}
@@ -415,12 +380,10 @@ const Index = () => {
                 <tr className="text-left text-muted-foreground border-b border-border">
                   <th className="py-3 pr-3 font-semibold">Bucket</th>
                   <th className="py-3 px-2 font-semibold">Active</th>
-                  <th className="py-3 px-2 font-semibold">Files</th>
                   <th className="py-3 px-2 font-semibold">Vol %</th>
                   <th className="py-3 px-2 font-semibold">$ Volume</th>
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
                   <th className="py-3 px-2 font-semibold">Comp %</th>
-                  <th className="py-3 px-2 font-semibold">Per-File Fee</th>
                   <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
                   <th className="py-3 px-2 font-semibold">Holdback</th>
                   <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
@@ -434,10 +397,9 @@ const Index = () => {
                     <tr key={b.key} className={`border-b border-border/60 ${!b.active ? "opacity-50" : ""}`}>
                       <td className="py-3 pr-3 align-top">
                         <div className="font-semibold text-primary">{b.label}</div>
-                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType}</div>
+                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.loanType === "QM" ? QM_FEE : NONQM_FEE}/file</div>
                       </td>
-                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => toggleBucketActive(b.key, v)} /></td>
-                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.fileCount} onChange={e => updateBucket(b.key, { fileCount: +e.target.value || 0 })} disabled={!b.active} /></td>
+                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} /></td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
@@ -454,7 +416,6 @@ const Index = () => {
                           title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
                         />
                       </td>
-                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.perFileFee} onChange={e => updateBucket(b.key, { perFileFee: +e.target.value || 0 })} disabled={!b.active} /></td>
                       <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
                       <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
                       <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
@@ -465,10 +426,8 @@ const Index = () => {
               <tfoot>
                 <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
                   <td className="py-3 pr-3" colSpan={2}>Totals</td>
-                  <td className="px-2 tabular-nums">{fmtNum(totalBucketFiles)}</td>
                   <td className="px-2 tabular-nums">100%</td>
                   <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
-                  <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
@@ -479,7 +438,7 @@ const Index = () => {
             </table>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Volume % is derived from file counts. Broker comp is capped at {BROKER_CAP}%. Correspondent comp must be between {CORR_MIN}% and {CORR_MAX}%. Deactivating a channel moves its files to the matching Broker bucket.
+            Files are allocated automatically from your QM mix. Per-file fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). If both Broker and Correspondent for a loan type are active, files default to Broker — deactivate the Broker bucket to route that loan type to Correspondent.
           </p>
         </Section>
 
@@ -490,7 +449,7 @@ const Index = () => {
           right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
-            <span className="font-medium text-foreground">Covered by Broker</span> means this cost is reconciled through the LO's team-support holdback. <span className="font-medium text-foreground">Covered by Hometown Lending</span> means HTL absorbs the cost.
+            Processor salaries and per-file bonuses are paid by Hometown Lending. Loan Officer Assistants and Loan Partners are paid by the broker, and their per-file bonus is deducted from the LO's compensation.
           </p>
           {state.employees.length === 0 && (
             <div className="rounded-md border border-dashed border-border bg-secondary/30 px-4 py-6 text-sm text-muted-foreground text-center">
@@ -502,79 +461,48 @@ const Index = () => {
               const isProcessor = e.role === "Processor";
               return (
                 <div key={e.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-lg border border-border bg-secondary/30">
-                  <div className="md:col-span-2 space-y-1">
+                  <div className="md:col-span-3 space-y-1">
                     <Label className="text-xs">Name</Label>
                     <Input value={e.name} onChange={ev => updateEmployee(e.id, { name: ev.target.value })} placeholder="Name" />
                   </div>
-                  <div className="md:col-span-2 space-y-1">
+                  <div className="md:col-span-3 space-y-1">
                     <Label className="text-xs">Role / Title</Label>
-                    <Select value={ROLE_OPTIONS.includes(e.role as Role) ? e.role : "Processor"} onValueChange={v => {
-                      // when switching role, clear processor-only fields if leaving processor
-                      if (v !== "Processor" && isProcessor) {
-                        updateEmployee(e.id, { role: v, qmBonus: 0, nonQmBonus: 0, extraBonus: 0 });
-                      } else if (v === "Processor" && !isProcessor) {
-                        updateEmployee(e.id, { role: v, qmBonus: PROCESSOR_DEFAULTS.qmBonus, nonQmBonus: PROCESSOR_DEFAULTS.nonQmBonus });
-                      } else {
-                        updateEmployee(e.id, { role: v });
-                      }
-                    }}>
-                      <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-                      <SelectContent>
-                        {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="md:col-span-2 space-y-1">
-                    <Label className="text-xs">Annual Salary</Label>
-                    <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
-                  </div>
-                  <div className="md:col-span-2 space-y-1">
-                    <Label className="text-xs">Salary Covered By</Label>
-                    <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as PaySource })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="HTL">Hometown Lending</SelectItem>
-                        <SelectItem value="Broker">Broker</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center h-10 px-3 rounded-md border border-input bg-muted/40 text-sm">{e.role}</div>
                   </div>
                   {isProcessor ? (
                     <>
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Salary (HTL)</Label>
+                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                      </div>
                       <div className="md:col-span-1 space-y-1">
                         <Label className="text-xs">QM/file</Label>
                         <Input type="number" value={e.qmBonus} onChange={ev => updateEmployee(e.id, { qmBonus: +ev.target.value || 0 })} />
                       </div>
-                      <div className="md:col-span-1 space-y-1">
+                      <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Non-QM/file</Label>
                         <Input type="number" value={e.nonQmBonus} onChange={ev => updateEmployee(e.id, { nonQmBonus: +ev.target.value || 0 })} />
                       </div>
-                      <div className="md:col-span-1 space-y-1">
-                        <Label className="text-xs" title="Extra per-file bonus paid by broker on top">Extra/file</Label>
-                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
-                      </div>
-                      <div className="md:col-span-1 flex items-end">
-                        <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
                     </>
                   ) : (
-                    <div className="md:col-span-4 flex items-end justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                    <div className="md:col-span-5 space-y-1">
+                      <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
+                      <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
                     </div>
                   )}
+                  <div className="md:col-span-1 flex items-end justify-end">
+                    <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="premium-card p-4"><Stat label="Broker-Paid Salaries" value={fmtUSD(calc.brokerPaidSalaries)} /></div>
-            <div className="premium-card p-4"><Stat label="Broker-Paid Bonuses" value={fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)} /></div>
-            <div className="premium-card p-4"><Stat label="HTL-Paid Salaries" value={fmtUSD(calc.htlPaidSalaries)} accent="gold" /></div>
-            <div className="premium-card p-4"><Stat label="HTL-Paid Bonuses" value={fmtUSD(calc.htlPaidBonuses)} accent="gold" /></div>
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="premium-card p-4"><Stat label="Broker-Paid Per-File Bonuses" value={fmtUSD(calc.extraBonusTotal)} /></div>
+            <div className="premium-card p-4"><Stat label="Broker-Paid Total (deducted from LO)" value={fmtUSD(calc.brokerPaidTotal)} /></div>
           </div>
         </Section>
 
@@ -591,7 +519,7 @@ const Index = () => {
                 accent={calc.holdbackSurplus >= 0 ? "success" : "destructive"}
               />
             </div>
-            <div className="premium-card p-5"><Stat label="HTL-Paid Support Value" value={fmtUSD(calc.htlPaidTotal)} accent="gold" /></div>
+            
             <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
               <span className="stat-label !text-accent">Final LO Net Annual Comp</span>
               <span className="stat-value !text-primary-foreground mt-1 block">{fmtUSD(calc.finalLoNetComp)}</span>
@@ -607,13 +535,13 @@ const Index = () => {
         {/* Comparison */}
         <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
           {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split %</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × split − broker-paid salaries</em>.</p>
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split (BPS)</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × (BPS ÷ 10,000) − broker-paid salaries</em>.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="premium-card p-5">
-                <p className="stat-label">Current Platform ({fmtPct(state.currentSplit, 1)} split)</p>
+                <p className="stat-label">Current Platform ({Math.round(state.currentSplit * 50)} BPS · {fmtPct(state.currentSplit, 2)})</p>
                 <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                <p className="text-xs text-muted-foreground mt-1">{fmtUSD((calc.currentPlatformMonthly ?? 0))} / month</p>
                 {calc.brokerPaidSalaries > 0 && (
                   <p className="text-xs text-muted-foreground mt-2">Less {fmtUSD(calc.brokerPaidSalaries)} broker-paid salaries</p>
                 )}
