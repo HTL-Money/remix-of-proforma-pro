@@ -348,7 +348,7 @@ const Index = () => {
         <Section icon={<Calculator className="h-5 w-5" />} title="Production">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
-              <Label>Loan Officer Name</Label>
+              <Label>Loan Officer</Label>
               <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
             </div>
             <div className="space-y-2">
