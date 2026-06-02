@@ -449,7 +449,7 @@ const Index = () => {
           right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
-            <span className="font-medium text-foreground">Covered by Broker</span> means this cost is reconciled through the LO's team-support holdback. <span className="font-medium text-foreground">Covered by Hometown Lending</span> means HTL absorbs the cost.
+            Processor salaries and per-file bonuses are paid by Hometown Lending. Loan Officer Assistants and Loan Partners are paid by the broker, and their per-file bonus is deducted from the LO's compensation.
           </p>
           {state.employees.length === 0 && (
             <div className="rounded-md border border-dashed border-border bg-secondary/30 px-4 py-6 text-sm text-muted-foreground text-center">
@@ -461,79 +461,48 @@ const Index = () => {
               const isProcessor = e.role === "Processor";
               return (
                 <div key={e.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-lg border border-border bg-secondary/30">
-                  <div className="md:col-span-2 space-y-1">
+                  <div className="md:col-span-3 space-y-1">
                     <Label className="text-xs">Name</Label>
                     <Input value={e.name} onChange={ev => updateEmployee(e.id, { name: ev.target.value })} placeholder="Name" />
                   </div>
-                  <div className="md:col-span-2 space-y-1">
+                  <div className="md:col-span-3 space-y-1">
                     <Label className="text-xs">Role / Title</Label>
-                    <Select value={ROLE_OPTIONS.includes(e.role as Role) ? e.role : "Processor"} onValueChange={v => {
-                      // when switching role, clear processor-only fields if leaving processor
-                      if (v !== "Processor" && isProcessor) {
-                        updateEmployee(e.id, { role: v, qmBonus: 0, nonQmBonus: 0, extraBonus: 0 });
-                      } else if (v === "Processor" && !isProcessor) {
-                        updateEmployee(e.id, { role: v, qmBonus: PROCESSOR_DEFAULTS.qmBonus, nonQmBonus: PROCESSOR_DEFAULTS.nonQmBonus });
-                      } else {
-                        updateEmployee(e.id, { role: v });
-                      }
-                    }}>
-                      <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-                      <SelectContent>
-                        {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="md:col-span-2 space-y-1">
-                    <Label className="text-xs">Annual Salary</Label>
-                    <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
-                  </div>
-                  <div className="md:col-span-2 space-y-1">
-                    <Label className="text-xs">Salary Covered By</Label>
-                    <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as PaySource })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="HTL">Hometown Lending</SelectItem>
-                        <SelectItem value="Broker">Broker</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center h-10 px-3 rounded-md border border-input bg-muted/40 text-sm">{e.role}</div>
                   </div>
                   {isProcessor ? (
                     <>
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Salary (HTL)</Label>
+                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                      </div>
                       <div className="md:col-span-1 space-y-1">
                         <Label className="text-xs">QM/file</Label>
                         <Input type="number" value={e.qmBonus} onChange={ev => updateEmployee(e.id, { qmBonus: +ev.target.value || 0 })} />
                       </div>
-                      <div className="md:col-span-1 space-y-1">
+                      <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Non-QM/file</Label>
                         <Input type="number" value={e.nonQmBonus} onChange={ev => updateEmployee(e.id, { nonQmBonus: +ev.target.value || 0 })} />
                       </div>
-                      <div className="md:col-span-1 space-y-1">
-                        <Label className="text-xs" title="Extra per-file bonus paid by broker on top">Extra/file</Label>
-                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
-                      </div>
-                      <div className="md:col-span-1 flex items-end">
-                        <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
                     </>
                   ) : (
-                    <div className="md:col-span-4 flex items-end justify-end">
-                      <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                    <div className="md:col-span-5 space-y-1">
+                      <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
+                      <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
                     </div>
                   )}
+                  <div className="md:col-span-1 flex items-end justify-end">
+                    <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="premium-card p-4"><Stat label="Broker-Paid Salaries" value={fmtUSD(calc.brokerPaidSalaries)} /></div>
-            <div className="premium-card p-4"><Stat label="Broker-Paid Bonuses" value={fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)} /></div>
-            <div className="premium-card p-4"><Stat label="HTL-Paid Salaries" value={fmtUSD(calc.htlPaidSalaries)} accent="gold" /></div>
-            <div className="premium-card p-4"><Stat label="HTL-Paid Bonuses" value={fmtUSD(calc.htlPaidBonuses)} accent="gold" /></div>
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="premium-card p-4"><Stat label="Broker-Paid Per-File Bonuses" value={fmtUSD(calc.extraBonusTotal)} /></div>
+            <div className="premium-card p-4"><Stat label="Broker-Paid Total (deducted from LO)" value={fmtUSD(calc.brokerPaidTotal)} /></div>
           </div>
         </Section>
 
