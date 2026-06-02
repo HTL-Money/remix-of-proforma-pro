@@ -46,15 +46,32 @@ const Stat = ({ label, value, accent, mono = true }: { label: string; value: str
   );
 };
 
-const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode }> = ({ icon, title, children, right }) => (
-  <section className="premium-card p-6 md:p-8">
-    <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-      <h2 className="section-header !mb-0 !border-0 !pb-0">{icon}{title}</h2>
-      {right}
-    </div>
-    {children}
-  </section>
-);
+const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode; defaultOpen?: boolean }> = ({ icon, title, children, right, defaultOpen = true }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="premium-card p-6 md:p-8">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7 rounded-full border-accent/40 text-accent hover:bg-accent hover:text-accent-foreground"
+                aria-label={open ? "Collapse section" : "Expand section"}
+              >
+                {open ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+              </Button>
+            </CollapsibleTrigger>
+            <h2 className="section-header !mb-0 !border-0 !pb-0">{icon}{title}</h2>
+          </div>
+          {right}
+        </div>
+        <CollapsibleContent>{children}</CollapsibleContent>
+      </Collapsible>
+    </section>
+  );
+};
 
 const Warn = ({ children }: { children: React.ReactNode }) => (
   <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning-foreground">
