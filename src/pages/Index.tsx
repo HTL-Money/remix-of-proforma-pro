@@ -421,9 +421,9 @@ const Index = () => {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Channels to Compare</Label>
+              <Label>Add Correspondent Channels</Label>
               <div className="grid grid-cols-2 gap-2">
-                {state.buckets.map(b => (
+                {state.buckets.filter(b => b.channel === "Correspondent").map(b => (
                   <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs cursor-pointer">
                     <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
                     <span className="font-medium">{b.label}</span>
@@ -431,7 +431,7 @@ const Index = () => {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                Toggle Correspondent on to model the comp difference vs. the broker-only channel.
+                Turn on Correspondent to route VA / Conventional (QM) and Non-QM through that channel at {fmtUSD(CORR_FEE)} / file (no processing fee). FHA always stays Broker.
               </p>
             </div>
           </div>
@@ -439,37 +439,50 @@ const Index = () => {
           {state.currentSplit == null ? (
             <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> above to see a side-by-side comparison.</p>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="premium-card p-5">
-                <p className="stat-label">Current Platform · {Math.round(state.currentSplit * 100)} BPS ({fmtPct(state.currentSplit, 2)})</p>
-                <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
-                <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
-                  <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * 0.0275)}</span></div>
-                  <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * (state.currentSplit / 100))}</span></div>
-                  {calc.brokerPaidSalaries > 0 && (
-                    <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Current platform */}
+                <div className="premium-card p-5">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Current Platform</p>
+                  <p className="stat-label mt-1">{Math.round(state.currentSplit * 100)} BPS · {fmtPct(state.currentSplit, 2)}</p>
+                  <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                  <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                    <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * 0.0275)}</span></div>
+                    <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * (state.currentSplit / 100))}</span></div>
+                    {calc.brokerPaidSalaries > 0 && (
+                      <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                    )}
+                  </div>
+                </div>
+
+                {/* HTL — Broker only */}
+                <div className="premium-card p-5">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Hometown Lending</p>
+                  <p className="stat-label mt-1">Broker Only</p>
+                  <p className="stat-value text-primary mt-1">{fmtUSD(calcBrokerOnly.finalLoNetComp)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calcBrokerOnly.monthlyLoNet)} / month</p>
+                  <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                    <div className="flex justify-between"><span>vs Current Platform</span><span className={`tabular-nums font-semibold ${(calcBrokerOnly.finalLoNetComp - (calc.currentPlatformAnnual ?? 0)) >= 0 ? "text-success" : "text-destructive"}`}>{(calcBrokerOnly.finalLoNetComp - (calc.currentPlatformAnnual ?? 0)) >= 0 ? "+" : ""}{fmtUSD(calcBrokerOnly.finalLoNetComp - (calc.currentPlatformAnnual ?? 0))}</span></div>
+                  </div>
+                </div>
+
+                {/* HTL — With correspondent */}
+                <div className={`premium-card p-5 border-0 ${corrActive ? "bg-primary text-primary-foreground" : "bg-secondary/30"}`}>
+                  <p className={`text-xs uppercase tracking-wider font-semibold ${corrActive ? "!text-accent" : "text-muted-foreground"}`}>Hometown Lending</p>
+                  <p className={`stat-label mt-1 ${corrActive ? "!text-primary-foreground/80" : ""}`}>With Correspondent</p>
+                  <p className={`stat-value mt-1 ${corrActive ? "!text-accent" : "text-muted-foreground"}`}>{fmtUSD(calc.finalLoNetComp)}</p>
+                  <p className={`text-xs mt-1 ${corrActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>{fmtUSD(calc.monthlyLoNet)} / month</p>
+                  <div className={`mt-3 space-y-1 text-xs border-t pt-3 ${corrActive ? "text-primary-foreground/80 border-primary-foreground/20" : "text-muted-foreground border-border"}`}>
+                    <div className="flex justify-between"><span>Correspondent uplift</span><span className={`tabular-nums font-semibold ${corrActive ? "!text-accent" : ""}`}>{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></div>
+                    <div className="flex justify-between"><span>vs Current Platform</span><span className={`tabular-nums font-semibold ${(calc.diffAnnual ?? 0) >= 0 ? (corrActive ? "!text-accent" : "text-success") : "text-destructive"}`}>{(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}</span></div>
+                  </div>
+                  {!corrActive && (
+                    <p className="text-xs text-muted-foreground mt-2 italic">Turn on a Correspondent channel above to see the uplift.</p>
                   )}
                 </div>
               </div>
-              <div className="premium-card p-5 bg-primary text-primary-foreground border-0">
-                <p className="stat-label !text-accent">Hometown Lending</p>
-                <p className="stat-value !text-accent mt-1">{fmtUSD(calc.htlAnnual)}</p>
-                <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
-                <div className="mt-3 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/20 pt-3">
-                  <div className="flex justify-between"><span>LO net pre-holdback</span><span className="tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</span></div>
-                  <div className="flex justify-between"><span>Holdback collected</span><span className="tabular-nums">{fmtUSD(calc.totals.teamHoldback)}</span></div>
-                  <div className="flex justify-between"><span>Broker-paid team costs</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidTotal)}</span></div>
-                </div>
-              </div>
-              <div className="premium-card p-5">
-                <p className="stat-label">Annual Difference</p>
-                <p className={`stat-value mt-1 ${(calc.diffAnnual ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
-                  {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)} / month</p>
-              </div>
-            </div>
+            </>
           )}
         </Section>
 
