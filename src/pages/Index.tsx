@@ -15,6 +15,7 @@ import {
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
+import { CurrencyInput } from "@/components/CurrencyInput";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 
