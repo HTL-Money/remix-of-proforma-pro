@@ -7,33 +7,37 @@ export interface Bucket {
   loanType: "QM" | "Non-QM";
   active: boolean;
   fileCount: number;
-  volumePct: number; // 0-100
-  compPct: number; // percent
+  volumePct: number; // derived from fileCount (kept for back-compat / display)
+  compPct: number;
   perFileFee: number;
 }
+
+export type Role = "Processor" | "Loan Officer Assistant" | "Loan Partner";
+export const ROLE_OPTIONS: Role[] = ["Processor", "Loan Officer Assistant", "Loan Partner"];
+
+export type PaySource = "HTL" | "Broker";
 
 export interface Employee {
   id: string;
   name: string;
-  role: string;
+  role: Role | string;
   salary: number;
-  salarySource: "HTL" | "Broker";
-  qmBonus: number;
-  nonQmBonus: number;
-  bonusSource: "HTL" | "Broker";
+  salarySource: PaySource;
+  qmBonus: number;     // per-file QM bonus (Processor only)
+  nonQmBonus: number;  // per-file Non-QM bonus (Processor only)
+  bonusSource: PaySource;
+  extraBonus: number;  // per-file extra bonus (Processor only) — broker-paid, increases holdback
 }
 
 export interface ModelState {
   recruitName: string;
-  scenarioName: string;
   annualVolume: number;
   annualFiles: number;
   avgLoanAmount: number;
   avgLoanOverride: boolean;
-  loSplit: number; // %
-  currentSplit: number | null; // %
-  holdbackPct: 10 | 20 | 30;
-  qmPctHelper: number; // %
+  loSplit: number;
+  currentSplit: number | null;
+  holdbackPct: number;
   buckets: Bucket[];
   employees: Employee[];
 }
@@ -50,40 +54,39 @@ export const PER_FILE_DEFAULTS: Record<ChannelKey, number> = {
 };
 
 export const defaultBuckets = (): Bucket[] => [
-  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 120, volumePct: 65, compPct: 2.75, perFileFee: 650 },
-  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 10, volumePct: 7, compPct: 2.75, perFileFee: 950 },
-  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: true, fileCount: 43, volumePct: 23, compPct: 3.25, perFileFee: 250 },
-  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: true, fileCount: 10, volumePct: 5, compPct: 3.25, perFileFee: 250 },
+  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: 650 },
+  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: 950 },
+  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: true, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: 250 },
+  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: 250 },
 ];
 
-export const defaultEmployees = (): Employee[] => [
-  { id: crypto.randomUUID(), name: "", role: "LOA", salary: 0, salarySource: "HTL", qmBonus: 300, nonQmBonus: 300, bonusSource: "HTL" },
-  { id: crypto.randomUUID(), name: "", role: "Loan Partner", salary: 0, salarySource: "HTL", qmBonus: 350, nonQmBonus: 350, bonusSource: "HTL" },
-  { id: crypto.randomUUID(), name: "", role: "Processor", salary: 40000, salarySource: "HTL", qmBonus: 150, nonQmBonus: 200, bonusSource: "HTL" },
-];
+export const defaultEmployees = (): Employee[] => [];
 
-export const defaultState = (): ModelState => {
-  const annualVolume = 65_859_504;
-  const annualFiles = 183;
-  const buckets = defaultBuckets();
-  return {
-    recruitName: "",
-    scenarioName: "",
-    annualVolume,
-    annualFiles,
-    avgLoanAmount: 359_888,
-    avgLoanOverride: false,
-    loSplit: 90,
-    currentSplit: null,
-    holdbackPct: 10,
-    qmPctHelper: 88,
-    buckets,
-    employees: defaultEmployees(),
-  };
+export const PROCESSOR_DEFAULTS = {
+  salary: 40000,
+  salarySource: "HTL" as PaySource,
+  qmBonus: 150,
+  nonQmBonus: 250,
+  bonusSource: "HTL" as PaySource,
+  extraBonus: 0,
 };
+
+export const defaultState = (): ModelState => ({
+  recruitName: "",
+  annualVolume: 0,
+  annualFiles: 0,
+  avgLoanAmount: 350_000,
+  avgLoanOverride: true,
+  loSplit: 90,
+  currentSplit: null,
+  holdbackPct: 10,
+  buckets: defaultBuckets(),
+  employees: defaultEmployees(),
+});
 
 export interface BucketCalc {
   bucket: Bucket;
+  volumePct: number;
   dollarVolume: number;
   avgLoan: number;
   grossRevenue: number;
@@ -103,9 +106,9 @@ export interface Calc {
     loNetBeforeHoldback: number;
     teamHoldback: number;
     initialLoCash: number;
-    htlRetained: number;
     qmFiles: number;
     nonQmFiles: number;
+    totalActiveFiles: number;
   };
   brokerPaidSalaries: number;
   brokerPaidBonuses: number;
@@ -113,7 +116,8 @@ export interface Calc {
   htlPaidBonuses: number;
   brokerPaidTotal: number;
   htlPaidTotal: number;
-  holdbackSurplus: number; // positive = surplus
+  extraBonusTotal: number;
+  holdbackSurplus: number;
   finalLoNetComp: number;
   monthlyLoNet: number;
   requiredHoldbackPct: number;
@@ -123,17 +127,15 @@ export interface Calc {
   htlMonthly: number;
   diffAnnual: number | null;
   diffMonthly: number | null;
-  // internal
-  managementSalary: number;
-  netProfitBeforeShare: number;
-  profitShareEach: number;
-  finalHtlNet: number;
 }
 
 export const calculate = (s: ModelState): Calc => {
   const activeBuckets = s.buckets.filter(b => b.active);
+  const totalActiveFiles = activeBuckets.reduce((a, b) => a + b.fileCount, 0);
+
   const bucketCalcs: BucketCalc[] = activeBuckets.map(b => {
-    const dollarVolume = s.annualVolume * (b.volumePct / 100);
+    const volumePct = totalActiveFiles > 0 ? (b.fileCount / totalActiveFiles) * 100 : 0;
+    const dollarVolume = s.annualVolume * (volumePct / 100);
     const avgLoan = b.fileCount > 0 ? dollarVolume / b.fileCount : 0;
     const grossRevenue = dollarVolume * (b.compPct / 100);
     const loGrossSplit = grossRevenue * (s.loSplit / 100);
@@ -141,7 +143,7 @@ export const calculate = (s: ModelState): Calc => {
     const loNetBeforeHoldback = loGrossSplit - channelFees;
     const teamHoldback = Math.max(0, loNetBeforeHoldback) * (s.holdbackPct / 100);
     const initialLoCash = loNetBeforeHoldback - teamHoldback;
-    return { bucket: b, dollarVolume, avgLoan, grossRevenue, loGrossSplit, channelFees, loNetBeforeHoldback, teamHoldback, initialLoCash };
+    return { bucket: b, volumePct, dollarVolume, avgLoan, grossRevenue, loGrossSplit, channelFees, loNetBeforeHoldback, teamHoldback, initialLoCash };
   });
 
   const totals = bucketCalcs.reduce((acc, c) => {
@@ -154,19 +156,22 @@ export const calculate = (s: ModelState): Calc => {
     if (c.bucket.loanType === "QM") acc.qmFiles += c.bucket.fileCount;
     else acc.nonQmFiles += c.bucket.fileCount;
     return acc;
-  }, { grossRevenue: 0, loGrossSplit: 0, channelFees: 0, loNetBeforeHoldback: 0, teamHoldback: 0, initialLoCash: 0, htlRetained: 0, qmFiles: 0, nonQmFiles: 0 });
+  }, { grossRevenue: 0, loGrossSplit: 0, channelFees: 0, loNetBeforeHoldback: 0, teamHoldback: 0, initialLoCash: 0, qmFiles: 0, nonQmFiles: 0, totalActiveFiles });
 
-  totals.htlRetained = totals.grossRevenue - totals.loGrossSplit;
-
-  let brokerPaidSalaries = 0, htlPaidSalaries = 0, brokerPaidBonuses = 0, htlPaidBonuses = 0;
+  let brokerPaidSalaries = 0, htlPaidSalaries = 0, brokerPaidBonuses = 0, htlPaidBonuses = 0, extraBonusTotal = 0;
   s.employees.forEach(e => {
     if (e.salarySource === "Broker") brokerPaidSalaries += e.salary;
     else htlPaidSalaries += e.salary;
-    const bonusCost = totals.qmFiles * e.qmBonus + totals.nonQmFiles * e.nonQmBonus;
-    if (e.bonusSource === "Broker") brokerPaidBonuses += bonusCost;
-    else htlPaidBonuses += bonusCost;
+    const isProcessor = e.role === "Processor";
+    if (isProcessor) {
+      const bonusCost = totals.qmFiles * e.qmBonus + totals.nonQmFiles * e.nonQmBonus;
+      if (e.bonusSource === "Broker") brokerPaidBonuses += bonusCost;
+      else htlPaidBonuses += bonusCost;
+      extraBonusTotal += (e.extraBonus || 0) * (totals.qmFiles + totals.nonQmFiles);
+    }
   });
-  const brokerPaidTotal = brokerPaidSalaries + brokerPaidBonuses;
+  // extra bonus is always broker-paid (on top); it raises required holdback
+  const brokerPaidTotal = brokerPaidSalaries + brokerPaidBonuses + extraBonusTotal;
   const htlPaidTotal = htlPaidSalaries + htlPaidBonuses;
 
   const holdbackSurplus = totals.teamHoldback - brokerPaidTotal;
@@ -174,27 +179,23 @@ export const calculate = (s: ModelState): Calc => {
   const monthlyLoNet = finalLoNetComp / 12;
   const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (brokerPaidTotal / totals.loNetBeforeHoldback) * 100 : 0;
 
-  const currentPlatformAnnual = s.currentSplit != null ? totals.grossRevenue * (s.currentSplit / 100) : null;
+  // Current platform: gross split minus the salaries the broker is already paying
+  const currentPlatformAnnual = s.currentSplit != null
+    ? s.annualVolume * (s.currentSplit / 100) - brokerPaidSalaries
+    : null;
   const currentPlatformMonthly = currentPlatformAnnual != null ? currentPlatformAnnual / 12 : null;
   const htlAnnual = finalLoNetComp;
   const htlMonthly = monthlyLoNet;
   const diffAnnual = currentPlatformAnnual != null ? htlAnnual - currentPlatformAnnual : null;
   const diffMonthly = currentPlatformMonthly != null ? htlMonthly - currentPlatformMonthly : null;
 
-  // internal company
-  const managementSalary = 60000;
-  const netProfitBeforeShare = totals.htlRetained - htlPaidTotal - managementSalary;
-  const profitShareEach = Math.max(0, netProfitBeforeShare) * 0.05;
-  const finalHtlNet = netProfitBeforeShare - profitShareEach * 2;
-
   return {
     buckets: bucketCalcs,
     totals,
     brokerPaidSalaries, brokerPaidBonuses, htlPaidSalaries, htlPaidBonuses,
-    brokerPaidTotal, htlPaidTotal,
+    brokerPaidTotal, htlPaidTotal, extraBonusTotal,
     holdbackSurplus, finalLoNetComp, monthlyLoNet, requiredHoldbackPct,
     currentPlatformAnnual, currentPlatformMonthly, htlAnnual, htlMonthly, diffAnnual, diffMonthly,
-    managementSalary, netProfitBeforeShare, profitShareEach, finalHtlNet,
   };
 };
 

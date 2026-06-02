@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Building2, Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Eye, EyeOff, Wallet, Users, Calculator, Shield } from "lucide-react";
+import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,12 +9,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { toast } from "@/hooks/use-toast";
 import {
   ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
-  BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey,
+  BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
+  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v2";
-type Mode = "recruit" | "internal";
+const STORAGE_KEY = "htl_lo_proforma_v3";
 
 const loadState = (): ModelState => {
   try {
@@ -61,28 +61,60 @@ const Warn = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
-const ROLE_OPTIONS = ["Junior Processor", "Underwriter", "Closer", "Marketing", "Other"];
+const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
+  if (role === "Processor") {
+    return { name: "", role, ...PROCESSOR_DEFAULTS };
+  }
+  return {
+    name: "",
+    role,
+    salary: 0,
+    salarySource: "HTL",
+    qmBonus: 0,
+    nonQmBonus: 0,
+    bonusSource: "HTL",
+    extraBonus: 0,
+  };
+};
 
 const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => void }) => {
   const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("Junior Processor");
-  const [customTitle, setCustomTitle] = useState("");
-  const [salary, setSalary] = useState<number>(0);
-  const [salarySource, setSalarySource] = useState<"HTL" | "Broker">("HTL");
-  const [qmBonus, setQmBonus] = useState<number>(0);
-  const [nonQmBonus, setNonQmBonus] = useState<number>(0);
-  const [bonusSource, setBonusSource] = useState<"HTL" | "Broker">("HTL");
+  const [role, setRole] = useState<Role>("Processor");
+  const [name, setName] = useState("");
+  const [salary, setSalary] = useState<number>(PROCESSOR_DEFAULTS.salary);
+  const [salarySource, setSalarySource] = useState<PaySource>("HTL");
+  const [bonusSource, setBonusSource] = useState<PaySource>("HTL");
+  const [qmBonus, setQmBonus] = useState<number>(PROCESSOR_DEFAULTS.qmBonus);
+  const [nonQmBonus, setNonQmBonus] = useState<number>(PROCESSOR_DEFAULTS.nonQmBonus);
+  const [extraBonus, setExtraBonus] = useState<number>(0);
+
+  // Auto-fill processor defaults when role flips to Processor
+  useEffect(() => {
+    if (role === "Processor") {
+      setSalary(PROCESSOR_DEFAULTS.salary);
+      setSalarySource(PROCESSOR_DEFAULTS.salarySource);
+      setQmBonus(PROCESSOR_DEFAULTS.qmBonus);
+      setNonQmBonus(PROCESSOR_DEFAULTS.nonQmBonus);
+      setBonusSource(PROCESSOR_DEFAULTS.bonusSource);
+      setExtraBonus(0);
+    } else {
+      setSalary(0);
+      setQmBonus(0);
+      setNonQmBonus(0);
+      setExtraBonus(0);
+    }
+  }, [role]);
 
   const reset = () => {
-    setTitle("Junior Processor"); setCustomTitle(""); setSalary(0); setSalarySource("HTL");
-    setQmBonus(0); setNonQmBonus(0); setBonusSource("HTL");
+    setRole("Processor"); setName("");
   };
   const submit = () => {
-    const role = title === "Other" ? (customTitle.trim() || "Other") : title;
-    onAdd({ name: "", role, salary, salarySource, qmBonus, nonQmBonus, bonusSource });
+    onAdd({ name, role, salary, salarySource, qmBonus, nonQmBonus, bonusSource, extraBonus });
     reset();
     setOpen(false);
   };
+
+  const isProcessor = role === "Processor";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
@@ -96,52 +128,66 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
           <DialogTitle>Add Employee</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
-          <div className="space-y-1">
-            <Label className="text-xs">Title</Label>
-            <Select value={title} onValueChange={setTitle}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {title === "Other" && (
-              <Input className="mt-2" placeholder="Custom title" value={customTitle} onChange={e => setCustomTitle(e.target.value)} />
-            )}
-          </div>
           <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Name</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Name" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Role / Title</Label>
+              <Select value={role} onValueChange={v => setRole(v as Role)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Annual Salary</Label>
               <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Salary Source</Label>
-              <Select value={salarySource} onValueChange={v => setSalarySource(v as "HTL" | "Broker")}>
+              <Label className="text-xs">Salary Covered By</Label>
+              <Select value={salarySource} onValueChange={v => setSalarySource(v as PaySource)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="HTL">Paid by HTL</SelectItem>
-                  <SelectItem value="Broker">Paid by Broker</SelectItem>
+                  <SelectItem value="HTL">Hometown Lending</SelectItem>
+                  <SelectItem value="Broker">Broker</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">QM Per-File Bonus</Label>
-              <Input type="number" value={qmBonus} onChange={e => setQmBonus(+e.target.value || 0)} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Non-QM Per-File Bonus</Label>
-              <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label className="text-xs">Bonus Source</Label>
-              <Select value={bonusSource} onValueChange={v => setBonusSource(v as "HTL" | "Broker")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="HTL">Paid by HTL</SelectItem>
-                  <SelectItem value="Broker">Paid by Broker</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {isProcessor && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">QM Per-File Bonus</Label>
+                  <Input type="number" value={qmBonus} onChange={e => setQmBonus(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Non-QM Per-File Bonus</Label>
+                  <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Extra Per-File Bonus (Broker)</Label>
+                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Bonus Covered By</Label>
+                  <Select value={bonusSource} onValueChange={v => setBonusSource(v as PaySource)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="HTL">Hometown Lending</SelectItem>
+                      <SelectItem value="Broker">Broker</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
           </div>
+          {isProcessor && (
+            <p className="text-xs text-muted-foreground">
+              The Extra Per-File Bonus is paid by the broker on top of the standard bonus and is automatically deducted from the LO's compensation.
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
@@ -152,11 +198,9 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
   );
 };
 
-
 // ---- Main page ----
 const Index = () => {
   const [state, setState] = useState<ModelState>(() => loadState());
-  const [mode, setMode] = useState<Mode>("recruit");
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -174,12 +218,24 @@ const Index = () => {
 
   const calc = useMemo(() => calculate(state), [state]);
 
-  // Validations
   const totalBucketFiles = state.buckets.reduce((a, b) => a + (b.active ? b.fileCount : 0), 0);
-  const totalBucketPct = state.buckets.reduce((a, b) => a + (b.active ? b.volumePct : 0), 0);
   const fileMismatch = Math.abs(totalBucketFiles - state.annualFiles) > 0;
-  const pctMismatch = Math.abs(totalBucketPct - 100) > 0.01;
   const holdbackShortfall = calc.holdbackSurplus < 0;
+
+  // When annual files changes, the delta lands in Broker QM
+  const updateAnnualFiles = (next: number) => {
+    setState(s => {
+      const current = s.buckets.reduce((a, b) => a + (b.active ? b.fileCount : 0), 0);
+      const delta = next - current;
+      return {
+        ...s,
+        annualFiles: next,
+        buckets: s.buckets.map(b =>
+          b.key === "broker_qm" ? { ...b, fileCount: Math.max(0, Math.floor(b.fileCount + delta)) } : b
+        ),
+      };
+    });
+  };
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
@@ -202,12 +258,26 @@ const Index = () => {
     }));
   };
 
-  const addEmployee = () => {
-    setState(s => ({
-      ...s,
-      employees: [...s.employees, { id: crypto.randomUUID(), name: "", role: "", salary: 0, salarySource: "Broker", qmBonus: 0, nonQmBonus: 0, bonusSource: "Broker" }],
-    }));
+  // Deactivating a bucket transfers its files to the matching Broker bucket
+  const toggleBucketActive = (key: ChannelKey, active: boolean) => {
+    setState(s => {
+      const bucket = s.buckets.find(b => b.key === key);
+      if (!bucket) return s;
+      if (active || bucket.fileCount === 0 || key === "broker_qm" || key === "broker_nonqm") {
+        return { ...s, buckets: s.buckets.map(b => b.key === key ? { ...b, active } : b) };
+      }
+      const targetKey: ChannelKey = bucket.loanType === "QM" ? "broker_qm" : "broker_nonqm";
+      return {
+        ...s,
+        buckets: s.buckets.map(b => {
+          if (b.key === key) return { ...b, active: false, fileCount: 0 };
+          if (b.key === targetKey) return { ...b, fileCount: b.fileCount + bucket.fileCount };
+          return b;
+        }),
+      };
+    });
   };
+
   const updateEmployee = (id: string, patch: Partial<Employee>) => {
     setState(s => ({ ...s, employees: s.employees.map(e => e.id === id ? { ...e, ...patch } : e) }));
   };
@@ -235,29 +305,13 @@ const Index = () => {
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold">Hometown Lending</p>
                 <h1 className="font-display text-3xl md:text-4xl font-bold leading-tight">LO Recruiting Pro Forma</h1>
-                <p className="text-sm text-primary-foreground/70 mt-1">Executive compensation &amp; internal profitability model</p>
+                <p className="text-sm text-primary-foreground/70 mt-1">See what your production is worth at Hometown Lending.</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <div className="inline-flex rounded-lg border border-accent/30 bg-primary-foreground/5 p-1">
-                <button
-                  onClick={() => setMode("recruit")}
-                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${mode === "recruit" ? "bg-accent text-accent-foreground shadow-gold" : "text-primary-foreground/80 hover:text-primary-foreground"}`}
-                >
-                  <Eye className="h-4 w-4" /> Recruit Mode
-                </button>
-                <button
-                  onClick={() => setMode("internal")}
-                  className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${mode === "internal" ? "bg-accent text-accent-foreground shadow-gold" : "text-primary-foreground/80 hover:text-primary-foreground"}`}
-                >
-                  <EyeOff className="h-4 w-4" /> Internal Mode
-                </button>
-              </div>
-              <Button onClick={reset} variant="outline" size="sm" className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground">
-                <RotateCcw className="h-4 w-4 mr-2" /> Reset
-              </Button>
-            </div>
+            <Button onClick={reset} variant="outline" size="sm" className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground">
+              <RotateCcw className="h-4 w-4 mr-2" /> Reset
+            </Button>
           </div>
         </div>
       </header>
@@ -272,31 +326,37 @@ const Index = () => {
             <Stat label="Funded Files" value={fmtNum(state.annualFiles)} />
           </div>
           <div className="premium-card p-5">
-            <Stat label="HTL Annual LO Net Comp" value={fmtUSD(calc.finalLoNetComp)} accent="gold" />
+            <Stat label="Annual LO Net Compensation" value={fmtUSD(calc.finalLoNetComp)} accent="gold" />
           </div>
           <div className="premium-card p-5">
             <Stat label="Estimated Monthly LO Net" value={fmtUSD(calc.monthlyLoNet)} accent="success" />
           </div>
         </div>
 
-        {/* Global inputs */}
-        <Section icon={<Calculator className="h-5 w-5" />} title="Global Inputs">
+        {/* Your Numbers */}
+        <Section icon={<Calculator className="h-5 w-5" />} title="Your Numbers">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
-              <Label>Recruit / LO Name</Label>
+              <Label>Loan Officer Name</Label>
               <Input value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
             </div>
             <div className="space-y-2">
-              <Label>Scenario Name</Label>
-              <Input value={state.scenarioName} onChange={e => setState(s => ({ ...s, scenarioName: e.target.value }))} placeholder="Optional" />
-            </div>
-            <div className="space-y-2">
               <Label>Annual Funded Volume</Label>
-              <Input type="number" value={state.annualVolume} onChange={e => setState(s => ({ ...s, annualVolume: +e.target.value || 0 }))} />
+              <Input
+                type="number"
+                value={state.annualVolume || ""}
+                placeholder="48000000"
+                onChange={e => setState(s => ({ ...s, annualVolume: +e.target.value || 0 }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>Annual Funded File Count</Label>
-              <Input type="number" value={state.annualFiles} onChange={e => setState(s => ({ ...s, annualFiles: +e.target.value || 0 }))} />
+              <Input
+                type="number"
+                value={state.annualFiles || ""}
+                placeholder="0"
+                onChange={e => updateAnnualFiles(+e.target.value || 0)}
+              />
             </div>
             <div className="space-y-2">
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
@@ -326,26 +386,21 @@ const Index = () => {
               />
             </div>
             <div className="space-y-2">
-              <Label>Team-Support Holdback</Label>
-              <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v as 10 | 20 | 30 }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10%</SelectItem>
-                  <SelectItem value="20">20%</SelectItem>
-                  <SelectItem value="30">30%</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>QM % (helper) — Non-QM = {fmtPct(100 - state.qmPctHelper, 0)}</Label>
-              <Input type="number" min={0} max={100} value={state.qmPctHelper} onChange={e => setState(s => ({ ...s, qmPctHelper: Math.min(100, Math.max(0, +e.target.value || 0)) }))} />
+              <Label>Team-Support Holdback (%)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min={0}
+                max={100}
+                value={state.holdbackPct}
+                onChange={e => setState(s => ({ ...s, holdbackPct: Math.min(100, Math.max(0, +e.target.value || 0)) }))}
+              />
             </div>
           </div>
 
-          {(fileMismatch || pctMismatch) && (
-            <div className="mt-4 space-y-2">
-              {fileMismatch && <Warn>Bucket file counts must equal total funded files ({fmtNum(state.annualFiles)}). Currently {fmtNum(totalBucketFiles)}.</Warn>}
-              {pctMismatch && <Warn>Bucket volume percentages must equal 100%. Currently {fmtPct(totalBucketPct, 2)}.</Warn>}
+          {fileMismatch && (
+            <div className="mt-4">
+              <Warn>Bucket file counts must equal total funded files ({fmtNum(state.annualFiles)}). Currently {fmtNum(totalBucketFiles)}.</Warn>
             </div>
           )}
         </Section>
@@ -364,9 +419,6 @@ const Index = () => {
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
                   <th className="py-3 px-2 font-semibold">Comp %</th>
                   <th className="py-3 px-2 font-semibold">Per-File Fee</th>
-                  {mode === "internal" && <th className="py-3 px-2 font-semibold">Channel Fees</th>}
-                  {mode === "internal" && <th className="py-3 px-2 font-semibold">Gross Rev</th>}
-                  {mode === "internal" && <th className="py-3 px-2 font-semibold">LO Split $</th>}
                   <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
                   <th className="py-3 px-2 font-semibold">Holdback</th>
                   <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
@@ -382,9 +434,9 @@ const Index = () => {
                         <div className="font-semibold text-primary">{b.label}</div>
                         <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType}</div>
                       </td>
-                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} /></td>
-                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.fileCount} onChange={e => updateBucket(b.key, { fileCount: +e.target.value || 0 })} /></td>
-                      <td className="px-2 align-top"><Input className="w-20" type="number" step="0.1" value={b.volumePct} onChange={e => updateBucket(b.key, { volumePct: +e.target.value || 0 })} /></td>
+                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => toggleBucketActive(b.key, v)} /></td>
+                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.fileCount} onChange={e => updateBucket(b.key, { fileCount: +e.target.value || 0 })} disabled={!b.active} /></td>
+                      <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
                       <td className="px-2 align-top">
@@ -396,14 +448,11 @@ const Index = () => {
                           max={isBroker ? BROKER_CAP : CORR_MAX}
                           value={b.compPct}
                           onChange={e => updateBucket(b.key, { compPct: +e.target.value || 0 })}
-                          disabled={isBroker}
+                          disabled={isBroker || !b.active}
                           title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
                         />
                       </td>
-                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.perFileFee} onChange={e => updateBucket(b.key, { perFileFee: +e.target.value || 0 })} /></td>
-                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.channelFees) : "—"}</td>}
-                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.grossRevenue) : "—"}</td>}
-                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.loGrossSplit) : "—"}</td>}
+                      <td className="px-2 align-top"><Input className="w-24" type="number" value={b.perFileFee} onChange={e => updateBucket(b.key, { perFileFee: +e.target.value || 0 })} disabled={!b.active} /></td>
                       <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
                       <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
                       <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
@@ -415,14 +464,11 @@ const Index = () => {
                 <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
                   <td className="py-3 pr-3" colSpan={2}>Totals</td>
                   <td className="px-2 tabular-nums">{fmtNum(totalBucketFiles)}</td>
-                  <td className="px-2 tabular-nums">{fmtPct(totalBucketPct, 1)}</td>
+                  <td className="px-2 tabular-nums">100%</td>
                   <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
                   <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2"></td>
-                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.channelFees)}</td>}
-                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.grossRevenue)}</td>}
-                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</td>}
                   <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
                   <td className="px-2 tabular-nums text-accent">{fmtUSD(calc.totals.teamHoldback)}</td>
                   <td className="pl-2 tabular-nums text-success">{fmtUSD(calc.totals.initialLoCash)}</td>
@@ -431,7 +477,7 @@ const Index = () => {
             </table>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Broker comp is capped at {BROKER_CAP}%. Correspondent comp must be between {CORR_MIN}% and {CORR_MAX}%.
+            Volume % is derived from file counts. Broker comp is capped at {BROKER_CAP}%. Correspondent comp must be between {CORR_MIN}% and {CORR_MAX}%. Deactivating a channel moves its files to the matching Broker bucket.
           </p>
         </Section>
 
@@ -442,73 +488,91 @@ const Index = () => {
           right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
-            <span className="font-medium text-foreground">Paid by Broker</span> means this cost is reconciled through the LO's team-support holdback. <span className="font-medium text-foreground">Paid by HTL</span> means Hometown Lending absorbs the cost.
+            <span className="font-medium text-foreground">Covered by Broker</span> means this cost is reconciled through the LO's team-support holdback. <span className="font-medium text-foreground">Covered by Hometown Lending</span> means HTL absorbs the cost.
           </p>
+          {state.employees.length === 0 && (
+            <div className="rounded-md border border-dashed border-border bg-secondary/30 px-4 py-6 text-sm text-muted-foreground text-center">
+              No team members yet. Click <span className="font-medium text-foreground">Add Employee</span> to build out your support team.
+            </div>
+          )}
           <div className="space-y-3">
-            {state.employees.map(e => (
-              <div key={e.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-lg border border-border bg-secondary/30">
-                <div className="md:col-span-2 space-y-1">
-                  <Label className="text-xs">Name</Label>
-                  <Input value={e.name} onChange={ev => updateEmployee(e.id, { name: ev.target.value })} placeholder="Optional" />
+            {state.employees.map(e => {
+              const isProcessor = e.role === "Processor";
+              return (
+                <div key={e.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-lg border border-border bg-secondary/30">
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Name</Label>
+                    <Input value={e.name} onChange={ev => updateEmployee(e.id, { name: ev.target.value })} placeholder="Name" />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Role / Title</Label>
+                    <Select value={ROLE_OPTIONS.includes(e.role as Role) ? e.role : "Processor"} onValueChange={v => {
+                      // when switching role, clear processor-only fields if leaving processor
+                      if (v !== "Processor" && isProcessor) {
+                        updateEmployee(e.id, { role: v, qmBonus: 0, nonQmBonus: 0, extraBonus: 0 });
+                      } else if (v === "Processor" && !isProcessor) {
+                        updateEmployee(e.id, { role: v, qmBonus: PROCESSOR_DEFAULTS.qmBonus, nonQmBonus: PROCESSOR_DEFAULTS.nonQmBonus });
+                      } else {
+                        updateEmployee(e.id, { role: v });
+                      }
+                    }}>
+                      <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                      <SelectContent>
+                        {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Annual Salary</Label>
+                    <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Salary Covered By</Label>
+                    <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as PaySource })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="HTL">Hometown Lending</SelectItem>
+                        <SelectItem value="Broker">Broker</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {isProcessor ? (
+                    <>
+                      <div className="md:col-span-1 space-y-1">
+                        <Label className="text-xs">QM/file</Label>
+                        <Input type="number" value={e.qmBonus} onChange={ev => updateEmployee(e.id, { qmBonus: +ev.target.value || 0 })} />
+                      </div>
+                      <div className="md:col-span-1 space-y-1">
+                        <Label className="text-xs">Non-QM/file</Label>
+                        <Input type="number" value={e.nonQmBonus} onChange={ev => updateEmployee(e.id, { nonQmBonus: +ev.target.value || 0 })} />
+                      </div>
+                      <div className="md:col-span-1 space-y-1">
+                        <Label className="text-xs" title="Extra per-file bonus paid by broker on top">Extra/file</Label>
+                        <Input type="number" value={e.extraBonus} onChange={ev => updateEmployee(e.id, { extraBonus: +ev.target.value || 0 })} />
+                      </div>
+                      <div className="md:col-span-1 flex items-end">
+                        <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="md:col-span-4 flex items-end justify-end">
+                      <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <div className="md:col-span-2 space-y-1">
-                  <Label className="text-xs">Role / Title</Label>
-                  <Select value={ROLE_OPTIONS.includes(e.role) ? e.role : "Other"} onValueChange={v => updateEmployee(e.id, { role: v })}>
-                    <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
-                    <SelectContent>
-                      {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                      {!ROLE_OPTIONS.includes(e.role) && e.role && (
-                        <SelectItem value={e.role}>{e.role}</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="md:col-span-2 space-y-1">
-                  <Label className="text-xs">Annual Salary</Label>
-                  <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
-                </div>
-                <div className="md:col-span-2 space-y-1">
-                  <Label className="text-xs">Salary Source</Label>
-                  <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as "HTL" | "Broker" })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Broker">Paid by Broker</SelectItem>
-                      <SelectItem value="HTL">Paid by HTL</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="md:col-span-1 space-y-1">
-                  <Label className="text-xs">QM/file</Label>
-                  <Input type="number" value={e.qmBonus} onChange={ev => updateEmployee(e.id, { qmBonus: +ev.target.value || 0 })} />
-                </div>
-                <div className="md:col-span-1 space-y-1">
-                  <Label className="text-xs">Non-QM/file</Label>
-                  <Input type="number" value={e.nonQmBonus} onChange={ev => updateEmployee(e.id, { nonQmBonus: +ev.target.value || 0 })} />
-                </div>
-                <div className="md:col-span-1 space-y-1">
-                  <Label className="text-xs">Bonus Src</Label>
-                  <Select value={e.bonusSource} onValueChange={v => updateEmployee(e.id, { bonusSource: v as "HTL" | "Broker" })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Broker">Broker</SelectItem>
-                      <SelectItem value="HTL">HTL</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="md:col-span-1 flex items-end">
-                  <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="premium-card p-4"><Stat label="Broker-Paid Salaries" value={fmtUSD(calc.brokerPaidSalaries)} /></div>
-            <div className="premium-card p-4"><Stat label="Broker-Paid Bonuses" value={fmtUSD(calc.brokerPaidBonuses)} /></div>
-            <div className="premium-card p-4"><Stat label="Paid by HTL Salaries" value={fmtUSD(calc.htlPaidSalaries)} accent="gold" /></div>
-            <div className="premium-card p-4"><Stat label="Paid by HTL Bonuses" value={fmtUSD(calc.htlPaidBonuses)} accent="gold" /></div>
+            <div className="premium-card p-4"><Stat label="Broker-Paid Bonuses" value={fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)} /></div>
+            <div className="premium-card p-4"><Stat label="HTL-Paid Salaries" value={fmtUSD(calc.htlPaidSalaries)} accent="gold" /></div>
+            <div className="premium-card p-4"><Stat label="HTL-Paid Bonuses" value={fmtUSD(calc.htlPaidBonuses)} accent="gold" /></div>
           </div>
         </Section>
 
@@ -525,7 +589,7 @@ const Index = () => {
                 accent={calc.holdbackSurplus >= 0 ? "success" : "destructive"}
               />
             </div>
-            <div className="premium-card p-5"><Stat label="Paid by HTL Support Value" value={fmtUSD(calc.htlPaidTotal)} accent="gold" /></div>
+            <div className="premium-card p-5"><Stat label="HTL-Paid Support Value" value={fmtUSD(calc.htlPaidTotal)} accent="gold" /></div>
             <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
               <span className="stat-label !text-accent">Final LO Net Annual Comp</span>
               <span className="stat-value !text-primary-foreground mt-1 block">{fmtUSD(calc.finalLoNetComp)}</span>
@@ -539,15 +603,18 @@ const Index = () => {
         </Section>
 
         {/* Comparison */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Current Platform vs Hometown Lending">
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
           {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter the LO's <span className="font-medium text-foreground">Current Platform Split %</span> above to see a side-by-side comparison.</p>
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split %</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × split − broker-paid salaries</em>.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="premium-card p-5">
                 <p className="stat-label">Current Platform ({fmtPct(state.currentSplit, 1)} split)</p>
                 <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
                 <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                {calc.brokerPaidSalaries > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">Less {fmtUSD(calc.brokerPaidSalaries)} broker-paid salaries</p>
+                )}
               </div>
               <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
                 <p className="stat-label !text-accent">Hometown Lending</p>
@@ -564,53 +631,6 @@ const Index = () => {
             </div>
           )}
         </Section>
-
-        {/* Internal-only sections */}
-        {mode === "internal" && (
-          <>
-            <Section icon={<Shield className="h-5 w-5" />} title="Required Holdback Analysis">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="premium-card p-5"><Stat label="Selected Holdback" value={fmtPct(state.holdbackPct, 0)} /></div>
-                <div className="premium-card p-5"><Stat label="Required Holdback" value={fmtPct(calc.requiredHoldbackPct, 2)} accent={calc.requiredHoldbackPct > state.holdbackPct ? "warning" : "success"} /></div>
-                <div className="premium-card p-5"><Stat label="Surplus / Shortfall" value={fmtUSD(calc.holdbackSurplus)} accent={calc.holdbackSurplus >= 0 ? "success" : "destructive"} /></div>
-                <div className="premium-card p-5">
-                  <span className="stat-label">Recommendation</span>
-                  <p className="mt-2 text-sm font-medium">
-                    {calc.requiredHoldbackPct <= state.holdbackPct
-                      ? "Current holdback is sufficient."
-                      : `Increase holdback to ${calc.requiredHoldbackPct <= 10 ? "10%" : calc.requiredHoldbackPct <= 20 ? "20%" : "30%"}.`}
-                  </p>
-                </div>
-              </div>
-            </Section>
-
-            <Section icon={<Building2 className="h-5 w-5" />} title="Internal Company P&L">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div className="premium-card p-5"><Stat label="Total Gross Revenue" value={fmtUSD(calc.totals.grossRevenue)} /></div>
-                <div className="premium-card p-5"><Stat label="LO Payout (Gross Split)" value={fmtUSD(calc.totals.loGrossSplit)} /></div>
-                <div className="premium-card p-5"><Stat label="HTL Retained Split" value={fmtUSD(calc.totals.htlRetained)} accent="gold" /></div>
-                <div className="premium-card p-5"><Stat label="Channel Fees" value={fmtUSD(calc.totals.channelFees)} /></div>
-                <div className="premium-card p-5"><Stat label="Paid by HTL Total" value={fmtUSD(calc.htlPaidTotal)} accent="warning" /></div>
-                <div className="premium-card p-5"><Stat label="Management Salary" value={fmtUSD(calc.managementSalary)} /></div>
-              </div>
-
-              <div className="rounded-lg border border-border overflow-hidden">
-                <table className="w-full text-sm">
-                  <tbody>
-                    <tr className="border-b border-border"><td className="py-3 px-4 text-muted-foreground">HTL Retained Split</td><td className="py-3 px-4 text-right tabular-nums">{fmtUSD(calc.totals.htlRetained)}</td></tr>
-                    <tr className="border-b border-border"><td className="py-3 px-4 text-muted-foreground">Less: Paid by HTL Salaries</td><td className="py-3 px-4 text-right tabular-nums">({fmtUSD(calc.htlPaidSalaries)})</td></tr>
-                    <tr className="border-b border-border"><td className="py-3 px-4 text-muted-foreground">Less: Paid by HTL Bonuses</td><td className="py-3 px-4 text-right tabular-nums">({fmtUSD(calc.htlPaidBonuses)})</td></tr>
-                    <tr className="border-b border-border"><td className="py-3 px-4 text-muted-foreground">Less: Management Salary ($5,000 / mo)</td><td className="py-3 px-4 text-right tabular-nums">({fmtUSD(calc.managementSalary)})</td></tr>
-                    <tr className="border-b border-border bg-secondary/40 font-semibold"><td className="py-3 px-4">Net Profit Before Profit Share</td><td className="py-3 px-4 text-right tabular-nums">{fmtUSD(calc.netProfitBeforeShare)}</td></tr>
-                    <tr className="border-b border-border"><td className="py-3 px-4 text-muted-foreground">Less: Profit Share #1 (5%)</td><td className="py-3 px-4 text-right tabular-nums">({fmtUSD(calc.profitShareEach)})</td></tr>
-                    <tr className="border-b border-border"><td className="py-3 px-4 text-muted-foreground">Less: Profit Share #2 (5%)</td><td className="py-3 px-4 text-right tabular-nums">({fmtUSD(calc.profitShareEach)})</td></tr>
-                    <tr className="bg-gradient-hero text-primary-foreground font-bold"><td className="py-4 px-4">Final HTL Net Profit</td><td className="py-4 px-4 text-right tabular-nums text-accent">{fmtUSD(calc.finalHtlNet)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </Section>
-          </>
-        )}
 
         <footer className="text-center text-xs text-muted-foreground py-8">
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.
