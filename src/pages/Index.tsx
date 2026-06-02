@@ -505,7 +505,7 @@ const Index = () => {
                     <>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Annual Salary</Label>
-                        <Input type="number" value={e.salary} onChange={ev => updateEmployee(e.id, { salary: +ev.target.value || 0 })} />
+                        <CurrencyInput value={e.salary} onChange={v => updateEmployee(e.id, { salary: v })} />
                       </div>
                       <div className="md:col-span-2 space-y-1">
                         <Label className="text-xs">Salary Paid By</Label>
