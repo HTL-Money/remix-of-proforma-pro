@@ -439,7 +439,7 @@ const Index = () => {
         <Section
           icon={<Users className="h-5 w-5" />}
           title="Team & Employee Support"
-          right={<Button onClick={addEmployee} size="sm" className="gold-accent text-accent-foreground hover:opacity-90"><Plus className="h-4 w-4 mr-1" /> Add Employee</Button>}
+          right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
             <span className="font-medium text-foreground">Paid by Broker</span> means this cost is reconciled through the LO's team-support holdback. <span className="font-medium text-foreground">Paid by HTL</span> means Hometown Lending absorbs the cost.
