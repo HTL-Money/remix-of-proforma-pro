@@ -211,24 +211,7 @@ const Index = () => {
 
   const calc = useMemo(() => calculate(state), [state]);
 
-  const totalBucketFiles = state.buckets.reduce((a, b) => a + (b.active ? b.fileCount : 0), 0);
-  const fileMismatch = Math.abs(totalBucketFiles - state.annualFiles) > 0;
   const holdbackShortfall = calc.holdbackSurplus < 0;
-
-  // When annual files changes, the delta lands in Broker QM
-  const updateAnnualFiles = (next: number) => {
-    setState(s => {
-      const current = s.buckets.reduce((a, b) => a + (b.active ? b.fileCount : 0), 0);
-      const delta = next - current;
-      return {
-        ...s,
-        annualFiles: next,
-        buckets: s.buckets.map(b =>
-          b.key === "broker_qm" ? { ...b, fileCount: Math.max(0, Math.floor(b.fileCount + delta)) } : b
-        ),
-      };
-    });
-  };
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
