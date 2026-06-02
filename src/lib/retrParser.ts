@@ -2,7 +2,7 @@
 // to populate the LO Pro Forma calculator. Runs fully client-side via pdfjs-dist.
 
 import * as pdfjsLib from "pdfjs-dist";
-// @ts-expect-error - Vite worker import
+// @ts-ignore - Vite worker import
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker();
