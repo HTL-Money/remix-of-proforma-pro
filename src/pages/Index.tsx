@@ -354,12 +354,11 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>Annual Funded Volume</Label>
-              <Input
+              <CurrencyInput
                 className="max-w-[200px]"
-                type="number"
-                value={state.annualVolume || ""}
-                placeholder="48000000"
-                onChange={e => setState(s => ({ ...s, annualVolume: +e.target.value || 0 }))}
+                value={state.annualVolume}
+                placeholder="48,000,000"
+                onChange={v => setState(s => ({ ...s, annualVolume: v }))}
               />
             </div>
             <div className="space-y-2">
