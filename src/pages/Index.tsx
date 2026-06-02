@@ -463,6 +463,7 @@ const Index = () => {
           icon={<Users className="h-5 w-5" />}
           title="Team & Employee Support"
           defaultOpen={false}
+          compact
           right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
