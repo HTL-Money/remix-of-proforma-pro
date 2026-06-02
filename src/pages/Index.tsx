@@ -202,7 +202,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
                 </div>
                 <div className="space-y-1 col-span-2">
                   <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
-                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+                  <CurrencyInput value={extraBonus} onChange={setExtraBonus} />
                 </div>
               </>
             )}
