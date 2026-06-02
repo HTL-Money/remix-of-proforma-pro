@@ -16,6 +16,7 @@ import {
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
+import { RetrImport } from "@/components/RetrImport";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 
@@ -350,6 +351,29 @@ const Index = () => {
 
         {/* Production */}
         <Section icon={<Calculator className="h-5 w-5" />} title="Production" compact>
+          <div className="mb-4">
+            <RetrImport
+              onImport={(r) => {
+                const total = r.annualFiles;
+                const pct = (n: number) => total > 0 ? (n / total) * 100 : 0;
+                setState(s => ({
+                  ...s,
+                  recruitName: r.recruitName ?? s.recruitName,
+                  annualVolume: r.annualVolume,
+                  annualFiles: r.annualFiles,
+                  avgLoanAmount: r.avgLoanAmount || s.avgLoanAmount,
+                  avgLoanOverride: false,
+                  loanTypeMix: {
+                    fha: pct(r.byLoanType.fha),
+                    va: pct(r.byLoanType.va),
+                    conv: pct(r.byLoanType.conv),
+                    nonqm: pct(r.byLoanType.nonqm),
+                  },
+                }));
+                toast({ title: "RETR imported", description: `${r.recruitName ?? "Loan Officer"} — ${r.annualFiles} files, ${fmtUSD(r.annualVolume, { compact: true })}` });
+              }}
+            />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Loan Officer</Label>
