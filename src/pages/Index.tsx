@@ -312,11 +312,12 @@ const Index = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Loan Officer Name</Label>
-              <Input value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
+              <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
             </div>
             <div className="space-y-2">
               <Label>Annual Funded Volume</Label>
               <Input
+                className="max-w-[200px]"
                 type="number"
                 value={state.annualVolume || ""}
                 placeholder="48000000"
@@ -326,6 +327,7 @@ const Index = () => {
             <div className="space-y-2">
               <Label>Annual Funded File Count</Label>
               <Input
+                className="max-w-[200px]"
                 type="number"
                 value={state.annualFiles || ""}
                 placeholder="0"
@@ -334,7 +336,7 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 max-w-[200px]">
                 <Input
                   type="number"
                   value={Math.round(state.avgLoanAmount)}
@@ -347,21 +349,24 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>HTL LO Split (%)</Label>
-              <Input type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
+              <Input className="max-w-[200px]" type="number" step="0.1" value={state.loSplit} onChange={e => setState(s => ({ ...s, loSplit: +e.target.value || 0 }))} />
             </div>
             <div className="space-y-2">
               <Label>Team-Support Holdback</Label>
-              <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">0%</SelectItem>
-                  <SelectItem value="10">10%</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="max-w-[200px]">
+                <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">0%</SelectItem>
+                    <SelectItem value="10">10%</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>QM Loan Mix (%)</Label>
               <Input
+                className="max-w-[200px]"
                 type="number"
                 min={0}
                 max={100}
@@ -381,21 +386,38 @@ const Index = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div className="space-y-2">
               <Label>Your LO BPS on Current Platform</Label>
-              <Input
-                type="number"
-                step="1"
-                min={0}
-                max={275}
-                value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
-                placeholder="e.g. 200"
-                onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
-              />
+              <div className="flex items-center gap-3">
+                <Input
+                  className="w-32"
+                  type="number"
+                  step="1"
+                  min={0}
+                  max={275}
+                  value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
+                  placeholder="e.g. 200"
+                  onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
+                />
+                {state.currentSplit != null && (
+                  <span className="text-sm font-semibold text-accent tabular-nums">= {fmtPct(state.currentSplit, 2)}</span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
-                100 BPS = 1% of the loan amount. Platform takes 2.75% (275 BPS) gross; you receive your BPS.
+                Enter a 3-digit BPS value (e.g. 200 = 2.00%). 100 BPS = 1% of the loan amount. The platform takes 2.75% (275 BPS) gross; you receive your BPS.
               </p>
             </div>
-            <div className="rounded-md border border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground">
-              The current platform shows your LO comp at the BPS you enter, less any broker-paid salaries for your LOA / Loan Partner. The Hometown Lending side reflects your production buckets, ${QM_FEE}/QM and ${NONQM_FEE}/Non-QM per-file fees, team-support holdback, and all broker-paid team costs.
+            <div className="space-y-2">
+              <Label>Channels to Compare</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {state.buckets.map(b => (
+                  <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs cursor-pointer">
+                    <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
+                    <span className="font-medium">{b.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Toggle Correspondent on to model the comp difference vs. the broker-only channel.
+              </p>
             </div>
           </div>
 
@@ -415,9 +437,9 @@ const Index = () => {
                   )}
                 </div>
               </div>
-              <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
+              <div className="premium-card p-5 bg-primary text-primary-foreground border-0">
                 <p className="stat-label !text-accent">Hometown Lending</p>
-                <p className="stat-value !text-primary-foreground mt-1">{fmtUSD(calc.htlAnnual)}</p>
+                <p className="stat-value !text-accent mt-1">{fmtUSD(calc.htlAnnual)}</p>
                 <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
                 <div className="mt-3 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/20 pt-3">
                   <div className="flex justify-between"><span>LO net pre-holdback</span><span className="tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</span></div>
@@ -444,7 +466,6 @@ const Index = () => {
               <thead>
                 <tr className="text-left text-muted-foreground border-b border-border">
                   <th className="py-3 pr-3 font-semibold">Bucket</th>
-                  <th className="py-3 px-2 font-semibold">Active</th>
                   <th className="py-3 px-2 font-semibold">Vol %</th>
                   <th className="py-3 px-2 font-semibold">$ Volume</th>
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
@@ -455,16 +476,15 @@ const Index = () => {
                 </tr>
               </thead>
               <tbody>
-                {state.buckets.map(b => {
+                {state.buckets.filter(b => b.active).map(b => {
                   const c = calc.buckets.find(x => x.bucket.key === b.key);
                   const isBroker = b.channel === "Broker";
                   return (
-                    <tr key={b.key} className={`border-b border-border/60 ${!b.active ? "opacity-50" : ""}`}>
+                    <tr key={b.key} className="border-b border-border/60">
                       <td className="py-3 pr-3 align-top">
                         <div className="font-semibold text-primary">{b.label}</div>
                         <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.loanType === "QM" ? QM_FEE : NONQM_FEE}/file</div>
                       </td>
-                      <td className="px-2 align-top"><Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} /></td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
@@ -477,7 +497,7 @@ const Index = () => {
                           max={isBroker ? BROKER_CAP : CORR_MAX}
                           value={b.compPct}
                           onChange={e => updateBucket(b.key, { compPct: +e.target.value || 0 })}
-                          disabled={isBroker || !b.active}
+                          disabled={isBroker}
                           title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
                         />
                       </td>
@@ -490,7 +510,7 @@ const Index = () => {
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
-                  <td className="py-3 pr-3" colSpan={2}>Totals</td>
+                  <td className="py-3 pr-3">Totals</td>
                   <td className="px-2 tabular-nums">100%</td>
                   <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
                   <td className="px-2"></td>
@@ -581,10 +601,31 @@ const Index = () => {
             })}
           </div>
 
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="premium-card p-4"><Stat label="Broker-Paid Per-File Bonuses" value={fmtUSD(calc.extraBonusTotal)} /></div>
-            <div className="premium-card p-4"><Stat label="Broker-Paid Total (deducted from LO)" value={fmtUSD(calc.brokerPaidTotal)} /></div>
-          </div>
+          {state.employees.length > 0 && (
+            <div className="mt-6">
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Annual Cost Per Employee</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {state.employees.map(e => {
+                  const totalFiles = calc.totals.qmFiles + calc.totals.nonQmFiles;
+                  const bonusAnnual = e.role === "Processor"
+                    ? calc.totals.qmFiles * (e.qmBonus || 0) + calc.totals.nonQmFiles * (e.nonQmBonus || 0)
+                    : (e.extraBonus || 0) * totalFiles;
+                  const total = (e.salary || 0) + bonusAnnual;
+                  return (
+                    <div key={e.id} className="premium-card p-4">
+                      <p className="text-xs text-muted-foreground">{e.role}</p>
+                      <p className="font-semibold text-primary">{e.name || "Unnamed"}</p>
+                      <p className="stat-value text-accent mt-2 tabular-nums">{fmtUSD(total)}</p>
+                      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                        <div className="flex justify-between"><span>Salary ({e.salarySource})</span><span className="tabular-nums">{fmtUSD(e.salary || 0)}</span></div>
+                        <div className="flex justify-between"><span>Per-file bonuses</span><span className="tabular-nums">{fmtUSD(bonusAnnual)}</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </Section>
 
         {/* LO Economics Summary */}
