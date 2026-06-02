@@ -11,10 +11,11 @@ import {
   ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
+  LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v3";
+const STORAGE_KEY = "htl_lo_proforma_v4";
 
 const loadState = (): ModelState => {
   try {
