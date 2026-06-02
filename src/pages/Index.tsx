@@ -510,7 +510,7 @@ const Index = () => {
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
-                  <td className="py-3 pr-3" colSpan={2}>Totals</td>
+                  <td className="py-3 pr-3">Totals</td>
                   <td className="px-2 tabular-nums">100%</td>
                   <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
                   <td className="px-2"></td>
