@@ -180,7 +180,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Non-QM Per-File Bonus (HTL-paid)</Label>
-                  <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
+                  <CurrencyInput value={nonQmBonus} onChange={setNonQmBonus} />
                 </div>
               </>
             )}
