@@ -613,35 +613,8 @@ const Index = () => {
           )}
         </Section>
 
-        {/* Comparison */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
-          {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split (BPS)</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × (BPS ÷ 10,000) − broker-paid salaries</em>.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="premium-card p-5">
-                <p className="stat-label">Current Platform ({Math.round(state.currentSplit * 50)} BPS · {fmtPct(state.currentSplit, 2)})</p>
-                <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD((calc.currentPlatformMonthly ?? 0))} / month</p>
-                {calc.brokerPaidSalaries > 0 && (
-                  <p className="text-xs text-muted-foreground mt-2">Less {fmtUSD(calc.brokerPaidSalaries)} broker-paid salaries</p>
-                )}
-              </div>
-              <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
-                <p className="stat-label !text-accent">Hometown Lending</p>
-                <p className="stat-value !text-primary-foreground mt-1">{fmtUSD(calc.htlAnnual)}</p>
-                <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
-              </div>
-              <div className="premium-card p-5">
-                <p className="stat-label">Annual Difference</p>
-                <p className={`stat-value mt-1 ${(calc.diffAnnual ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
-                  {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)} / month</p>
-              </div>
-            </div>
-          )}
-        </Section>
+
+
 
         <footer className="text-center text-xs text-muted-foreground py-8">
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.
