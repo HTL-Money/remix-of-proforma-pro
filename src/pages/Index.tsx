@@ -227,8 +227,9 @@ const Index = () => {
   }, [state.annualVolume, state.annualFiles, state.avgLoanOverride]); // eslint-disable-line
 
   const calc = useMemo(() => calculate(state), [state]);
-
-  const holdbackShortfall = calc.holdbackSurplus < 0;
+  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(state), [state]);
+  const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
+  const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
