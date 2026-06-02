@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import {
   ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
@@ -59,6 +60,98 @@ const Warn = ({ children }: { children: React.ReactNode }) => (
     <span>{children}</span>
   </div>
 );
+
+const ROLE_OPTIONS = ["Junior Processor", "Underwriter", "Closer", "Marketing", "Other"];
+
+const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => void }) => {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("Junior Processor");
+  const [customTitle, setCustomTitle] = useState("");
+  const [salary, setSalary] = useState<number>(0);
+  const [salarySource, setSalarySource] = useState<"HTL" | "Broker">("HTL");
+  const [qmBonus, setQmBonus] = useState<number>(0);
+  const [nonQmBonus, setNonQmBonus] = useState<number>(0);
+  const [bonusSource, setBonusSource] = useState<"HTL" | "Broker">("HTL");
+
+  const reset = () => {
+    setTitle("Junior Processor"); setCustomTitle(""); setSalary(0); setSalarySource("HTL");
+    setQmBonus(0); setNonQmBonus(0); setBonusSource("HTL");
+  };
+  const submit = () => {
+    const role = title === "Other" ? (customTitle.trim() || "Other") : title;
+    onAdd({ name: "", role, salary, salarySource, qmBonus, nonQmBonus, bonusSource });
+    reset();
+    setOpen(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+      <DialogTrigger asChild>
+        <Button size="sm" className="gold-accent text-accent-foreground hover:opacity-90">
+          <Plus className="h-4 w-4 mr-1" /> Add Employee
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Add Employee</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Title</Label>
+            <Select value={title} onValueChange={setTitle}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {title === "Other" && (
+              <Input className="mt-2" placeholder="Custom title" value={customTitle} onChange={e => setCustomTitle(e.target.value)} />
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Annual Salary</Label>
+              <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Salary Source</Label>
+              <Select value={salarySource} onValueChange={v => setSalarySource(v as "HTL" | "Broker")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HTL">Paid by HTL</SelectItem>
+                  <SelectItem value="Broker">Paid by Broker</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">QM Per-File Bonus</Label>
+              <Input type="number" value={qmBonus} onChange={e => setQmBonus(+e.target.value || 0)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Non-QM Per-File Bonus</Label>
+              <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs">Bonus Source</Label>
+              <Select value={bonusSource} onValueChange={v => setBonusSource(v as "HTL" | "Broker")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="HTL">Paid by HTL</SelectItem>
+                  <SelectItem value="Broker">Paid by Broker</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={submit} className="gold-accent text-accent-foreground hover:opacity-90">Add</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 
 // ---- Main page ----
 const Index = () => {
@@ -346,7 +439,7 @@ const Index = () => {
         <Section
           icon={<Users className="h-5 w-5" />}
           title="Team & Employee Support"
-          right={<Button onClick={addEmployee} size="sm" className="gold-accent text-accent-foreground hover:opacity-90"><Plus className="h-4 w-4 mr-1" /> Add Employee</Button>}
+          right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
             <span className="font-medium text-foreground">Paid by Broker</span> means this cost is reconciled through the LO's team-support holdback. <span className="font-medium text-foreground">Paid by HTL</span> means Hometown Lending absorbs the cost.
@@ -360,17 +453,13 @@ const Index = () => {
                 </div>
                 <div className="md:col-span-2 space-y-1">
                   <Label className="text-xs">Role / Title</Label>
-                  <Select value={e.role} onValueChange={v => updateEmployee(e.id, { role: v })}>
+                  <Select value={ROLE_OPTIONS.includes(e.role) ? e.role : "Other"} onValueChange={v => updateEmployee(e.id, { role: v })}>
                     <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="LOA">LOA</SelectItem>
-                      <SelectItem value="Loan Partner">Loan Partner</SelectItem>
-                      <SelectItem value="Processor">Processor</SelectItem>
-                      <SelectItem value="Junior Processor">Junior Processor</SelectItem>
-                      <SelectItem value="Underwriter">Underwriter</SelectItem>
-                      <SelectItem value="Closer">Closer</SelectItem>
-                      <SelectItem value="Marketing">Marketing</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
+                      {ROLE_OPTIONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                      {!ROLE_OPTIONS.includes(e.role) && e.role && (
+                        <SelectItem value={e.role}>{e.role}</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
