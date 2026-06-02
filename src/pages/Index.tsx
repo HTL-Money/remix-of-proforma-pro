@@ -10,8 +10,9 @@ import {
   ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey,
 } from "@/lib/proforma";
+import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v1";
+const STORAGE_KEY = "htl_lo_proforma_v2";
 type Mode = "recruit" | "internal";
 
 const loadState = (): ModelState => {
@@ -135,13 +136,13 @@ const Index = () => {
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 md:py-10">
           <div className="flex flex-wrap items-center justify-between gap-6">
             <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-lg gold-accent flex items-center justify-center shadow-gold">
-                <Building2 className="h-6 w-6 text-accent-foreground" />
+              <div className="h-14 w-14 rounded-lg bg-white flex items-center justify-center shadow-soft p-1.5">
+                <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold">Hometown Lending</p>
                 <h1 className="font-display text-3xl md:text-4xl font-bold leading-tight">LO Recruiting Pro Forma</h1>
-                <p className="text-sm text-primary-foreground/70 mt-1">Executive compensation & internal profitability model</p>
+                <p className="text-sm text-primary-foreground/70 mt-1">Executive compensation &amp; internal profitability model</p>
               </div>
             </div>
 
@@ -270,9 +271,9 @@ const Index = () => {
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
                   <th className="py-3 px-2 font-semibold">Comp %</th>
                   <th className="py-3 px-2 font-semibold">Per-File Fee</th>
-                  <th className="py-3 px-2 font-semibold">Channel Fees</th>
-                  <th className="py-3 px-2 font-semibold">Gross Rev</th>
-                  <th className="py-3 px-2 font-semibold">LO Split $</th>
+                  {mode === "internal" && <th className="py-3 px-2 font-semibold">Channel Fees</th>}
+                  {mode === "internal" && <th className="py-3 px-2 font-semibold">Gross Rev</th>}
+                  {mode === "internal" && <th className="py-3 px-2 font-semibold">LO Split $</th>}
                   <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
                   <th className="py-3 px-2 font-semibold">Holdback</th>
                   <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
@@ -307,9 +308,9 @@ const Index = () => {
                         />
                       </td>
                       <td className="px-2 align-top"><Input className="w-24" type="number" value={b.perFileFee} onChange={e => updateBucket(b.key, { perFileFee: +e.target.value || 0 })} /></td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.channelFees) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.grossRevenue) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.loGrossSplit) : "—"}</td>
+                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.channelFees) : "—"}</td>}
+                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.grossRevenue) : "—"}</td>}
+                      {mode === "internal" && <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.loGrossSplit) : "—"}</td>}
                       <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
                       <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
                       <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
@@ -326,9 +327,9 @@ const Index = () => {
                   <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2"></td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.channelFees)}</td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.grossRevenue)}</td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</td>
+                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.channelFees)}</td>}
+                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.grossRevenue)}</td>}
+                  {mode === "internal" && <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</td>}
                   <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
                   <td className="px-2 tabular-nums text-accent">{fmtUSD(calc.totals.teamHoldback)}</td>
                   <td className="pl-2 tabular-nums text-success">{fmtUSD(calc.totals.initialLoCash)}</td>
