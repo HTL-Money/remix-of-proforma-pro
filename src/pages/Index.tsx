@@ -66,15 +66,18 @@ const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
   if (role === "Processor") {
     return { name: "", role, ...PROCESSOR_DEFAULTS };
   }
+  const extra = role === "Loan Officer Assistant" ? LOA_EXTRA_BONUS
+              : role === "Loan Partner" ? LOAN_PARTNER_EXTRA_BONUS
+              : 0;
   return {
     name: "",
     role,
     salary: 0,
-    salarySource: "HTL",
+    salarySource: "Broker",
     qmBonus: 0,
     nonQmBonus: 0,
-    bonusSource: "HTL",
-    extraBonus: 0,
+    bonusSource: "Broker",
+    extraBonus: extra,
   };
 };
 
