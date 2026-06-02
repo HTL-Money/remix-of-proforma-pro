@@ -551,7 +551,7 @@ const Index = () => {
             </table>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Files are allocated automatically from your QM mix. Per-file fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). If both Broker and Correspondent for a loan type are active, files default to Broker — deactivate the Broker bucket to route that loan type to Correspondent.
+            Files are allocated automatically from your Loan Type Mix. Broker fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). Correspondent uses a flat ${CORR_FEE} funding fee per file (no processing fee). Use the Correspondent toggles in the Comparison Tool above to route VA / Conventional / Non-QM through that channel.
           </p>
         </Section>
 
