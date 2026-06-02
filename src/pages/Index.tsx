@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator } from "lucide-react";
+import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator, Minus } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,15 +46,32 @@ const Stat = ({ label, value, accent, mono = true }: { label: string; value: str
   );
 };
 
-const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode }> = ({ icon, title, children, right }) => (
-  <section className="premium-card p-6 md:p-8">
-    <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-      <h2 className="section-header !mb-0 !border-0 !pb-0">{icon}{title}</h2>
-      {right}
-    </div>
-    {children}
-  </section>
-);
+const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode; defaultOpen?: boolean }> = ({ icon, title, children, right, defaultOpen = true }) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="premium-card p-6 md:p-8">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7 rounded-full border-accent/40 text-accent hover:bg-accent hover:text-accent-foreground"
+                aria-label={open ? "Collapse section" : "Expand section"}
+              >
+                {open ? <Minus className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+              </Button>
+            </CollapsibleTrigger>
+            <h2 className="section-header !mb-0 !border-0 !pb-0">{icon}{title}</h2>
+          </div>
+          {right}
+        </div>
+        <CollapsibleContent>{children}</CollapsibleContent>
+      </Collapsible>
+    </section>
+  );
+};
 
 const Warn = ({ children }: { children: React.ReactNode }) => (
   <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning-foreground">
@@ -281,9 +299,9 @@ const Index = () => {
                 <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
               <div className="pt-2">
-                <p className="text-sm md:text-base uppercase tracking-[0.2em] text-accent font-bold">Hometown Lending</p>
-                <h1 className="font-display text-5xl md:text-7xl font-bold leading-none tracking-tight mt-1 text-primary-foreground">LO PRO FORMA</h1>
-                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">your production's true value</p>
+                <h1 className="font-display font-bold leading-none tracking-tight underline decoration-2 underline-offset-[10px]" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
+                <p className="font-display font-semibold mt-4 text-primary-foreground" style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)", lineHeight: 1.1 }}>LO Pro Forma:</p>
+                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">Your production's true value at Hometown Lending.</p>
               </div>
             </div>
 
@@ -330,7 +348,7 @@ const Index = () => {
         <Section icon={<Calculator className="h-5 w-5" />} title="Production">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
-              <Label>Loan Officer Name</Label>
+              <Label>Loan Officer</Label>
               <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
             </div>
             <div className="space-y-2">
@@ -441,181 +459,11 @@ const Index = () => {
           </div>
         </Section>
 
-        {/* Comparison Tool */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
-          <div className="mb-6 max-w-md">
-            <Label className="text-xs">Add Correspondent Channels</Label>
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              {state.buckets.filter(b => b.channel === "Correspondent").map(b => (
-                <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2 py-1.5 text-xs cursor-pointer">
-                  <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
-                  <span className="font-medium">{b.label}</span>
-                </label>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Routes VA / Conventional / Non-QM through Correspondent at {fmtUSD(CORR_FEE)}/file. FHA always stays Broker.
-            </p>
-          </div>
-
-          {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> in the Production section above to see a comparison.</p>
-          ) : (() => {
-            const currentBrokerGross = state.annualVolume * 0.0275;
-            const currentLoComp = state.annualVolume * (state.currentSplit / 100);
-            const htlBrokerGross = calc.totals.grossRevenue;
-            const brokerGrossDelta = htlBrokerGross - currentBrokerGross;
-            const loCompDelta = calc.diffAnnual ?? 0;
-            const monthlyDelta = calc.diffMonthly ?? 0;
-            return (
-              <div className="space-y-6">
-                {/* Side-by-side platform cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Current Platform */}
-                  <div className="premium-card p-6 flex flex-col">
-                    <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Current Platform</p>
-                    <p className="stat-label mt-1">{Math.round(state.currentSplit * 100)} BPS · {fmtPct(state.currentSplit, 2)}</p>
-                    <p className="text-3xl font-bold text-foreground tabular-nums mt-3">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
-                    <div className="mt-4 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
-                      <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(currentBrokerGross)}</span></div>
-                      <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(currentLoComp)}</span></div>
-                      {calc.brokerPaidSalaries > 0 && (
-                        <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
-                      )}
-                      {(calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
-                        <div className="flex justify-between text-destructive"><span>Less broker-paid per-file bonuses</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Hometown Lending */}
-                  <div className="premium-card p-6 bg-primary text-primary-foreground border-0 flex flex-col">
-                    <p className="text-xs uppercase tracking-wider text-accent font-semibold">Hometown Lending</p>
-                    <p className="text-xs text-primary-foreground/70 mt-1">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
-                    <p className="text-3xl font-bold text-accent tabular-nums mt-3">{fmtUSD(calc.finalLoNetComp)}</p>
-                    <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.monthlyLoNet)} / month</p>
-                    <div className="mt-4 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/15 pt-3">
-                      <div className="flex justify-between"><span>Broker gross</span><span className="tabular-nums">{fmtUSD(htlBrokerGross)}</span></div>
-                      <div className="flex justify-between"><span>LO gross split ({state.loSplit}%)</span><span className="tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</span></div>
-                      <div className="flex justify-between"><span>Less channel fees</span><span className="tabular-nums">−{fmtUSD(calc.totals.channelFees)}</span></div>
-                      {(calc.brokerPaidSalaries + calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
-                        <div className="flex justify-between"><span>Less broker-paid support</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries + calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Grandiose delta box */}
-                <div
-                  className="rounded-xl p-8 md:p-10 border-2 border-accent/40 text-center"
-                  style={{ background: "var(--gradient-gold)" }}
-                >
-                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">More Money at Hometown Lending</p>
-                  <p className={`font-display font-bold tabular-nums mt-3 ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`} style={{ fontSize: "clamp(2.5rem, 6vw, 4.5rem)", lineHeight: 1 }}>
-                    {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
-                  </p>
-                  <p className="text-sm md:text-base text-accent-foreground/90 mt-2 tabular-nums">
-                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month more in your pocket
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6 max-w-2xl mx-auto">
-                    <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">
-                      <p className="text-[10px] uppercase tracking-wider text-accent-foreground/70 font-semibold">Broker Gross Uplift</p>
-                      <p className={`text-lg font-bold tabular-nums ${brokerGrossDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`}>
-                        {brokerGrossDelta >= 0 ? "+" : ""}{fmtUSD(brokerGrossDelta)}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">
-                      <p className="text-[10px] uppercase tracking-wider text-accent-foreground/70 font-semibold">LO Comp Uplift</p>
-                      <p className={`text-lg font-bold tabular-nums ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`}>
-                        {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
-                      </p>
-                    </div>
-                  </div>
-                  {corrActive && (
-                    <p className="text-xs text-accent-foreground/80 mt-4 italic">Correspondent uplift over HTL Broker-Only: <span className="font-semibold">{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></p>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-
-        </Section>
-
-
-
-        {/* Production buckets */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Production Buckets">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-muted-foreground border-b border-border">
-                  <th className="py-3 pr-3 font-semibold">Bucket</th>
-                  <th className="py-3 px-2 font-semibold">Vol %</th>
-                  <th className="py-3 px-2 font-semibold">$ Volume</th>
-                  <th className="py-3 px-2 font-semibold">Avg Loan</th>
-                  <th className="py-3 px-2 font-semibold">Comp %</th>
-                  <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
-                  <th className="py-3 px-2 font-semibold">Holdback</th>
-                  <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.buckets.filter(b => b.active && b.key !== "broker_nonqm").map(b => {
-                  const c = calc.buckets.find(x => x.bucket.key === b.key);
-                  const isBroker = b.channel === "Broker";
-                  return (
-                    <tr key={b.key} className="border-b border-border/60">
-                      <td className="py-3 pr-3 align-top">
-                        <div className="font-semibold text-primary">{b.label}</div>
-                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.channel === "Correspondent" ? CORR_FEE : (b.loanType === "QM" ? QM_FEE : NONQM_FEE)}/file</div>
-                      </td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
-                      <td className="px-2 align-top">
-                        <Input
-                          className="w-24"
-                          type="number"
-                          step="0.01"
-                          min={isBroker ? 0 : CORR_MIN}
-                          max={isBroker ? BROKER_CAP : CORR_MAX}
-                          value={b.compPct}
-                          onChange={e => updateBucket(b.key, { compPct: +e.target.value || 0 })}
-                          disabled={isBroker}
-                          title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
-                        />
-                      </td>
-                      <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
-                      <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
-                      <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
-                  <td className="py-3 pr-3">Totals</td>
-                  <td className="px-2 tabular-nums">100%</td>
-                  <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
-                  <td className="px-2"></td>
-                  <td className="px-2"></td>
-                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
-                  <td className="px-2 tabular-nums text-accent">{fmtUSD(calc.totals.teamHoldback)}</td>
-                  <td className="pl-2 tabular-nums text-success">{fmtUSD(calc.totals.initialLoCash)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Files are allocated automatically from your Loan Type Mix. Broker fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). Correspondent uses a flat ${CORR_FEE} funding fee per file (no processing fee). Use the Correspondent toggles in the Comparison Tool above to route VA / Conventional / Non-QM through that channel.
-          </p>
-        </Section>
-
-        {/* Team builder */}
+        {/* Team builder — collapsed by default to keep above-the-fold tight */}
         <Section
           icon={<Users className="h-5 w-5" />}
           title="Team & Employee Support"
+          defaultOpen={false}
           right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
@@ -712,6 +560,185 @@ const Index = () => {
             </div>
           )}
         </Section>
+
+
+        {/* Comparison Tool */}
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
+          <div className="mb-6 max-w-md">
+            <Label className="text-xs">Add Correspondent Channels</Label>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {state.buckets.filter(b => b.channel === "Correspondent").map(b => (
+                <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2 py-1.5 text-xs cursor-pointer">
+                  <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
+                  <span className="font-medium">{b.label}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Routes VA / Conventional / Non-QM through Correspondent at {fmtUSD(CORR_FEE)}/file. FHA always stays Broker.
+            </p>
+          </div>
+
+          {state.currentSplit == null ? (
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> in the Production section above to see a comparison.</p>
+          ) : (() => {
+            const currentBrokerGross = state.annualVolume * 0.0275;
+            const currentLoComp = state.annualVolume * (state.currentSplit / 100);
+            const htlBrokerGross = calc.totals.grossRevenue;
+            const brokerGrossDelta = htlBrokerGross - currentBrokerGross;
+            const loCompDelta = calc.diffAnnual ?? 0;
+            const monthlyDelta = calc.diffMonthly ?? 0;
+            return (
+              <div className="space-y-6">
+                {/* Side-by-side platform cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Current Platform */}
+                  <div className="premium-card p-6 flex flex-col">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Current Platform</p>
+                    <p className="stat-label mt-1">{Math.round(state.currentSplit * 100)} BPS · {fmtPct(state.currentSplit, 2)}</p>
+                    <p className="text-3xl font-bold text-foreground tabular-nums mt-3">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                    <div className="mt-4 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                      <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(currentBrokerGross)}</span></div>
+                      <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(currentLoComp)}</span></div>
+                      {calc.brokerPaidSalaries > 0 && (
+                        <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                      )}
+                      {(calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
+                        <div className="flex justify-between text-destructive"><span>Less broker-paid per-file bonuses</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hometown Lending */}
+                  <div className="premium-card p-6 bg-primary text-primary-foreground border-0 flex flex-col">
+                    <p className="text-xs uppercase tracking-wider text-accent font-semibold">Hometown Lending</p>
+                    <p className="stat-label mt-1 !text-primary-foreground/70">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
+                    <p className="text-3xl font-bold text-accent tabular-nums mt-3">{fmtUSD(calc.finalLoNetComp)}</p>
+                    <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.monthlyLoNet)} / month</p>
+                    <div className="mt-4 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/15 pt-3">
+                      <div className="flex justify-between"><span>Broker gross</span><span className="tabular-nums">{fmtUSD(htlBrokerGross)}</span></div>
+                      <div className="flex justify-between"><span>LO gross split ({state.loSplit}%)</span><span className="tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</span></div>
+                      <div className="flex justify-between text-destructive-foreground/90"><span>Less channel fees</span><span className="tabular-nums">−{fmtUSD(calc.totals.channelFees)}</span></div>
+                      {calc.brokerPaidSalaries > 0 && (
+                        <div className="flex justify-between text-destructive-foreground/90"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                      )}
+                      {(calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
+                        <div className="flex justify-between text-destructive-foreground/90"><span>Less broker-paid per-file bonuses</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Grandiose delta box */}
+                <div
+                  className="rounded-xl p-8 md:p-10 border-2 border-accent/40 text-center"
+                  style={{ background: "var(--gradient-gold)" }}
+                >
+                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">Total Revenue at Hometown Lending</p>
+                  <p className={`font-display font-bold tabular-nums mt-3 ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`} style={{ fontSize: "clamp(2.5rem, 6vw, 4.5rem)", lineHeight: 1 }}>
+                    {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
+                  </p>
+                  <p className="text-sm md:text-base text-accent-foreground/90 mt-2 tabular-nums">
+                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month more in your pocket
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6 max-w-2xl mx-auto">
+                    <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">
+                      <p className="text-[10px] uppercase tracking-wider text-accent-foreground/70 font-semibold">Broker Gross Uplift</p>
+                      <p className={`text-lg font-bold tabular-nums ${brokerGrossDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`}>
+                        {brokerGrossDelta >= 0 ? "+" : ""}{fmtUSD(brokerGrossDelta)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">
+                      <p className="text-[10px] uppercase tracking-wider text-accent-foreground/70 font-semibold">LO Comp Uplift</p>
+                      <p className={`text-lg font-bold tabular-nums ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`}>
+                        {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
+                      </p>
+                    </div>
+                  </div>
+                  {corrActive && (
+                    <div className="mt-4 space-y-1">
+                      <p className="text-xs text-accent-foreground/80 italic">Correspondent uplift over HTL Broker-Only: <span className="font-semibold">{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></p>
+                      <p className="text-xs text-accent-foreground/80 italic">Correspondent uplift over your current broker: <span className="font-semibold">{loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}</span></p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+        </Section>
+
+
+
+        {/* Production buckets */}
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Production Buckets">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted-foreground border-b border-border">
+                  <th className="py-3 pr-3 font-semibold">Bucket</th>
+                  <th className="py-3 px-2 font-semibold">Vol %</th>
+                  <th className="py-3 px-2 font-semibold">$ Volume</th>
+                  <th className="py-3 px-2 font-semibold">Avg Loan</th>
+                  <th className="py-3 px-2 font-semibold">Comp %</th>
+                  <th className="py-3 px-2 font-semibold">LO Net Pre-Holdback</th>
+                  <th className="py-3 px-2 font-semibold">Holdback</th>
+                  <th className="py-3 pl-2 font-semibold">Initial LO Cash</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.buckets.filter(b => b.active && b.key !== "broker_nonqm").map(b => {
+                  const c = calc.buckets.find(x => x.bucket.key === b.key);
+                  const isBroker = b.channel === "Broker";
+                  return (
+                    <tr key={b.key} className="border-b border-border/60">
+                      <td className="py-3 pr-3 align-top">
+                        <div className="font-semibold text-primary">{b.label}</div>
+                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.channel === "Correspondent" ? CORR_FEE : (b.loanType === "QM" ? QM_FEE : NONQM_FEE)}/file</div>
+                      </td>
+                      <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
+                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
+                      <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.avgLoan) : "—"}</td>
+                      <td className="px-2 align-top">
+                        <Input
+                          className="w-24"
+                          type="number"
+                          step="0.01"
+                          min={isBroker ? 0 : CORR_MIN}
+                          max={isBroker ? BROKER_CAP : CORR_MAX}
+                          value={b.compPct}
+                          onChange={e => updateBucket(b.key, { compPct: +e.target.value || 0 })}
+                          disabled={isBroker}
+                          title={isBroker ? `Broker comp capped at ${BROKER_CAP}%` : `Range ${CORR_MIN}%–${CORR_MAX}%`}
+                        />
+                      </td>
+                      <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
+                      <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>
+                      <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-primary/20 bg-secondary/40 font-semibold">
+                  <td className="py-3 pr-3">Totals</td>
+                  <td className="px-2 tabular-nums">100%</td>
+                  <td className="px-2 tabular-nums">{fmtUSD(state.annualVolume, { compact: true })}</td>
+                  <td className="px-2"></td>
+                  <td className="px-2"></td>
+                  <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
+                  <td className="px-2 tabular-nums text-accent">{fmtUSD(calc.totals.teamHoldback)}</td>
+                  <td className="pl-2 tabular-nums text-success">{fmtUSD(calc.totals.initialLoCash)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Files are allocated automatically from your Loan Type Mix. Broker fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). Correspondent uses a flat ${CORR_FEE} funding fee per file (no processing fee). Use the Correspondent toggles in the Comparison Tool above to route VA / Conventional / Non-QM through that channel.
+          </p>
+        </Section>
+
 
         {/* LO Economics Summary */}
         <Section icon={<Wallet className="h-5 w-5" />} title="LO Economics Summary">
