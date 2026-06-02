@@ -81,6 +81,7 @@ const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
   };
 };
 
+
 const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => void }) => {
   const [open, setOpen] = useState(false);
   const [role, setRole] = useState<Role>("Processor");
