@@ -301,9 +301,12 @@ const Index = () => {
               </div>
               <div className="pt-2">
                 <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
-                <p className="font-display font-semibold mt-4 text-primary-foreground" style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)", lineHeight: 1.1 }}>LO Pro Forma:</p>
-                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">Your Production's True Value.</p>
+                <p className="font-display font-semibold mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
+                  <span style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)" }}>LO Pro Forma:</span>
+                  <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1rem, 1.8vw, 1.5rem)" }}>Your Production's True Value</span>
+                </p>
               </div>
+
             </div>
 
             <Button
