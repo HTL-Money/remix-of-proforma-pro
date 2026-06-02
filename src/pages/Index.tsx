@@ -8,14 +8,14 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import {
-  ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
+  ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct, fmtNum,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
-  LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE,
+  LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v5";
+const STORAGE_KEY = "htl_lo_proforma_v6";
 
 const loadState = (): ModelState => {
   try {
@@ -227,8 +227,9 @@ const Index = () => {
   }, [state.annualVolume, state.annualFiles, state.avgLoanOverride]); // eslint-disable-line
 
   const calc = useMemo(() => calculate(state), [state]);
-
-  const holdbackShortfall = calc.holdbackSurplus < 0;
+  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(state), [state]);
+  const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
+  const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
@@ -363,20 +364,34 @@ const Index = () => {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>QM Loan Mix (%)</Label>
-              <Input
-                className="max-w-[200px]"
-                type="number"
-                min={0}
-                max={100}
-                step="1"
-                value={state.qmPct}
-                onChange={e => setState(s => ({ ...s, qmPct: Math.min(100, Math.max(0, +e.target.value || 0)) }))}
-              />
-              <p className="text-xs text-muted-foreground">
-                {state.qmPct}% QM · {100 - state.qmPct}% Non-QM
-              </p>
+            <div className="space-y-2 md:col-span-2 lg:col-span-4">
+              <Label>Loan Type Mix (%)</Label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl">
+                {(["fha","va","conv","nonqm"] as const).map(k => {
+                  const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
+                  return (
+                    <div key={k} className="space-y-1">
+                      <Label className="text-xs">{labels[k]}</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="1"
+                        value={state.loanTypeMix[k]}
+                        onChange={e => setState(s => ({ ...s, loanTypeMix: { ...s.loanTypeMix, [k]: Math.min(100, Math.max(0, +e.target.value || 0)) } }))}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {(() => {
+                const sum = state.loanTypeMix.fha + state.loanTypeMix.va + state.loanTypeMix.conv + state.loanTypeMix.nonqm;
+                return (
+                  <p className={`text-xs ${sum === 100 ? "text-muted-foreground" : "text-warning"}`}>
+                    Mix totals {sum}%{sum !== 100 ? " — should equal 100%." : "."} FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
+                  </p>
+                );
+              })()}
             </div>
           </div>
         </Section>
@@ -406,9 +421,9 @@ const Index = () => {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Channels to Compare</Label>
+              <Label>Add Correspondent Channels</Label>
               <div className="grid grid-cols-2 gap-2">
-                {state.buckets.map(b => (
+                {state.buckets.filter(b => b.channel === "Correspondent").map(b => (
                   <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs cursor-pointer">
                     <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
                     <span className="font-medium">{b.label}</span>
@@ -416,7 +431,7 @@ const Index = () => {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                Toggle Correspondent on to model the comp difference vs. the broker-only channel.
+                Turn on Correspondent to route VA / Conventional (QM) and Non-QM through that channel at {fmtUSD(CORR_FEE)} / file (no processing fee). FHA always stays Broker.
               </p>
             </div>
           </div>
@@ -424,37 +439,50 @@ const Index = () => {
           {state.currentSplit == null ? (
             <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> above to see a side-by-side comparison.</p>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="premium-card p-5">
-                <p className="stat-label">Current Platform · {Math.round(state.currentSplit * 100)} BPS ({fmtPct(state.currentSplit, 2)})</p>
-                <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
-                <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
-                  <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * 0.0275)}</span></div>
-                  <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * (state.currentSplit / 100))}</span></div>
-                  {calc.brokerPaidSalaries > 0 && (
-                    <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Current platform */}
+                <div className="premium-card p-5">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Current Platform</p>
+                  <p className="stat-label mt-1">{Math.round(state.currentSplit * 100)} BPS · {fmtPct(state.currentSplit, 2)}</p>
+                  <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                  <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                    <div className="flex justify-between"><span>Broker gross (2.75%)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * 0.0275)}</span></div>
+                    <div className="flex justify-between"><span>LO comp ({Math.round(state.currentSplit * 100)} BPS)</span><span className="tabular-nums">{fmtUSD(state.annualVolume * (state.currentSplit / 100))}</span></div>
+                    {calc.brokerPaidSalaries > 0 && (
+                      <div className="flex justify-between text-destructive"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                    )}
+                  </div>
+                </div>
+
+                {/* HTL — Broker only */}
+                <div className="premium-card p-5">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Hometown Lending</p>
+                  <p className="stat-label mt-1">Broker Only</p>
+                  <p className="stat-value text-primary mt-1">{fmtUSD(calcBrokerOnly.finalLoNetComp)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calcBrokerOnly.monthlyLoNet)} / month</p>
+                  <div className="mt-3 space-y-1 text-xs text-muted-foreground border-t border-border pt-3">
+                    <div className="flex justify-between"><span>vs Current Platform</span><span className={`tabular-nums font-semibold ${(calcBrokerOnly.finalLoNetComp - (calc.currentPlatformAnnual ?? 0)) >= 0 ? "text-success" : "text-destructive"}`}>{(calcBrokerOnly.finalLoNetComp - (calc.currentPlatformAnnual ?? 0)) >= 0 ? "+" : ""}{fmtUSD(calcBrokerOnly.finalLoNetComp - (calc.currentPlatformAnnual ?? 0))}</span></div>
+                  </div>
+                </div>
+
+                {/* HTL — With correspondent */}
+                <div className={`premium-card p-5 border-0 ${corrActive ? "bg-primary text-primary-foreground" : "bg-secondary/30"}`}>
+                  <p className={`text-xs uppercase tracking-wider font-semibold ${corrActive ? "!text-accent" : "text-muted-foreground"}`}>Hometown Lending</p>
+                  <p className={`stat-label mt-1 ${corrActive ? "!text-primary-foreground/80" : ""}`}>With Correspondent</p>
+                  <p className={`stat-value mt-1 ${corrActive ? "!text-accent" : "text-muted-foreground"}`}>{fmtUSD(calc.finalLoNetComp)}</p>
+                  <p className={`text-xs mt-1 ${corrActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>{fmtUSD(calc.monthlyLoNet)} / month</p>
+                  <div className={`mt-3 space-y-1 text-xs border-t pt-3 ${corrActive ? "text-primary-foreground/80 border-primary-foreground/20" : "text-muted-foreground border-border"}`}>
+                    <div className="flex justify-between"><span>Correspondent uplift</span><span className={`tabular-nums font-semibold ${corrActive ? "!text-accent" : ""}`}>{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></div>
+                    <div className="flex justify-between"><span>vs Current Platform</span><span className={`tabular-nums font-semibold ${(calc.diffAnnual ?? 0) >= 0 ? (corrActive ? "!text-accent" : "text-success") : "text-destructive"}`}>{(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}</span></div>
+                  </div>
+                  {!corrActive && (
+                    <p className="text-xs text-muted-foreground mt-2 italic">Turn on a Correspondent channel above to see the uplift.</p>
                   )}
                 </div>
               </div>
-              <div className="premium-card p-5 bg-primary text-primary-foreground border-0">
-                <p className="stat-label !text-accent">Hometown Lending</p>
-                <p className="stat-value !text-accent mt-1">{fmtUSD(calc.htlAnnual)}</p>
-                <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.htlMonthly)} / month</p>
-                <div className="mt-3 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/20 pt-3">
-                  <div className="flex justify-between"><span>LO net pre-holdback</span><span className="tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</span></div>
-                  <div className="flex justify-between"><span>Holdback collected</span><span className="tabular-nums">{fmtUSD(calc.totals.teamHoldback)}</span></div>
-                  <div className="flex justify-between"><span>Broker-paid team costs</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidTotal)}</span></div>
-                </div>
-              </div>
-              <div className="premium-card p-5">
-                <p className="stat-label">Annual Difference</p>
-                <p className={`stat-value mt-1 ${(calc.diffAnnual ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
-                  {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{(calc.diffMonthly ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffMonthly ?? 0)} / month</p>
-              </div>
-            </div>
+            </>
           )}
         </Section>
 
@@ -483,7 +511,7 @@ const Index = () => {
                     <tr key={b.key} className="border-b border-border/60">
                       <td className="py-3 pr-3 align-top">
                         <div className="font-semibold text-primary">{b.label}</div>
-                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.loanType === "QM" ? QM_FEE : NONQM_FEE}/file</div>
+                        <div className="text-xs text-muted-foreground">{b.channel} · {b.loanType} · ${b.channel === "Correspondent" ? CORR_FEE : (b.loanType === "QM" ? QM_FEE : NONQM_FEE)}/file</div>
                       </td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtPct(c.volumePct, 1) : "—"}</td>
                       <td className="px-2 align-top tabular-nums">{c ? fmtUSD(c.dollarVolume, { compact: true }) : "—"}</td>
@@ -523,7 +551,7 @@ const Index = () => {
             </table>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Files are allocated automatically from your QM mix. Per-file fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). If both Broker and Correspondent for a loan type are active, files default to Broker — deactivate the Broker bucket to route that loan type to Correspondent.
+            Files are allocated automatically from your Loan Type Mix. Broker fees are fixed at ${QM_FEE} (QM) and ${NONQM_FEE} (Non-QM). Correspondent uses a flat ${CORR_FEE} funding fee per file (no processing fee). Use the Correspondent toggles in the Comparison Tool above to route VA / Conventional / Non-QM through that channel.
           </p>
         </Section>
 

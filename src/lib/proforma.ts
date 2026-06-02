@@ -26,7 +26,14 @@ export interface Employee {
   qmBonus: number;     // per-file QM bonus (Processor only)
   nonQmBonus: number;  // per-file Non-QM bonus (Processor only)
   bonusSource: PaySource;
-  extraBonus: number;  // per-file extra bonus (Processor only) — broker-paid, increases holdback
+  extraBonus: number;  // per-file extra bonus — broker-paid
+}
+
+export interface LoanTypeMix {
+  fha: number;
+  va: number;
+  conv: number;
+  nonqm: number;
 }
 
 export interface ModelState {
@@ -36,9 +43,9 @@ export interface ModelState {
   avgLoanAmount: number;
   avgLoanOverride: boolean;
   loSplit: number;
-  currentSplit: number | null; // stored as percent of loan amount (BPS / 50)
+  currentSplit: number | null; // stored as percent (BPS / 100)
   holdbackPct: number;
-  qmPct: number; // 0–100, % of annual files that are QM
+  loanTypeMix: LoanTypeMix; // sums to 100
   buckets: Bucket[];
   employees: Employee[];
 }
@@ -47,22 +54,16 @@ export const BROKER_CAP = 2.75;
 export const CORR_MIN = 2.0;
 export const CORR_MAX = 8.0;
 
-// Fixed per-file fees (not user-editable)
-export const QM_FEE = 650;
-export const NONQM_FEE = 950;
-
-export const PER_FILE_DEFAULTS: Record<ChannelKey, number> = {
-  broker_qm: QM_FEE,
-  broker_nonqm: NONQM_FEE,
-  corr_qm: QM_FEE,
-  corr_nonqm: NONQM_FEE,
-};
+// Fixed per-file fees
+export const QM_FEE = 650;       // Broker QM processing
+export const NONQM_FEE = 950;    // Broker Non-QM processing
+export const CORR_FEE = 250;     // Correspondent funding fee (QM or Non-QM)
 
 export const defaultBuckets = (): Bucket[] => [
-  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: QM_FEE },
-  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: NONQM_FEE },
-  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: QM_FEE },
-  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: NONQM_FEE },
+  { key: "broker_qm",    label: "Broker QM",            channel: "Broker",        loanType: "QM",     active: true,  fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: QM_FEE },
+  { key: "broker_nonqm", label: "Broker Non-QM",        channel: "Broker",        loanType: "Non-QM", active: true,  fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: NONQM_FEE },
+  { key: "corr_qm",      label: "Correspondent QM",     channel: "Correspondent", loanType: "QM",     active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: CORR_FEE },
+  { key: "corr_nonqm",   label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: CORR_FEE },
 ];
 
 export const defaultEmployees = (): Employee[] => [];
@@ -89,7 +90,7 @@ export const defaultState = (): ModelState => ({
   loSplit: 90,
   currentSplit: null,
   holdbackPct: 10,
-  qmPct: 70,
+  loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
   buckets: defaultBuckets(),
   employees: defaultEmployees(),
 });
@@ -139,30 +140,42 @@ export interface Calc {
   diffMonthly: number | null;
 }
 
-// Derive each bucket's fileCount from annualFiles + qmPct + which buckets are active.
-// Rule: if both Broker and Corr for a given loan type are active, all files go to Broker.
-// Deactivate Broker QM to route QM into Corr QM (and same for Non-QM).
+// Allocate files by loan type, routing to Correspondent when that channel is active.
+// - FHA  → always Broker QM (broker cap 2.75%)
+// - VA   → Correspondent QM if active, else Broker QM
+// - Conv → Correspondent QM if active, else Broker QM
+// - Non-QM → Correspondent Non-QM if active, else Broker Non-QM
 const allocateFiles = (s: ModelState): Record<ChannelKey, number> => {
-  const qmTotal = Math.round(s.annualFiles * (s.qmPct / 100));
-  const nonQmTotal = Math.max(0, s.annualFiles - qmTotal);
-  const out: Record<ChannelKey, number> = { broker_qm: 0, broker_nonqm: 0, corr_qm: 0, corr_nonqm: 0 };
+  const mix = s.loanTypeMix;
+  const N = s.annualFiles;
+  const fha   = Math.round(N * (mix.fha   / 100));
+  const va    = Math.round(N * (mix.va    / 100));
+  const conv  = Math.round(N * (mix.conv  / 100));
+  const nonqm = Math.max(0, N - fha - va - conv);
+
   const byKey = (k: ChannelKey) => s.buckets.find(b => b.key === k);
-  if (byKey("broker_qm")?.active) out.broker_qm = qmTotal;
-  else if (byKey("corr_qm")?.active) out.corr_qm = qmTotal;
-  if (byKey("broker_nonqm")?.active) out.broker_nonqm = nonQmTotal;
-  else if (byKey("corr_nonqm")?.active) out.corr_nonqm = nonQmTotal;
+  const corrQmActive    = !!byKey("corr_qm")?.active;
+  const corrNonqmActive = !!byKey("corr_nonqm")?.active;
+
+  const out: Record<ChannelKey, number> = { broker_qm: 0, broker_nonqm: 0, corr_qm: 0, corr_nonqm: 0 };
+  out.broker_qm += fha;
+  if (corrQmActive) out.corr_qm += va + conv;
+  else out.broker_qm += va + conv;
+  if (corrNonqmActive) out.corr_nonqm += nonqm;
+  else out.broker_nonqm += nonqm;
   return out;
 };
 
 export const calculate = (s: ModelState): Calc => {
   const allocation = allocateFiles(s);
-  // Apply fixed per-file fees and derived file counts so downstream math is consistent.
+  // Force broker buckets always active (FHA + default Non-QM live there). Apply correct per-channel fee.
   const bucketsResolved: Bucket[] = s.buckets.map(b => ({
     ...b,
+    active: b.channel === "Broker" ? true : b.active,
     fileCount: allocation[b.key],
-    perFileFee: b.loanType === "QM" ? QM_FEE : NONQM_FEE,
+    perFileFee: b.channel === "Correspondent" ? CORR_FEE : (b.loanType === "QM" ? QM_FEE : NONQM_FEE),
   }));
-  const activeBuckets = bucketsResolved.filter(b => b.active);
+  const activeBuckets = bucketsResolved.filter(b => b.active && b.fileCount > 0);
   const totalActiveFiles = activeBuckets.reduce((a, b) => a + b.fileCount, 0);
 
   const bucketCalcs: BucketCalc[] = activeBuckets.map(b => {
@@ -200,7 +213,6 @@ export const calculate = (s: ModelState): Calc => {
       if (e.bonusSource === "Broker") brokerPaidBonuses += bonusCost;
       else htlPaidBonuses += bonusCost;
     }
-    // Extra per-file bonus applies to any role; always broker-paid.
     extraBonusTotal += (e.extraBonus || 0) * totalFiles;
   });
   const brokerPaidTotal = brokerPaidSalaries + brokerPaidBonuses + extraBonusTotal;
@@ -211,7 +223,6 @@ export const calculate = (s: ModelState): Calc => {
   const monthlyLoNet = finalLoNetComp / 12;
   const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (brokerPaidTotal / totals.loNetBeforeHoldback) * 100 : 0;
 
-  // Current platform comp = LO's take on volume (BPS-derived %) minus broker-paid salaries.
   const currentPlatformAnnual = s.currentSplit != null
     ? s.annualVolume * (s.currentSplit / 100) - brokerPaidSalaries
     : null;
@@ -230,6 +241,12 @@ export const calculate = (s: ModelState): Calc => {
     currentPlatformAnnual, currentPlatformMonthly, htlAnnual, htlMonthly, diffAnnual, diffMonthly,
   };
 };
+
+// Parallel scenario calculator: HTL "broker only" by forcing correspondent buckets off.
+export const calculateBrokerOnly = (s: ModelState): Calc => calculate({
+  ...s,
+  buckets: s.buckets.map(b => b.channel === "Correspondent" ? { ...b, active: false } : b),
+});
 
 export const fmtUSD = (n: number, opts: { compact?: boolean } = {}) => {
   if (!isFinite(n)) return "$0";
