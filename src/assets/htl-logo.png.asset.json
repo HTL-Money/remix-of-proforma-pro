@@ -1,11 +1,11 @@
 {
-  "version": 1,
   "asset_id": "b9c88efa-34fb-41d7-a8a8-bca7b1120d0c",
-  "project_id": "60275a5a-b3ed-413f-a94b-a738e1661e48",
-  "url": "/__l5e/assets-v1/b9c88efa-34fb-41d7-a8a8-bca7b1120d0c/htl-logo.png",
-  "r2_key": "a/v1/60275a5a-b3ed-413f-a94b-a738e1661e48/b9c88efa-34fb-41d7-a8a8-bca7b1120d0c/htl-logo.png",
-  "original_filename": "htl-logo.png",
-  "size": 19986,
   "content_type": "image/png",
-  "created_at": "2026-06-02T11:18:51Z"
+  "created_at": "2026-06-02T11:18:51Z",
+  "original_filename": "htl-logo.png",
+  "project_id": "94bee31f-3c1e-42c0-a4be-80d009c626ea",
+  "r2_key": "a/v1/94bee31f-3c1e-42c0-a4be-80d009c626ea/b9c88efa-34fb-41d7-a8a8-bca7b1120d0c/htl-logo.png",
+  "size": 19986,
+  "url": "/__l5e/assets-v1/b9c88efa-34fb-41d7-a8a8-bca7b1120d0c/htl-logo.png",
+  "version": 1
 }
