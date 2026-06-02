@@ -92,26 +92,27 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
   const [nonQmBonus, setNonQmBonus] = useState<number>(PROCESSOR_DEFAULTS.nonQmBonus);
   const [extraBonus, setExtraBonus] = useState<number>(0);
 
-  // Auto-fill processor defaults when role flips to Processor
+  // Auto-fill defaults when role changes
   useEffect(() => {
     if (role === "Processor") {
       setSalary(PROCESSOR_DEFAULTS.salary);
-      setSalarySource(PROCESSOR_DEFAULTS.salarySource);
+      setSalarySource("HTL");
       setQmBonus(PROCESSOR_DEFAULTS.qmBonus);
       setNonQmBonus(PROCESSOR_DEFAULTS.nonQmBonus);
-      setBonusSource(PROCESSOR_DEFAULTS.bonusSource);
+      setBonusSource("HTL");
       setExtraBonus(0);
     } else {
       setSalary(0);
+      setSalarySource("Broker");
       setQmBonus(0);
       setNonQmBonus(0);
-      setExtraBonus(0);
+      setBonusSource("Broker");
+      setExtraBonus(role === "Loan Officer Assistant" ? LOA_EXTRA_BONUS
+                    : role === "Loan Partner" ? LOAN_PARTNER_EXTRA_BONUS : 0);
     }
   }, [role]);
 
-  const reset = () => {
-    setRole("Processor"); setName("");
-  };
+  const reset = () => { setRole("Processor"); setName(""); };
   const submit = () => {
     onAdd({ name, role, salary, salarySource, qmBonus, nonQmBonus, bonusSource, extraBonus });
     reset();
@@ -119,6 +120,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
   };
 
   const isProcessor = role === "Processor";
+  const isSupport = role === "Loan Officer Assistant" || role === "Loan Partner";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
@@ -146,50 +148,37 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Annual Salary</Label>
-              <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Salary Covered By</Label>
-              <Select value={salarySource} onValueChange={v => setSalarySource(v as PaySource)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="HTL">Hometown Lending</SelectItem>
-                  <SelectItem value="Broker">Broker</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             {isProcessor && (
               <>
                 <div className="space-y-1">
-                  <Label className="text-xs">QM Per-File Bonus</Label>
+                  <Label className="text-xs">Annual Salary (HTL-paid)</Label>
+                  <Input type="number" value={salary} onChange={e => setSalary(+e.target.value || 0)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">QM Per-File Bonus (HTL-paid)</Label>
                   <Input type="number" value={qmBonus} onChange={e => setQmBonus(+e.target.value || 0)} />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Non-QM Per-File Bonus</Label>
+                  <Label className="text-xs">Non-QM Per-File Bonus (HTL-paid)</Label>
                   <Input type="number" value={nonQmBonus} onChange={e => setNonQmBonus(+e.target.value || 0)} />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Extra Per-File Bonus (Broker)</Label>
-                  <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Bonus Covered By</Label>
-                  <Select value={bonusSource} onValueChange={v => setBonusSource(v as PaySource)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="HTL">Hometown Lending</SelectItem>
-                      <SelectItem value="Broker">Broker</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
               </>
+            )}
+            {isSupport && (
+              <div className="space-y-1 col-span-2">
+                <Label className="text-xs">Broker-Paid Per-File Bonus</Label>
+                <Input type="number" value={extraBonus} onChange={e => setExtraBonus(+e.target.value || 0)} />
+              </div>
             )}
           </div>
           {isProcessor && (
             <p className="text-xs text-muted-foreground">
-              The Extra Per-File Bonus is paid by the broker on top of the standard bonus and is automatically deducted from the LO's compensation.
+              Processor salaries and per-file bonuses are paid by Hometown Lending.
+            </p>
+          )}
+          {isSupport && (
+            <p className="text-xs text-muted-foreground">
+              The broker must pay this per-file bonus for each {role}. It is deducted from the LO's compensation.
             </p>
           )}
         </div>
