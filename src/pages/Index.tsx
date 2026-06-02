@@ -10,8 +10,9 @@ import {
   ModelState, defaultState, calculate, fmtUSD, fmtPct, fmtNum,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey,
 } from "@/lib/proforma";
+import htlLogo from "@/assets/htl-logo.png.asset.json";
 
-const STORAGE_KEY = "htl_lo_proforma_v1";
+const STORAGE_KEY = "htl_lo_proforma_v2";
 type Mode = "recruit" | "internal";
 
 const loadState = (): ModelState => {
