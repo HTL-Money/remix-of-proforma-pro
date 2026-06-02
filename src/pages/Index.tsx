@@ -299,9 +299,9 @@ const Index = () => {
                 <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
               </div>
               <div className="pt-2">
-                <p className="text-sm md:text-base uppercase tracking-[0.2em] text-accent font-bold">Hometown Lending</p>
-                <h1 className="font-display text-5xl md:text-7xl font-bold leading-none tracking-tight mt-1 text-primary-foreground">LO PRO FORMA</h1>
-                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">your production's true value</p>
+                <h1 className="font-display font-bold leading-none tracking-tight underline decoration-2 underline-offset-[10px]" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
+                <p className="font-display font-semibold mt-4 text-primary-foreground" style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)", lineHeight: 1.1 }}>LO Pro Forma:</p>
+                <p className="text-sm md:text-base italic text-primary-foreground/80 mt-3">Your production's true value at Hometown Lending.</p>
               </div>
             </div>
 
