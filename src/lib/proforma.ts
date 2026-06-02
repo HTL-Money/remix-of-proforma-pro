@@ -50,35 +50,33 @@ export const PER_FILE_DEFAULTS: Record<ChannelKey, number> = {
 };
 
 export const defaultBuckets = (): Bucket[] => [
-  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 0, volumePct: 50, compPct: 2.75, perFileFee: 650 },
-  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 20, compPct: 2.75, perFileFee: 950 },
-  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: true, fileCount: 0, volumePct: 20, compPct: 3.25, perFileFee: 250 },
-  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 10, compPct: 3.25, perFileFee: 250 },
+  { key: "broker_qm", label: "Broker QM", channel: "Broker", loanType: "QM", active: true, fileCount: 120, volumePct: 65, compPct: 2.75, perFileFee: 650 },
+  { key: "broker_nonqm", label: "Broker Non-QM", channel: "Broker", loanType: "Non-QM", active: true, fileCount: 10, volumePct: 7, compPct: 2.75, perFileFee: 950 },
+  { key: "corr_qm", label: "Correspondent QM", channel: "Correspondent", loanType: "QM", active: true, fileCount: 43, volumePct: 23, compPct: 3.25, perFileFee: 250 },
+  { key: "corr_nonqm", label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: true, fileCount: 10, volumePct: 5, compPct: 3.25, perFileFee: 250 },
 ];
 
 export const defaultEmployees = (): Employee[] => [
-  { id: crypto.randomUUID(), name: "", role: "LOA", salary: 0, salarySource: "Broker", qmBonus: 0, nonQmBonus: 0, bonusSource: "Broker" },
-  { id: crypto.randomUUID(), name: "", role: "Loan Partner", salary: 0, salarySource: "Broker", qmBonus: 0, nonQmBonus: 0, bonusSource: "Broker" },
-  { id: crypto.randomUUID(), name: "", role: "Processor", salary: 40000, salarySource: "Broker", qmBonus: 150, nonQmBonus: 200, bonusSource: "Broker" },
+  { id: crypto.randomUUID(), name: "", role: "LOA", salary: 0, salarySource: "HTL", qmBonus: 300, nonQmBonus: 300, bonusSource: "HTL" },
+  { id: crypto.randomUUID(), name: "", role: "Loan Partner", salary: 0, salarySource: "HTL", qmBonus: 350, nonQmBonus: 350, bonusSource: "HTL" },
+  { id: crypto.randomUUID(), name: "", role: "Processor", salary: 40000, salarySource: "HTL", qmBonus: 150, nonQmBonus: 200, bonusSource: "HTL" },
 ];
 
 export const defaultState = (): ModelState => {
-  const annualVolume = 100_000_000;
-  const annualFiles = 250;
+  const annualVolume = 65_859_504;
+  const annualFiles = 183;
   const buckets = defaultBuckets();
-  // distribute files by volumePct
-  buckets.forEach(b => { b.fileCount = Math.round(annualFiles * b.volumePct / 100); });
   return {
     recruitName: "",
     scenarioName: "",
     annualVolume,
     annualFiles,
-    avgLoanAmount: annualVolume / annualFiles,
+    avgLoanAmount: 359_888,
     avgLoanOverride: false,
     loSplit: 90,
     currentSplit: null,
-    holdbackPct: 20,
-    qmPctHelper: 70,
+    holdbackPct: 10,
+    qmPctHelper: 88,
     buckets,
     employees: defaultEmployees(),
   };
