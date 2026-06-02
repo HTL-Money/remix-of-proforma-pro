@@ -374,13 +374,21 @@ const Index = () => {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          {fileMismatch && (
-            <div className="mt-4">
-              <Warn>Bucket file counts must equal total funded files ({fmtNum(state.annualFiles)}). Currently {fmtNum(totalBucketFiles)}.</Warn>
+            <div className="space-y-2">
+              <Label>QM Loan Mix (%)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                step="1"
+                value={state.qmPct}
+                onChange={e => setState(s => ({ ...s, qmPct: Math.min(100, Math.max(0, +e.target.value || 0)) }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                {state.qmPct}% QM · {100 - state.qmPct}% Non-QM
+              </p>
             </div>
-          )}
+          </div>
         </Section>
 
         {/* Production buckets */}
