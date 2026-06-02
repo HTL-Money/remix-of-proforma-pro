@@ -218,10 +218,18 @@ export const calculate = (s: ModelState): Calc => {
   const brokerPaidTotal = brokerPaidSalaries + brokerPaidBonuses + extraBonusTotal;
   const htlPaidTotal = htlPaidSalaries + htlPaidBonuses;
 
-  const holdbackSurplus = totals.teamHoldback - brokerPaidTotal;
-  const finalLoNetComp = totals.loNetBeforeHoldback - brokerPaidTotal;
+  // NEW MODEL: per-file LOA/LP extra bonuses come straight out of gross (like channel fees).
+  // Re-cut the LO net pool to remove them, then recompute the holdback. The holdback now
+  // only needs to cover salaries (broker-paid salaries + any broker-paid processor bonuses).
+  totals.loNetBeforeHoldback = totals.loGrossSplit - totals.channelFees - extraBonusTotal;
+  totals.teamHoldback = Math.max(0, totals.loNetBeforeHoldback) * (s.holdbackPct / 100);
+  totals.initialLoCash = totals.loNetBeforeHoldback - totals.teamHoldback;
+
+  const salaryObligations = brokerPaidSalaries + brokerPaidBonuses;
+  const holdbackSurplus = totals.teamHoldback - salaryObligations;
+  const finalLoNetComp = totals.loNetBeforeHoldback - salaryObligations;
   const monthlyLoNet = finalLoNetComp / 12;
-  const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (brokerPaidTotal / totals.loNetBeforeHoldback) * 100 : 0;
+  const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (salaryObligations / totals.loNetBeforeHoldback) * 100 : 0;
 
   const currentPlatformAnnual = s.currentSplit != null
     ? s.annualVolume * (s.currentSplit / 100) - brokerPaidTotal
