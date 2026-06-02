@@ -510,15 +510,18 @@ const Index = () => {
                   {/* Hometown Lending */}
                   <div className="premium-card p-6 bg-primary text-primary-foreground border-0 flex flex-col">
                     <p className="text-xs uppercase tracking-wider text-accent font-semibold">Hometown Lending</p>
-                    <p className="text-xs text-primary-foreground/70 mt-1">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
+                    <p className="stat-label mt-1 !text-primary-foreground/70">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
                     <p className="text-3xl font-bold text-accent tabular-nums mt-3">{fmtUSD(calc.finalLoNetComp)}</p>
                     <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.monthlyLoNet)} / month</p>
                     <div className="mt-4 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/15 pt-3">
                       <div className="flex justify-between"><span>Broker gross</span><span className="tabular-nums">{fmtUSD(htlBrokerGross)}</span></div>
                       <div className="flex justify-between"><span>LO gross split ({state.loSplit}%)</span><span className="tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</span></div>
-                      <div className="flex justify-between"><span>Less channel fees</span><span className="tabular-nums">−{fmtUSD(calc.totals.channelFees)}</span></div>
-                      {(calc.brokerPaidSalaries + calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
-                        <div className="flex justify-between"><span>Less broker-paid support</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries + calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
+                      <div className="flex justify-between text-destructive-foreground/90"><span>Less channel fees</span><span className="tabular-nums">−{fmtUSD(calc.totals.channelFees)}</span></div>
+                      {calc.brokerPaidSalaries > 0 && (
+                        <div className="flex justify-between text-destructive-foreground/90"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
+                      )}
+                      {(calc.brokerPaidBonuses + calc.extraBonusTotal) > 0 && (
+                        <div className="flex justify-between text-destructive-foreground/90"><span>Less broker-paid per-file bonuses</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidBonuses + calc.extraBonusTotal)}</span></div>
                       )}
                     </div>
                   </div>
@@ -529,7 +532,7 @@ const Index = () => {
                   className="rounded-xl p-8 md:p-10 border-2 border-accent/40 text-center"
                   style={{ background: "var(--gradient-gold)" }}
                 >
-                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">More Money at Hometown Lending</p>
+                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">Total Revenue at Hometown Lending</p>
                   <p className={`font-display font-bold tabular-nums mt-3 ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`} style={{ fontSize: "clamp(2.5rem, 6vw, 4.5rem)", lineHeight: 1 }}>
                     {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
                   </p>
@@ -551,7 +554,10 @@ const Index = () => {
                     </div>
                   </div>
                   {corrActive && (
-                    <p className="text-xs text-accent-foreground/80 mt-4 italic">Correspondent uplift over HTL Broker-Only: <span className="font-semibold">{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></p>
+                    <div className="mt-4 space-y-1">
+                      <p className="text-xs text-accent-foreground/80 italic">Correspondent uplift over HTL Broker-Only: <span className="font-semibold">{corrUplift >= 0 ? "+" : ""}{fmtUSD(corrUplift)}</span></p>
+                      <p className="text-xs text-accent-foreground/80 italic">Correspondent uplift over your current broker: <span className="font-semibold">{loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}</span></p>
+                    </div>
                   )}
                 </div>
               </div>
