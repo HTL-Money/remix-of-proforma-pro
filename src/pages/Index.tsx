@@ -374,10 +374,9 @@ const Index = () => {
             <div className="space-y-2">
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
               <div className="flex gap-2 max-w-[200px]">
-                <Input
-                  type="number"
+                <CurrencyInput
                   value={Math.round(state.avgLoanAmount)}
-                  onChange={e => setState(s => ({ ...s, avgLoanAmount: +e.target.value || 0, avgLoanOverride: true }))}
+                  onChange={v => setState(s => ({ ...s, avgLoanAmount: v, avgLoanOverride: true }))}
                 />
                 {state.avgLoanOverride && (
                   <Button variant="outline" size="sm" onClick={() => setState(s => ({ ...s, avgLoanOverride: false }))}>Auto</Button>
