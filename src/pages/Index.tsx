@@ -381,6 +381,23 @@ const Index = () => {
                 </Select>
               </div>
             </div>
+            <div className="space-y-2">
+              <Label>Your LO BPS on Current Platform</Label>
+              <div className="max-w-[200px]">
+                <Input
+                  type="number"
+                  step="1"
+                  min={0}
+                  max={275}
+                  value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
+                  placeholder="e.g. 200"
+                  onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                3-digit BPS (e.g. 200 = 2.00%). {state.currentSplit != null && <span className="font-semibold text-accent">= {fmtPct(state.currentSplit, 2)}</span>}
+              </p>
+            </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
               <Label>Loan Type Mix (%)</Label>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl">
