@@ -535,13 +535,13 @@ const Index = () => {
         {/* Comparison */}
         <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
           {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split %</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × split − broker-paid salaries</em>.</p>
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current Platform Split (BPS)</span> above to see a side-by-side comparison. Current platform earnings are calculated as <em>volume × (BPS ÷ 10,000) − broker-paid salaries</em>.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="premium-card p-5">
-                <p className="stat-label">Current Platform ({fmtPct(state.currentSplit, 1)} split)</p>
+                <p className="stat-label">Current Platform ({Math.round(state.currentSplit * 50)} BPS · {fmtPct(state.currentSplit, 2)})</p>
                 <p className="stat-value text-foreground mt-1">{fmtUSD(calc.currentPlatformAnnual ?? 0)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{fmtUSD(calc.currentPlatformMonthly ?? 0)} / month</p>
+                <p className="text-xs text-muted-foreground mt-1">{fmtUSD((calc.currentPlatformMonthly ?? 0))} / month</p>
                 {calc.brokerPaidSalaries > 0 && (
                   <p className="text-xs text-muted-foreground mt-2">Less {fmtUSD(calc.brokerPaidSalaries)} broker-paid salaries</p>
                 )}
