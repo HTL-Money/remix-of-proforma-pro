@@ -331,7 +331,7 @@ const Index = () => {
                 type="number"
                 value={state.annualFiles || ""}
                 placeholder="0"
-                onChange={e => updateAnnualFiles(+e.target.value || 0)}
+                onChange={e => setState(s => ({ ...s, annualFiles: +e.target.value || 0 }))}
               />
             </div>
             <div className="space-y-2">
