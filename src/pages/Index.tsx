@@ -519,7 +519,7 @@ const Index = () => {
                 accent={calc.holdbackSurplus >= 0 ? "success" : "destructive"}
               />
             </div>
-            <div className="premium-card p-5"><Stat label="HTL-Paid Support Value" value={fmtUSD(calc.htlPaidTotal)} accent="gold" /></div>
+            
             <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
               <span className="stat-label !text-accent">Final LO Net Annual Comp</span>
               <span className="stat-value !text-primary-foreground mt-1 block">{fmtUSD(calc.finalLoNetComp)}</span>
