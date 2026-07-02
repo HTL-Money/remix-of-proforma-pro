@@ -17,6 +17,7 @@ import {
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
+import { SaveShareDialog } from "@/components/SaveShareDialog";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 
@@ -229,12 +230,19 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
 };
 
 // ---- Main page ----
-const Index = () => {
-  const [state, setState] = useState<ModelState>(() => loadState());
+interface IndexProps {
+  initialState?: ModelState;
+  sharedMode?: boolean;
+  sharedInfo?: { name: string; savedAt: string };
+}
+
+const Index = ({ initialState, sharedMode = false, sharedInfo }: IndexProps = {}) => {
+  const [state, setState] = useState<ModelState>(() => initialState ?? loadState());
 
   useEffect(() => {
+    if (sharedMode) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+  }, [state, sharedMode]);
 
   // Keep avg loan in sync
   useEffect(() => {
@@ -310,19 +318,35 @@ const Index = () => {
 
             </div>
 
-            <Button
-              onClick={reset}
-              variant="outline"
-              size="icon"
-              aria-label="Reset"
-              title="Reset"
-              className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {!sharedMode && <SaveShareDialog state={state} />}
+              <Button
+                onClick={reset}
+                variant="outline"
+                size="icon"
+                aria-label="Reset"
+                title="Reset"
+                className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+              >
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </header>
+
+      {sharedMode && sharedInfo && (
+        <div className="bg-accent/15 border-b border-accent/30">
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 text-sm text-foreground/80 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Viewing pro forma for <span className="font-semibold text-foreground">{sharedInfo.name}</span>
+              <span className="text-muted-foreground"> · saved {sharedInfo.savedAt}</span>
+            </span>
+            <span className="text-xs text-muted-foreground">Your edits are local — the original saved copy is unchanged.</span>
+          </div>
+        </div>
+      )}
+
 
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
@@ -437,7 +461,7 @@ const Index = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Your LO BPS on Current Platform</Label>
+              <Label>Current BPS Paid</Label>
               <div className="max-w-[200px]">
                 <Input
                   type="number"
@@ -668,7 +692,7 @@ const Index = () => {
           </div>
 
           {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> in the Production section above to see a comparison.</p>
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current BPS Paid</span> in the Production section above to see a comparison.</p>
           ) : (() => {
             const currentBrokerGross = state.annualVolume * 0.0275;
             const currentLoComp = state.annualVolume * (state.currentSplit / 100);

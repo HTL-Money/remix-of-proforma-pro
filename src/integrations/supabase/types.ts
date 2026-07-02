@@ -14,7 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      scenarios: {
+        Row: {
+          created_at: string
+          id: string
+          recruit_email: string
+          recruit_name: string
+          recruit_phone: string
+          share_id: string
+          state: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          recruit_email: string
+          recruit_name: string
+          recruit_phone: string
+          share_id: string
+          state: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          recruit_email?: string
+          recruit_name?: string
+          recruit_phone?: string
+          share_id?: string
+          state?: Json
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
