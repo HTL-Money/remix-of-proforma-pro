@@ -461,7 +461,7 @@ const Index = ({ initialState, sharedMode = false, sharedInfo }: IndexProps = {}
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Your LO BPS on Current Platform</Label>
+              <Label>Current BPS Paid</Label>
               <div className="max-w-[200px]">
                 <Input
                   type="number"
