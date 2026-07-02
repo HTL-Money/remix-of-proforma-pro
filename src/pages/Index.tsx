@@ -7,9 +7,20 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 import {
-  ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct, fmtNum,
+  ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
@@ -281,10 +292,8 @@ const Index = () => {
   };
 
   const reset = () => {
-    if (confirm("Reset model to defaults? This clears all inputs.")) {
-      setState(defaultState());
-      toast({ title: "Model reset", description: "All inputs restored to defaults." });
-    }
+    setState(defaultState());
+    toast({ title: "Model reset", description: "All inputs restored to defaults." });
   };
 
   return (
@@ -310,16 +319,36 @@ const Index = () => {
 
             </div>
 
-            <Button
-              onClick={reset}
-              variant="outline"
-              size="icon"
-              aria-label="Reset"
-              title="Reset"
-              className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Reset"
+                  title="Reset"
+                  className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Reset all inputs?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This clears everything you've entered and cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={reset}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Reset
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       </header>
@@ -723,7 +752,7 @@ const Index = () => {
                   className="rounded-xl p-8 md:p-10 border-2 border-accent/40 text-center"
                   style={{ background: "var(--gradient-gold)" }}
                 >
-                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">Total Revenue at Hometown Lending</p>
+                  <p className="text-xs md:text-sm uppercase tracking-[0.2em] text-accent-foreground/90 font-bold">Your Gain at Hometown Lending</p>
                   <p className={`font-display font-bold tabular-nums mt-3 ${loCompDelta >= 0 ? "text-accent-foreground" : "text-destructive"}`} style={{ fontSize: "clamp(2.5rem, 6vw, 4.5rem)", lineHeight: 1 }}>
                     {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
                   </p>

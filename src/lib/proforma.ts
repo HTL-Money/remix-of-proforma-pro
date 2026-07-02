@@ -103,6 +103,7 @@ export interface BucketCalc {
   grossRevenue: number;
   loGrossSplit: number;
   channelFees: number;
+  extraBonusCost: number;
   loNetBeforeHoldback: number;
   teamHoldback: number;
   initialLoCash: number;
@@ -114,6 +115,7 @@ export interface Calc {
     grossRevenue: number;
     loGrossSplit: number;
     channelFees: number;
+    extraBonusCost: number;
     loNetBeforeHoldback: number;
     teamHoldback: number;
     initialLoCash: number;
@@ -178,6 +180,9 @@ export const calculate = (s: ModelState): Calc => {
   const activeBuckets = bucketsResolved.filter(b => b.active && b.fileCount > 0);
   const totalActiveFiles = activeBuckets.reduce((a, b) => a + b.fileCount, 0);
 
+  // Per-file LOA/LP extra bonus rate, broker-paid, straight out of gross (like channel fees).
+  const extraBonusPerFile = s.employees.reduce((sum, e) => sum + (e.extraBonus || 0), 0);
+
   const bucketCalcs: BucketCalc[] = activeBuckets.map(b => {
     const volumePct = totalActiveFiles > 0 ? (b.fileCount / totalActiveFiles) * 100 : 0;
     const dollarVolume = s.annualVolume * (volumePct / 100);
@@ -185,26 +190,27 @@ export const calculate = (s: ModelState): Calc => {
     const grossRevenue = dollarVolume * (b.compPct / 100);
     const loGrossSplit = grossRevenue * (s.loSplit / 100);
     const channelFees = b.fileCount * b.perFileFee;
-    const loNetBeforeHoldback = loGrossSplit - channelFees;
+    const extraBonusCost = b.fileCount * extraBonusPerFile;
+    const loNetBeforeHoldback = loGrossSplit - channelFees - extraBonusCost;
     const teamHoldback = Math.max(0, loNetBeforeHoldback) * (s.holdbackPct / 100);
     const initialLoCash = loNetBeforeHoldback - teamHoldback;
-    return { bucket: b, volumePct, dollarVolume, avgLoan, grossRevenue, loGrossSplit, channelFees, loNetBeforeHoldback, teamHoldback, initialLoCash };
+    return { bucket: b, volumePct, dollarVolume, avgLoan, grossRevenue, loGrossSplit, channelFees, extraBonusCost, loNetBeforeHoldback, teamHoldback, initialLoCash };
   });
 
   const totals = bucketCalcs.reduce((acc, c) => {
     acc.grossRevenue += c.grossRevenue;
     acc.loGrossSplit += c.loGrossSplit;
     acc.channelFees += c.channelFees;
+    acc.extraBonusCost += c.extraBonusCost;
     acc.loNetBeforeHoldback += c.loNetBeforeHoldback;
     acc.teamHoldback += c.teamHoldback;
     acc.initialLoCash += c.initialLoCash;
     if (c.bucket.loanType === "QM") acc.qmFiles += c.bucket.fileCount;
     else acc.nonQmFiles += c.bucket.fileCount;
     return acc;
-  }, { grossRevenue: 0, loGrossSplit: 0, channelFees: 0, loNetBeforeHoldback: 0, teamHoldback: 0, initialLoCash: 0, qmFiles: 0, nonQmFiles: 0, totalActiveFiles });
+  }, { grossRevenue: 0, loGrossSplit: 0, channelFees: 0, extraBonusCost: 0, loNetBeforeHoldback: 0, teamHoldback: 0, initialLoCash: 0, qmFiles: 0, nonQmFiles: 0, totalActiveFiles });
 
-  let brokerPaidSalaries = 0, htlPaidSalaries = 0, brokerPaidBonuses = 0, htlPaidBonuses = 0, extraBonusTotal = 0;
-  const totalFiles = totals.qmFiles + totals.nonQmFiles;
+  let brokerPaidSalaries = 0, htlPaidSalaries = 0, brokerPaidBonuses = 0, htlPaidBonuses = 0;
   s.employees.forEach(e => {
     if (e.salarySource === "Broker") brokerPaidSalaries += e.salary;
     else htlPaidSalaries += e.salary;
@@ -213,17 +219,10 @@ export const calculate = (s: ModelState): Calc => {
       if (e.bonusSource === "Broker") brokerPaidBonuses += bonusCost;
       else htlPaidBonuses += bonusCost;
     }
-    extraBonusTotal += (e.extraBonus || 0) * totalFiles;
   });
+  const extraBonusTotal = totals.extraBonusCost;
   const brokerPaidTotal = brokerPaidSalaries + brokerPaidBonuses + extraBonusTotal;
   const htlPaidTotal = htlPaidSalaries + htlPaidBonuses;
-
-  // NEW MODEL: per-file LOA/LP extra bonuses come straight out of gross (like channel fees).
-  // Re-cut the LO net pool to remove them, then recompute the holdback. The holdback now
-  // only needs to cover salaries (broker-paid salaries + any broker-paid processor bonuses).
-  totals.loNetBeforeHoldback = totals.loGrossSplit - totals.channelFees - extraBonusTotal;
-  totals.teamHoldback = Math.max(0, totals.loNetBeforeHoldback) * (s.holdbackPct / 100);
-  totals.initialLoCash = totals.loNetBeforeHoldback - totals.teamHoldback;
 
   const salaryObligations = brokerPaidSalaries + brokerPaidBonuses;
   const holdbackSurplus = totals.teamHoldback - salaryObligations;

@@ -82,6 +82,15 @@ export const RetrImport = ({ onImport }: Props) => {
           <span className="tabular-nums">FHA {last.byLoanType.fha} • VA {last.byLoanType.va} • Conv {last.byLoanType.conv}</span>
         </div>
       )}
+      {last && !error && last.warnings.length > 0 && (
+        <div className="space-y-0.5">
+          {last.warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs text-amber-600">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> <span>{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
