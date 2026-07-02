@@ -318,19 +318,35 @@ const Index = ({ initialState, sharedMode = false, sharedInfo }: IndexProps = {}
 
             </div>
 
-            <Button
-              onClick={reset}
-              variant="outline"
-              size="icon"
-              aria-label="Reset"
-              title="Reset"
-              className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              {!sharedMode && <SaveShareDialog state={state} />}
+              <Button
+                onClick={reset}
+                variant="outline"
+                size="icon"
+                aria-label="Reset"
+                title="Reset"
+                className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+              >
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </header>
+
+      {sharedMode && sharedInfo && (
+        <div className="bg-accent/15 border-b border-accent/30">
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 text-sm text-foreground/80 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Viewing pro forma for <span className="font-semibold text-foreground">{sharedInfo.name}</span>
+              <span className="text-muted-foreground"> · saved {sharedInfo.savedAt}</span>
+            </span>
+            <span className="text-xs text-muted-foreground">Your edits are local — the original saved copy is unchanged.</span>
+          </div>
+        </div>
+      )}
+
 
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
