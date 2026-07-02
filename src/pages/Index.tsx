@@ -692,7 +692,7 @@ const Index = ({ initialState, sharedMode = false, sharedInfo }: IndexProps = {}
           </div>
 
           {state.currentSplit == null ? (
-            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">LO BPS</span> in the Production section above to see a comparison.</p>
+            <p className="text-sm text-muted-foreground">Enter your <span className="font-medium text-foreground">Current BPS Paid</span> in the Production section above to see a comparison.</p>
           ) : (() => {
             const currentBrokerGross = state.annualVolume * 0.0275;
             const currentLoComp = state.annualVolume * (state.currentSplit / 100);
