@@ -230,12 +230,19 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
 };
 
 // ---- Main page ----
-const Index = () => {
-  const [state, setState] = useState<ModelState>(() => loadState());
+interface IndexProps {
+  initialState?: ModelState;
+  sharedMode?: boolean;
+  sharedInfo?: { name: string; savedAt: string };
+}
+
+const Index = ({ initialState, sharedMode = false, sharedInfo }: IndexProps = {}) => {
+  const [state, setState] = useState<ModelState>(() => initialState ?? loadState());
 
   useEffect(() => {
+    if (sharedMode) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+  }, [state, sharedMode]);
 
   // Keep avg loan in sync
   useEffect(() => {
