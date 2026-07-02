@@ -17,6 +17,7 @@ import {
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
+import { SaveShareDialog } from "@/components/SaveShareDialog";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 
