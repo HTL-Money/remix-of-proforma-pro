@@ -28,8 +28,15 @@ import {
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
+import { ensureSession } from "@/lib/supabaseClient";
+import { captureRefFromUrl, logEvent, syncScenario } from "@/lib/scenarioSync";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
+const OPENED_LOGGED_KEY = "htl_opened_logged_v1";
+// Captured once at module load so the autosave effect can cheaply detect
+// "still the untouched default state" without re-serializing defaultState()
+// on every render.
+const DEFAULT_STATE_JSON = JSON.stringify(defaultState());
 
 const loadState = (): ModelState => {
   try {
@@ -242,10 +249,24 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
 // ---- Main page ----
 const Index = () => {
   const [state, setState] = useState<ModelState>(() => loadState());
+  const [retrImported, setRetrImported] = useState<boolean>(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
+
+  // Mount-only: establish (or resume) the anonymous session, capture ?ref=
+  // attribution, and log a single "opened" event per browser session.
+  useEffect(() => {
+    (async () => {
+      await ensureSession();
+      await captureRefFromUrl();
+      if (!sessionStorage.getItem(OPENED_LOGGED_KEY)) {
+        sessionStorage.setItem(OPENED_LOGGED_KEY, "1");
+        logEvent("opened");
+      }
+    })();
+  }, []);
 
   // Keep avg loan in sync
   useEffect(() => {
@@ -261,6 +282,20 @@ const Index = () => {
   const calcBrokerOnly = useMemo(() => calculateBrokerOnly(state), [state]);
   const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
   const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
+
+  // Debounced autosave: mirrors the localStorage-persist effect above, but
+  // fires the (fire-and-forget) Supabase upsert instead. Skipped while the
+  // state is still byte-for-byte the untouched default — no point creating
+  // a junk row before the candidate has entered anything — unless a RETR
+  // import already populated real data.
+  useEffect(() => {
+    const isUntouched = JSON.stringify(state) === DEFAULT_STATE_JSON;
+    if (isUntouched && !retrImported) return;
+    const timer = setTimeout(() => {
+      syncScenario(state, calc, { retrImported });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [state, calc, retrImported]);
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
@@ -399,6 +434,8 @@ const Index = () => {
                     nonqm: pct(r.byLoanType.nonqm),
                   },
                 }));
+                setRetrImported(true);
+                logEvent("retr_imported", { annualVolume: r.annualVolume, annualFiles: r.annualFiles });
                 toast({ title: "RETR imported", description: `${r.recruitName ?? "Loan Officer"} — ${r.annualFiles} files, ${fmtUSD(r.annualVolume, { compact: true })}` });
               }}
             />
@@ -884,7 +921,7 @@ const Index = () => {
 
 
         <footer className="text-center text-xs text-muted-foreground py-8">
-          Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.
+          Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative. Your scenario is saved securely with Hometown Lending so our team can have accurate numbers ready if you request a call. No account or personal information is required to use this calculator.
         </footer>
       </main>
     </div>
