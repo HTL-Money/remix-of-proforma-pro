@@ -16,27 +16,42 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n ?? 0);
 
-const fmtPct = (n: number, d = 2) => `${(n ?? 0).toFixed(d)}%`;
-
 function escapeHtml(input: string): string {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   return input.replace(/[&<>"']/g, (ch) => map[ch]);
 }
 
+// Client-supplied fields must never land in the email template unescaped —
+// coercing everything numeric to a guaranteed finite number (or null, where
+// the template treats absence as meaningful) closes both the HTML-injection
+// path and the "$NaN" formatting drift in one place.
+function safeNum(v: unknown, fallback = 0): number {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function safeNumOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  const n = safeNum(v, NaN);
+  return Number.isFinite(n) ? n : null;
+}
+
 function buildEmailHtml(rawLoName: string, state: Record<string, unknown>, results: Record<string, unknown>, hasChart: boolean): string {
   const name = escapeHtml((rawLoName || "Loan Officer").slice(0, 200));
-  const currentAnnual = results.currentPlatformAnnual as number | null;
-  const currentMonthly = results.currentPlatformMonthly as number | null;
-  const htlAnnual = results.htlAnnual as number;
-  const htlMonthly = results.htlMonthly as number;
-  const diffAnnual = results.diffAnnual as number | null;
-  const diffMonthly = results.diffMonthly as number | null;
-  const currentSplit = state.currentSplit as number | null;
-  const loSplit = state.loSplit as number;
-  const annualVolume = state.annualVolume as number;
-  const annualFiles = state.annualFiles as number;
-  const grossSplit = results.totals as Record<string, number>;
-  const gainColor = (diffAnnual ?? 0) >= 0 ? "#4F8F77" : "#dc2626";
+  const currentAnnual = safeNumOrNull(results.currentPlatformAnnual);
+  const currentMonthly = safeNumOrNull(results.currentPlatformMonthly);
+  const htlAnnual = safeNum(results.htlAnnual);
+  const htlMonthly = safeNum(results.htlMonthly);
+  const diffAnnual = safeNumOrNull(results.diffAnnual);
+  const diffMonthly = safeNumOrNull(results.diffMonthly);
+  const currentSplit = safeNumOrNull(state.currentSplit);
+  const loSplit = safeNum(state.loSplit);
+  const annualVolume = safeNum(state.annualVolume);
+  const annualFiles = safeNum(state.annualFiles);
+  const loGrossSplit = safeNum((results.totals as Record<string, unknown> | undefined)?.loGrossSplit);
+  // Same unit (dollars) on both sides of the "Gross LO Split" comparison row —
+  // previously this compared a raw percentage against a dollar figure.
+  const currentGrossSplit = currentSplit != null ? annualVolume * (currentSplit / 100) : null;
   const gainSign = (diffAnnual ?? 0) >= 0 ? "+" : "";
 
   return `<!DOCTYPE html>
@@ -106,7 +121,7 @@ function buildEmailHtml(rawLoName: string, state: Record<string, unknown>, resul
               <!-- Head row -->
               <tr>
                 <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:#6b7a99;background:#f8fafc;border-bottom:1px solid #e2e8f0;width:38%;">Metric</th>
-                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:#6b7a99;background:#f8fafc;border-bottom:1px solid #e2e8f0;width:31%;">Current Platform${currentSplit != null ? `<br/><span style="font-weight:400;">${Math.round((currentSplit as number) * 100)} BPS</span>` : ""}</th>
+                <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:600;color:#6b7a99;background:#f8fafc;border-bottom:1px solid #e2e8f0;width:31%;">Current Platform${currentSplit != null ? `<br/><span style="font-weight:400;">${Math.round(currentSplit * 100)} BPS</span>` : ""}</th>
                 <th style="padding:10px 14px;text-align:right;font-size:11px;font-weight:700;color:#4F8F77;background:#f0faf6;border-bottom:1px solid #e2e8f0;width:31%;">Hometown Lending<br/><span style="font-weight:400;">${loSplit}% split</span></th>
               </tr>
               ${currentSplit != null ? `
@@ -134,8 +149,8 @@ function buildEmailHtml(rawLoName: string, state: Record<string, unknown>, resul
               `}
               <tr style="border-bottom:1px solid #e2e8f0;">
                 <td style="padding:10px 14px;font-size:13px;color:#374151;">Gross LO Split</td>
-                <td style="padding:10px 14px;text-align:right;font-size:13px;color:#374151;">${currentSplit != null ? fmtPct(currentSplit as number, 2) : "—"}</td>
-                <td style="padding:10px 14px;text-align:right;font-size:13px;color:#4F8F77;background:#f8fffe;">${fmtUSD(grossSplit?.loGrossSplit ?? 0)}</td>
+                <td style="padding:10px 14px;text-align:right;font-size:13px;color:#374151;">${currentGrossSplit != null ? fmtUSD(currentGrossSplit) : "—"}</td>
+                <td style="padding:10px 14px;text-align:right;font-size:13px;color:#4F8F77;background:#f8fffe;">${fmtUSD(loGrossSplit)}</td>
               </tr>
             </table>
           </td>
@@ -171,6 +186,12 @@ function buildEmailHtml(rawLoName: string, state: Record<string, unknown>, resul
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed." }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json", "Allow": "POST, OPTIONS" },
+      status: 405,
+    });
   }
 
   try {
@@ -264,7 +285,10 @@ serve(async (req) => {
       status: 200,
     });
   } catch (err) {
-    return new Response(JSON.stringify({ error: (err as Error).message }), {
+    // Full detail goes to the function logs only — raw messages can name
+    // missing secrets or leak Postgres schema details to the public caller.
+    console.error("submit-proforma failed:", err);
+    return new Response(JSON.stringify({ error: "Submission failed. Please try again or contact the recruiting team." }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
     });

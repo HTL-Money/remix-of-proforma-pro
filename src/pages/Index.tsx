@@ -31,7 +31,10 @@ import { RetrImport } from "@/components/RetrImport";
 import { ComparisonScene, ComparisonSceneHandle } from "@/components/ComparisonScene";
 import { SubmitSection } from "@/components/SubmitSection";
 
-const STORAGE_KEY = "htl_lo_proforma_v7";
+// Only additive field (loEmail) was added since v6; loadState() already
+// merges saved data over defaultState(), so bumping this key is unnecessary
+// and would silently discard every existing user's saved pro forma.
+const STORAGE_KEY = "htl_lo_proforma_v6";
 
 // ?demo=1 seeds sample data for demos/screenshots without touching saved state
 const DEMO = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("demo");
