@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { Calc, ModelState, fmtUSD } from "@/lib/proforma";
 import { backendConfigured, submitProforma } from "@/lib/submitProforma";
-import type { ComparisonSceneHandle } from "@/components/ComparisonScene";
 
 const LAST_SUBMIT_KEY = "htl_lo_proforma_last_submit";
 
@@ -18,11 +17,11 @@ interface Requirement {
 export const SubmitSection = ({
   state,
   calc,
-  sceneRef,
+  getChartSnapshot,
 }: {
   state: ModelState;
   calc: Calc;
-  sceneRef: React.RefObject<ComparisonSceneHandle>;
+  getChartSnapshot: () => Promise<string | null>;
 }) => {
   const [submitting, setSubmitting] = useState(false);
   const [lastSubmit, setLastSubmit] = useState<string | null>(() => {
@@ -46,7 +45,7 @@ export const SubmitSection = ({
     if (!allOk || submitting) return;
     setSubmitting(true);
     try {
-      const chartPng = sceneRef.current?.snapshot() ?? null;
+      const chartPng = await getChartSnapshot();
       const result = await submitProforma({
         state,
         results: calc,
@@ -109,9 +108,9 @@ export const SubmitSection = ({
         <div className="flex flex-col items-stretch lg:items-end gap-2 lg:min-w-[280px]">
           {allOk && state.currentSplit != null && (
             <p className="text-sm text-muted-foreground lg:text-right">
-              Sending: <span className="font-semibold text-success tabular-nums">
+              Sending: <span className={`font-semibold tabular-nums ${(calc.diffAnnual ?? 0) >= 0 ? "text-success" : "text-destructive"}`}>
                 {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}/yr
-              </span> gain at Hometown Lending
+              </span> {(calc.diffAnnual ?? 0) >= 0 ? "gain" : "difference"} at Hometown Lending
             </p>
           )}
           <Button

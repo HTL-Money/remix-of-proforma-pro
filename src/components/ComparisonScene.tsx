@@ -133,10 +133,20 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, o: DrawO
   // ---- bars ----
   const maxVal = Math.max(curVal, htlVal, o.currentAnnual, o.htlAnnual, 1);
   const maxBarH = baseline - (vpY + 96);
-  const barW = Math.min(150, Math.max(96, w * 0.13));
-  const gap = Math.min(260, Math.max(150, w * 0.22));
-  const groupW = barW * 2 + gap;
-  const startX = (w - groupW - depthX) / 2;
+  const minPad = 12;
+  let barW = Math.min(150, Math.max(96, w * 0.13));
+  let gap = Math.min(260, Math.max(150, w * 0.22));
+  let groupW = barW * 2 + gap;
+  // On narrow canvases (roughly <366px) the natural group width plus depth
+  // and side padding overflows the canvas, clipping the bars. Scale the
+  // whole group down to fit instead.
+  if (groupW + depthX + minPad * 2 > w) {
+    const scale = (w - depthX - minPad * 2) / groupW;
+    barW *= scale;
+    gap *= scale;
+    groupW = barW * 2 + gap;
+  }
+  const startX = Math.max(minPad, (w - groupW - depthX) / 2);
 
   const heightFor = (v: number) => Math.max(4, (Math.max(v, 0) / maxVal) * maxBarH);
 
@@ -320,8 +330,10 @@ export const ComparisonScene = forwardRef<ComparisonSceneHandle, SceneValues>((p
     progress: 1,
     fromCurrent: 0,
     fromHtl: 0,
-    shownCurrent: props.currentAnnual,
-    shownHtl: props.htlAnnual,
+    // Seeded to 0 (not the target props) so the very first render has
+    // something to rise from instead of already showing the final frame.
+    shownCurrent: 0,
+    shownHtl: 0,
     parallax: 0,
     parallaxTarget: 0,
     raf: 0,

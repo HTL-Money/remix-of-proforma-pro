@@ -294,6 +294,7 @@ const Index = () => {
   // never "invisible" behind a collapsed section.
   const [bucketsOpen, setBucketsOpen] = useState(true);
   const [econOpen, setEconOpen] = useState(true);
+  const [comparisonOpen, setComparisonOpen] = useState(true);
   const revealResults = () => { setBucketsOpen(true); setEconOpen(true); };
 
   // Pulse the headline KPI tiles whenever the bottom line recalculates
@@ -307,6 +308,21 @@ const Index = () => {
   }, [calc.finalLoNetComp]);
 
   const sceneRef = useRef<ComparisonSceneHandle>(null);
+
+  // Collapsing "Comparison Tool" unmounts ComparisonScene (Radix Collapsible
+  // unmounts closed content), so sceneRef.current goes null and a snapshot
+  // taken while collapsed silently comes back empty. Force the section open
+  // and wait for it to mount + paint before snapshotting.
+  const ensureComparisonSnapshot = (): Promise<string | null> => {
+    return new Promise((resolve) => {
+      setComparisonOpen(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve(sceneRef.current?.snapshot() ?? null);
+        });
+      });
+    });
+  };
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
@@ -740,7 +756,7 @@ const Index = () => {
 
 
         {/* Comparison Tool */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool" open={comparisonOpen} onOpenChange={setComparisonOpen}>
           <div className="mb-6 max-w-md">
             <Label className="text-xs">Add Correspondent Channels</Label>
             <div className="grid grid-cols-2 gap-2 mt-2">
@@ -956,7 +972,7 @@ const Index = () => {
 
 
         {/* Submit */}
-        <SubmitSection state={state} calc={calc} sceneRef={sceneRef} />
+        <SubmitSection state={calcState} calc={calc} getChartSnapshot={ensureComparisonSnapshot} />
 
         <footer className="text-center text-xs text-muted-foreground py-8">
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.

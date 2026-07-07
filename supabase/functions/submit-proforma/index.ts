@@ -1,18 +1,30 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// TODO(BACKEND_SETUP.md): set the ALLOWED_ORIGIN secret to your deployed
+// app's exact origin (e.g. https://proforma.hometownlend.com) to lock this
+// down. Defaults to "*" so local/dev builds keep working out of the box.
+const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN") || "*";
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": allowedOrigin,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Vary": "Origin",
 };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n ?? 0);
 
 const fmtPct = (n: number, d = 2) => `${(n ?? 0).toFixed(d)}%`;
 
-function buildEmailHtml(loName: string, state: Record<string, unknown>, results: Record<string, unknown>, hasChart: boolean): string {
-  const name = loName || "Loan Officer";
+function escapeHtml(input: string): string {
+  const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return input.replace(/[&<>"']/g, (ch) => map[ch]);
+}
+
+function buildEmailHtml(rawLoName: string, state: Record<string, unknown>, results: Record<string, unknown>, hasChart: boolean): string {
+  const name = escapeHtml((rawLoName || "Loan Officer").slice(0, 200));
   const currentAnnual = results.currentPlatformAnnual as number | null;
   const currentMonthly = results.currentPlatformMonthly as number | null;
   const htlAnnual = results.htlAnnual as number;
@@ -180,11 +192,18 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Only forward loEmail as an actual recipient/DB value if it's a
+    // plausible email address — otherwise the endpoint is an open relay
+    // that lets anyone with the (bundle-public) anon key send this branded
+    // email to an arbitrary address.
+    const requestedLoEmail = typeof loEmail === "string" ? loEmail.trim() : "";
+    const validLoEmail = requestedLoEmail && EMAIL_RE.test(requestedLoEmail) ? requestedLoEmail : undefined;
+
     const { data, error } = await supabase
       .from("proforma_submissions")
       .insert({
         lo_name: state?.recruitName ?? null,
-        lo_email: loEmail ?? null,
+        lo_email: validLoEmail ?? null,
         state_json: state,
         results_json: results,
       })
@@ -198,11 +217,12 @@ serve(async (req) => {
       ? chartPng.slice("data:image/png;base64,".length)
       : null;
 
-    const loName = state?.recruitName || "Loan Officer";
-    const html = buildEmailHtml(loName, state, results, chartBase64 != null);
+    const rawLoName = typeof state?.recruitName === "string" ? state.recruitName : "";
+    const loNameForSubject = (rawLoName.trim() || "Loan Officer").replace(/[\r\n]/g, " ").slice(0, 200);
+    const html = buildEmailHtml(rawLoName, state, results, chartBase64 != null);
 
     const to: string[] = [recruiterEmail];
-    if (loEmail) to.push(loEmail);
+    if (validLoEmail) to.push(validLoEmail);
 
     let emailed = false;
     let emailError: string | undefined;
@@ -216,7 +236,7 @@ serve(async (req) => {
         body: JSON.stringify({
           from: "Hometown Lending Pro Forma <noreply@htlmoney.com>",
           to,
-          subject: `HTL Pro Forma — ${loName}`,
+          subject: `HTL Pro Forma — ${loNameForSubject}`,
           html,
           ...(chartBase64
             ? {

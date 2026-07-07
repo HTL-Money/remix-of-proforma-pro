@@ -32,11 +32,17 @@ With the [Supabase CLI](https://supabase.com/docs/guides/cli) installed and logg
 supabase link --project-ref <your-project-id>
 supabase secrets set RESEND_API_KEY=re_xxxx
 supabase secrets set RECRUITER_EMAIL=recruiting@htlmoney.com
+supabase secrets set ALLOWED_ORIGIN=https://your-deployed-app-domain.com
 supabase functions deploy submit-proforma
 ```
 
 (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically by
 the platform — you do not need to set them.)
+
+`ALLOWED_ORIGIN` locks down the function's CORS policy to your app's exact
+origin (scheme + host, no trailing slash — e.g. `https://proforma.htlmoney.com`).
+If you skip this it defaults to `*` (any site can call the function), which is
+fine for local development but should be set before going live publicly.
 
 ## 4. Verify end-to-end
 
