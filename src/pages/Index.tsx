@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator, Minus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Minus, Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,10 +28,26 @@ import {
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
+import { ComparisonScene, ComparisonSceneHandle } from "@/components/ComparisonScene";
+import { SubmitSection } from "@/components/SubmitSection";
 
-const STORAGE_KEY = "htl_lo_proforma_v6";
+const STORAGE_KEY = "htl_lo_proforma_v7";
+
+// ?demo=1 seeds sample data for demos/screenshots without touching saved state
+const DEMO = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("demo");
+
+const demoState = (): ModelState => ({
+  ...defaultState(),
+  recruitName: "Jordan Avery",
+  loEmail: "jordan.avery@example.com",
+  annualVolume: 48_000_000,
+  annualFiles: 120,
+  avgLoanOverride: false,
+  currentSplit: 2.0,
+});
 
 const loadState = (): ModelState => {
+  if (DEMO) return demoState();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -59,8 +75,19 @@ const Stat = ({ label, value, accent, mono = true }: { label: string; value: str
   );
 };
 
-const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode; defaultOpen?: boolean; compact?: boolean }> = ({ icon, title, children, right, defaultOpen = true, compact = false }) => {
-  const [open, setOpen] = useState(defaultOpen);
+const Section: React.FC<{
+  icon?: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+  defaultOpen?: boolean;
+  compact?: boolean;
+  open?: boolean;
+  onOpenChange?: (v: boolean) => void;
+}> = ({ icon, title, children, right, defaultOpen = true, compact = false, open: controlledOpen, onOpenChange }) => {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const setOpen = controlledOpen !== undefined ? (onOpenChange ?? (() => {})) : setInternalOpen;
   return (
     <section className={`premium-card ${compact ? "px-4 py-2 md:px-5 md:py-2.5" : "p-6 md:p-8"}`}>
       <Collapsible open={open} onOpenChange={setOpen}>
@@ -244,23 +271,42 @@ const Index = () => {
   const [state, setState] = useState<ModelState>(() => loadState());
 
   useEffect(() => {
+    if (DEMO) return; // demo data never overwrites saved work
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
-  // Keep avg loan in sync
-  useEffect(() => {
-    if (!state.avgLoanOverride && state.annualFiles > 0) {
-      const v = state.annualVolume / state.annualFiles;
-      if (Math.abs(v - state.avgLoanAmount) > 0.5) {
-        setState(s => ({ ...s, avgLoanAmount: v }));
-      }
-    }
-  }, [state.annualVolume, state.annualFiles, state.avgLoanOverride]); // eslint-disable-line
+  // Average loan is derived inline (no useEffect sync), so calculations and the
+  // displayed value can never be a render behind the volume/file inputs.
+  const effectiveAvgLoan = (!state.avgLoanOverride && state.annualFiles > 0)
+    ? state.annualVolume / state.annualFiles
+    : state.avgLoanAmount;
 
-  const calc = useMemo(() => calculate(state), [state]);
-  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(state), [state]);
+  const calcState = useMemo(
+    () => ({ ...state, avgLoanAmount: effectiveAvgLoan }),
+    [state, effectiveAvgLoan],
+  );
+  const calc = useMemo(() => calculate(calcState), [calcState]);
+  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(calcState), [calcState]);
   const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
   const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
+
+  // Results sections open themselves after team/pricing edits so a change is
+  // never "invisible" behind a collapsed section.
+  const [bucketsOpen, setBucketsOpen] = useState(true);
+  const [econOpen, setEconOpen] = useState(true);
+  const revealResults = () => { setBucketsOpen(true); setEconOpen(true); };
+
+  // Pulse the headline KPI tiles whenever the bottom line recalculates
+  const [pulseKey, setPulseKey] = useState(0);
+  const prevComp = useRef(calc.finalLoNetComp);
+  useEffect(() => {
+    if (prevComp.current !== calc.finalLoNetComp) {
+      prevComp.current = calc.finalLoNetComp;
+      setPulseKey(k => k + 1);
+    }
+  }, [calc.finalLoNetComp]);
+
+  const sceneRef = useRef<ComparisonSceneHandle>(null);
 
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
@@ -281,14 +327,17 @@ const Index = () => {
         return next;
       }),
     }));
+    revealResults();
   };
 
 
   const updateEmployee = (id: string, patch: Partial<Employee>) => {
     setState(s => ({ ...s, employees: s.employees.map(e => e.id === id ? { ...e, ...patch } : e) }));
+    revealResults();
   };
   const removeEmployee = (id: string) => {
     setState(s => ({ ...s, employees: s.employees.filter(e => e.id !== id) }));
+    revealResults();
   };
 
   const reset = () => {
@@ -356,7 +405,7 @@ const Index = () => {
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
         {/* Headline KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div key={pulseKey} className={`grid grid-cols-1 md:grid-cols-3 gap-4 ${pulseKey > 0 ? "kpi-pulse" : ""}`}>
           <div className="premium-card p-5">
             <Stat label="Annual LO Net Compensation" value={fmtUSD(calc.finalLoNetComp)} accent="gold" />
           </div>
@@ -409,6 +458,17 @@ const Index = () => {
               <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
             </div>
             <div className="space-y-2">
+              <Label>Your Email</Label>
+              <Input
+                className="max-w-[200px]"
+                type="email"
+                value={state.loEmail}
+                onChange={e => setState(s => ({ ...s, loEmail: e.target.value }))}
+                placeholder="you@example.com"
+              />
+              <p className="text-xs text-muted-foreground">Optional — get your results by email on submit.</p>
+            </div>
+            <div className="space-y-2">
               <Label>Annual Funded Volume</Label>
               <CurrencyInput
                 className="max-w-[200px]"
@@ -431,7 +491,7 @@ const Index = () => {
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
               <div className="flex gap-2 max-w-[200px]">
                 <CurrencyInput
-                  value={Math.round(state.avgLoanAmount)}
+                  value={Math.round(effectiveAvgLoan)}
                   onChange={v => setState(s => ({ ...s, avgLoanAmount: v, avgLoanOverride: true }))}
                 />
                 {state.avgLoanOverride && (
@@ -581,7 +641,7 @@ const Index = () => {
           title="Team & Employee Support"
           defaultOpen={false}
           compact
-          right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
+          right={<AddEmployeeDialog onAdd={(emp) => { setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] })); revealResults(); }} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
             Processor salaries and per-file bonuses are paid by Hometown Lending. Loan Officer Assistants and Loan Partners are paid by the broker, and their per-file bonus is deducted from the LO's compensation.
@@ -707,6 +767,18 @@ const Index = () => {
             const monthlyDelta = calc.diffMonthly ?? 0;
             return (
               <div className="space-y-6">
+                {/* 3D comparison scene — this exact render is snapshotted into the email */}
+                <ComparisonScene
+                  ref={sceneRef}
+                  currentAnnual={calc.currentPlatformAnnual ?? 0}
+                  htlAnnual={calc.finalLoNetComp}
+                  currentSub={`${Math.round(state.currentSplit * 100)} BPS · ${fmtPct(state.currentSplit, 2)}`}
+                  htlSub={`${state.loSplit}% split · ${corrActive ? "Broker + Correspondent" : "Broker only"}`}
+                  diffAnnual={calc.diffAnnual ?? 0}
+                  diffMonthly={calc.diffMonthly ?? 0}
+                  recruitName={state.recruitName.trim() || undefined}
+                />
+
                 {/* Side-by-side platform cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Current Platform */}
@@ -789,7 +861,7 @@ const Index = () => {
 
 
         {/* Production buckets */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Production Buckets">
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Production Buckets" open={bucketsOpen} onOpenChange={setBucketsOpen}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -858,7 +930,7 @@ const Index = () => {
 
 
         {/* LO Economics Summary */}
-        <Section icon={<Wallet className="h-5 w-5" />} title="LO Economics Summary">
+        <Section icon={<Wallet className="h-5 w-5" />} title="LO Economics Summary" open={econOpen} onOpenChange={setEconOpen}>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="premium-card p-5"><Stat label="Total LO Net Before Holdback" value={fmtUSD(calc.totals.loNetBeforeHoldback)} /></div>
             <div className="premium-card p-5"><Stat label="Team-Support Holdback Collected" value={fmtUSD(calc.totals.teamHoldback)} accent="gold" /></div>
@@ -882,6 +954,9 @@ const Index = () => {
 
 
 
+
+        {/* Submit */}
+        <SubmitSection state={state} calc={calc} sceneRef={sceneRef} />
 
         <footer className="text-center text-xs text-muted-foreground py-8">
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.

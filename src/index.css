@@ -132,3 +132,18 @@
     background: var(--gradient-gold);
   }
 }
+
+/* Brief accent flash on the KPI tiles whenever results recalculate */
+@keyframes kpi-pulse {
+  0% { box-shadow: 0 0 0 0 hsl(var(--accent) / 0.45); }
+  100% { box-shadow: 0 0 0 14px hsl(var(--accent) / 0); }
+}
+.kpi-pulse > .premium-card {
+  animation: kpi-pulse 0.7s ease-out;
+  border-radius: var(--radius);
+}
+@media (prefers-reduced-motion: reduce) {
+  .kpi-pulse > .premium-card {
+    animation: none;
+  }
+}
