@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator, Minus } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator, Minus, ListChecks, LogOut } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,7 @@ import { RetrParseResult } from "@/lib/retrParser";
 import {
   StoredRetrReport, lookupRetrReport, saveRetrReport, normalizeNmls, isCloudConfigured,
 } from "@/lib/retrReportStore";
+import { useAuth } from "@/lib/auth";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 const GATE_KEY = "htl_nmls_gate_v1";
@@ -270,14 +272,39 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
 
 // ---- Main page ----
 const Index = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkNmls = normalizeNmls(searchParams.get("nmls") ?? "");
+  const { authRequired, user, signOut } = useAuth();
   const [state, setState] = useState<ModelState>(() => loadState());
-  const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY));
+  const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY) && !deepLinkNmls);
   const [retrPdfUrl, setRetrPdfUrl] = useState<string | null>(null);
   const [pullingRetr, setPullingRetr] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
+
+  // Deep link from the Targets page: ?nmls=... auto-loads that LO, skipping the gate.
+  useEffect(() => {
+    if (!deepLinkNmls) return;
+    sessionStorage.setItem(GATE_KEY, "1");
+    setGated(false);
+    (async () => {
+      if (isCloudConfigured()) {
+        try {
+          const report = await lookupRetrReport(deepLinkNmls);
+          if (report) applyStoredReport(deepLinkNmls, report);
+          else { setState({ ...defaultState(), nmls: deepLinkNmls }); toast({ title: "No RETR report on file", description: `Nothing stored yet for NMLS ${deepLinkNmls}. Drop the PDF to import and share it.` }); }
+        } catch (e) {
+          setState({ ...defaultState(), nmls: deepLinkNmls });
+          toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+        }
+      } else {
+        setState({ ...defaultState(), nmls: deepLinkNmls });
+      }
+      setSearchParams({}, { replace: true });
+    })();
+  }, [deepLinkNmls]); // eslint-disable-line
 
   // Keep avg loan in sync
   useEffect(() => {
@@ -414,10 +441,32 @@ const Index = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {isCloudConfigured() && (
+                <Button
+                  asChild
+                  variant="outline"
+                  size="sm"
+                  className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+                >
+                  <Link to="/targets" title="Target loan officers"><ListChecks className="h-4 w-4 mr-1" /> Target LOs</Link>
+                </Button>
+              )}
               <CloudSave
                 state={state}
                 onLoad={(loaded) => setState(loaded)}
               />
+              {authRequired && user && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Sign out"
+                  title={`Sign out (${user.email})`}
+                  onClick={() => signOut()}
+                  className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              )}
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button
