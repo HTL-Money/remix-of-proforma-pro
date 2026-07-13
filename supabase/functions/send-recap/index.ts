@@ -1,8 +1,14 @@
-// Supabase Edge Function: send the pro forma recap email via Resend.
+// Supabase Edge Function: send the pro forma recap email.
+//
+// Providers (checked in this order):
+//   1. Microsoft 365 (Graph) — used when ALL of these secrets are set:
+//        GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET  (Entra daemon
+//        app with Mail.Send application permission), and
+//        RECAP_SENDER  (mailbox to send as, e.g. proforma@hometownlend.com)
+//      Unset any one of them to fall back to Resend instantly.
+//   2. Resend — RESEND_API_KEY, optional RECAP_FROM ("Name <addr>").
 //
 // Deploy:   supabase functions deploy send-recap
-// Secrets:  supabase secrets set RESEND_API_KEY=re_...
-//           supabase secrets set RECAP_FROM="Hometown Lending <proforma@hometownlend.com>"  (optional)
 //
 // Called with the user's JWT (verify_jwt is on by default), so only
 // signed-in users can send. The function owns the email template — clients
@@ -34,12 +40,103 @@ const MAX_CHART_B64_CHARS = 2_000_000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ---- Email providers -------------------------------------------------------
+
+class ProviderError extends Error {
+  constructor(public provider: string, public status: number, public detail: string) {
+    super(`${provider} rejected the send (${status})`);
+  }
+}
+
+interface GraphConfig { tenantId: string; clientId: string; clientSecret: string; sender: string }
+
+const graphConfig = (): GraphConfig | null => {
+  const tenantId = Deno.env.get("GRAPH_TENANT_ID");
+  const clientId = Deno.env.get("GRAPH_CLIENT_ID");
+  const clientSecret = Deno.env.get("GRAPH_CLIENT_SECRET");
+  const sender = Deno.env.get("RECAP_SENDER");
+  return tenantId && clientId && clientSecret && sender ? { tenantId, clientId, clientSecret, sender } : null;
+};
+
+// Cached across warm invocations; refreshed 60s before expiry.
+let graphToken: { token: string; expiresAt: number } | null = null;
+
+const getGraphToken = async (cfg: GraphConfig): Promise<string> => {
+  if (graphToken && graphToken.expiresAt > Date.now()) return graphToken.token;
+  const resp = await fetch(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      scope: "https://graph.microsoft.com/.default",
+    }),
+  });
+  if (!resp.ok) throw new ProviderError("Microsoft 365 token", resp.status, await resp.text().catch(() => ""));
+  const data = await resp.json();
+  graphToken = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
+  return graphToken.token;
+};
+
+const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, chartPng?: string): Promise<void> => {
+  const message: Record<string, unknown> = {
+    subject,
+    body: { contentType: "HTML", content: html },
+    toRecipients: [{ emailAddress: { address: to } }],
+  };
+  if (chartPng) {
+    // Inline CID attachment: contentId matches <img src="cid:..."> in the HTML.
+    message.attachments = [{
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: "earnings-comparison.png",
+      contentType: "image/png",
+      contentBytes: chartPng,
+      contentId: CHART_CID,
+      isInline: true,
+    }];
+  }
+  const post = async (token: string) =>
+    fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.sender)}/sendMail`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ message, saveToSentItems: true }),
+    });
+  let resp = await post(await getGraphToken(cfg));
+  if (resp.status === 401) {
+    graphToken = null; // stale cached token — refresh once and retry
+    resp = await post(await getGraphToken(cfg));
+  }
+  // Graph success is 202 Accepted with an empty body.
+  if (resp.status !== 202) throw new ProviderError("Microsoft 365", resp.status, await resp.text().catch(() => ""));
+};
+
+const sendViaResend = async (apiKey: string, to: string, subject: string, html: string, chartPng?: string): Promise<void> => {
+  const from = Deno.env.get("RECAP_FROM") ?? "Hometown Lending <onboarding@resend.dev>";
+  const emailBody: Record<string, unknown> = { from, to: [to], subject, html };
+  if (chartPng) {
+    // Inline CID attachment, referenced from the HTML as <img src="cid:...">.
+    emailBody.attachments = [
+      { content: chartPng, filename: "earnings-comparison.png", content_type: "image/png", content_id: CHART_CID },
+    ];
+  }
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(emailBody),
+  });
+  if (!resp.ok) throw new ProviderError("Resend", resp.status, await resp.text().catch(() => ""));
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
-  const apiKey = Deno.env.get("RESEND_API_KEY");
-  if (!apiKey) return json(500, { error: "Email isn't configured yet — set the RESEND_API_KEY secret in Supabase." });
+  const graph = graphConfig();
+  const resendKey = Deno.env.get("RESEND_API_KEY");
+  if (!graph && !resendKey) {
+    return json(500, { error: "Email isn't configured yet — set the GRAPH_* secrets (Microsoft 365) or RESEND_API_KEY in Supabase." });
+  }
 
   let to = "";
   let recap: RecapPayload;
@@ -69,28 +166,18 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: "Invalid JSON body." });
   }
 
-  const from = Deno.env.get("RECAP_FROM") ?? "Hometown Lending <onboarding@resend.dev>";
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
   const html = renderRecapHtml(recap, chartPng ? { chartCid: CHART_CID } : {});
 
-  const emailBody: Record<string, unknown> = { from, to: [to], subject, html };
-  if (chartPng) {
-    // Inline CID attachment, referenced from the HTML as <img src="cid:...">.
-    emailBody.attachments = [
-      { content: chartPng, filename: "earnings-comparison.png", content_type: "image/png", content_id: CHART_CID },
-    ];
-  }
-
-  const resendResp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(emailBody),
-  });
-
-  if (!resendResp.ok) {
-    const detail = await resendResp.text().catch(() => "");
-    console.error("Resend error", resendResp.status, detail);
-    return json(502, { error: `Email provider rejected the send (${resendResp.status}).` });
+  try {
+    if (graph) await sendViaGraph(graph, to, subject, html, chartPng);
+    else await sendViaResend(resendKey!, to, subject, html, chartPng);
+  } catch (e) {
+    if (e instanceof ProviderError) {
+      console.error(e.provider, "error", e.status, e.detail);
+      return json(502, { error: `Email provider rejected the send (${e.status}).` });
+    }
+    throw e;
   }
 
   // Log the send with the service role (RLS has no client insert policy).
