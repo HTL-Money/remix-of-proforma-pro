@@ -2,8 +2,9 @@
 // slide-over drawer on mobile, content area to the right. Wraps every route.
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Calculator, LayoutDashboard, ListChecks, LogOut, Mail, Menu, X } from "lucide-react";
+import { Calculator, LayoutDashboard, ListChecks, LogOut, Mail, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +24,7 @@ const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
         <div className="font-display font-bold text-lg leading-tight" style={{ color: "hsl(var(--success))" }}>
           Hometown Lending
         </div>
-        <div className="text-[11px] uppercase tracking-[0.18em] text-white/50 mt-0.5">LO Recruiting</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-white/60 mt-0.5">LO Recruiting</div>
       </div>
       <nav className="flex-1 px-3 space-y-1" aria-label="Main">
         {NAV.map(item => {
@@ -49,7 +50,7 @@ const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
       </nav>
       {authRequired && user && (
         <div className="px-3 pb-5 pt-3 border-t border-white/10 space-y-2">
-          <p className="px-3 text-xs text-white/50 truncate" title={user.email ?? undefined}>{user.email}</p>
+          <p className="px-3 text-xs text-white/60 truncate" title={user.email ?? undefined}>{user.email}</p>
           <Button
             variant="ghost"
             size="sm"
@@ -86,26 +87,20 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
         </Button>
         <span className="font-display font-bold" style={{ color: "hsl(var(--success))" }}>Hometown Lending</span>
       </div>
-      {open && (
-        <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-label="Navigation menu">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-64 glass-bg shadow-xl">
-            <div className="absolute inset-0 backdrop-blur-xl bg-white/[0.06]" />
-            <div className="relative h-full">
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close menu"
-                onClick={() => setOpen(false)}
-                className="absolute right-2 top-2 text-white hover:bg-white/10 z-10"
-              >
-                <X className="h-5 w-5" />
-              </Button>
-              <SidebarContent onNavigate={() => setOpen(false)} />
-            </div>
+      {/* Radix Sheet supplies the modal behavior a hand-rolled drawer lacks:
+          focus trap, Escape-to-close, aria-modal, and body scroll lock. */}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent
+          side="left"
+          className="md:hidden w-64 p-0 border-white/10 glass-bg text-white [&>button]:text-white [&>button]:opacity-80"
+        >
+          <SheetTitle className="sr-only">Navigation menu</SheetTitle>
+          <div className="absolute inset-0 backdrop-blur-xl bg-white/[0.06]" aria-hidden="true" />
+          <div className="relative h-full">
+            <SidebarContent onNavigate={() => setOpen(false)} />
           </div>
-        </div>
-      )}
+        </SheetContent>
+      </Sheet>
 
       <main className="md:pl-60">{children}</main>
     </div>

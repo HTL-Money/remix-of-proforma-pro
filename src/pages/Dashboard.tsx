@@ -20,11 +20,11 @@ const MINT = "hsl(var(--success))";
 
 const KPI = ({ icon: Icon, label, value, sub }: { icon: React.ElementType; label: string; value: string; sub?: string }) => (
   <div className="glass-panel p-5">
-    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">
+    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">
       <Icon className="h-3.5 w-3.5" style={{ color: MINT }} /> {label}
     </div>
     <div className="mt-2 text-2xl md:text-3xl font-bold text-white tabular-nums">{value}</div>
-    {sub && <div className="mt-1 text-xs text-white/50">{sub}</div>}
+    {sub && <div className="mt-1 text-xs text-white/60">{sub}</div>}
   </div>
 );
 
@@ -50,7 +50,9 @@ const Dashboard = () => {
       ]);
       setRows(pipeline);
       setActivity(feed);
-      setEmailCount(emails.count ?? 0);
+      // A failed count query resolves with { count: null, error } rather than
+      // throwing — keep the "—" unknown state instead of a confident 0.
+      setEmailCount(emails.error ? null : emails.count ?? 0);
     } catch (e) {
       toast({ title: "Couldn't load the dashboard", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -69,13 +71,14 @@ const Dashboard = () => {
 
   const move = async (t: TargetWithStage, to: StageKey) => {
     if (t.stage === to) return;
-    const prev = rows;
     setRows(rs => rs.map(r => (r.nmls === t.nmls ? { ...r, stage: to } : r))); // optimistic
     try {
       await setStage(t.nmls, to, t.stage);
       setActivity(a => [{ kind: "stage", at: new Date().toISOString(), text: `NMLS ${t.nmls} moved ${stageLabel(t.stage)} → ${stageLabel(to)}` }, ...a].slice(0, 15));
     } catch (e) {
-      setRows(prev);
+      // Revert only this card — a snapshot restore would also undo other
+      // moves that succeeded while this request was in flight.
+      setRows(rs => rs.map(r => (r.nmls === t.nmls ? { ...r, stage: t.stage } : r)));
       toast({ title: "Couldn't move recruit", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     }
   };
@@ -94,7 +97,7 @@ const Dashboard = () => {
     <div className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 space-y-6">
       <div>
         <h1 className="font-display font-bold text-2xl text-white">Dashboard</h1>
-        <p className="text-sm text-white/55 mt-0.5">Your recruiting pipeline at a glance.</p>
+        <p className="text-sm text-white/65 mt-0.5">Your recruiting pipeline at a glance.</p>
       </div>
 
       {/* KPI cards */}
@@ -155,7 +158,7 @@ const Dashboard = () => {
                           <DropdownMenu>
                             <DropdownMenuTrigger
                               aria-label={`Move ${t.name || t.nmls} to another stage`}
-                              className="text-white/50 hover:text-white text-xs px-1 -mr-1 shrink-0"
+                              className="text-white/60 hover:text-white text-xs px-1 -mr-1 shrink-0"
                             >
                               ⋯
                             </DropdownMenuTrigger>
@@ -175,11 +178,11 @@ const Dashboard = () => {
                           {t.annualVolume ? fmtUSD(t.annualVolume, { compact: true }) : "—"}
                           {t.city ? ` · ${t.city}${t.state ? `, ${t.state}` : ""}` : ""}
                         </p>
-                        <p className="text-[10px] text-white/40 tabular-nums">NMLS {t.nmls}</p>
+                        <p className="text-[10px] text-white/60 tabular-nums">NMLS {t.nmls}</p>
                       </div>
                     ))}
                     {groups[stage.key].length === 0 && (
-                      <p className="text-xs text-white/35 text-center py-4">Drop a card here</p>
+                      <p className="text-xs text-white/65 text-center py-4">Drop a card here</p>
                     )}
                   </div>
                 </div>
@@ -196,7 +199,7 @@ const Dashboard = () => {
           <div className="space-y-2" role="img" aria-label={`Recruits by stage: ${STAGES.map(s => `${s.label} ${groups[s.key].length}`).join(", ")}`}>
             {STAGES.map(s => (
               <div key={s.key} className="flex items-center gap-2">
-                <span className="w-28 shrink-0 text-xs text-white/55">{s.label}</span>
+                <span className="w-28 shrink-0 text-xs text-white/65">{s.label}</span>
                 <div className="flex-1 h-4 rounded-full bg-white/10 overflow-hidden">
                   <div
                     className="h-full rounded-full"
@@ -208,7 +211,7 @@ const Dashboard = () => {
             ))}
           </div>
           {stats.lostCount > 0 && (
-            <p className="text-xs text-white/45">{stats.lostCount} marked lost (not shown in funnel).</p>
+            <p className="text-xs text-white/60">{stats.lostCount} marked lost (not shown in funnel).</p>
           )}
         </section>
 
@@ -217,7 +220,7 @@ const Dashboard = () => {
             <Activity className="h-4 w-4" style={{ color: MINT }} /> Recent Activity
           </h2>
           {activity.length === 0 ? (
-            <p className="text-sm text-white/55 py-4">Activity shows up here as your team saves pro formas, sends recaps, and moves recruits.</p>
+            <p className="text-sm text-white/65 py-4">Activity shows up here as your team saves pro formas, sends recaps, and moves recruits.</p>
           ) : (
             <ul className="space-y-2.5">
               {activity.map((a, i) => (
@@ -225,7 +228,7 @@ const Dashboard = () => {
                   <span className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0" style={{ background: MINT }} />
                   <span className="min-w-0">
                     <span className="text-white/85">{a.text}</span>
-                    <span className="block text-[11px] text-white/40">{new Date(a.at).toLocaleString()}</span>
+                    <span className="block text-[11px] text-white/60">{new Date(a.at).toLocaleString()}</span>
                   </span>
                 </li>
               ))}
