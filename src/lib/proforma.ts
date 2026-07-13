@@ -95,15 +95,18 @@ export const MIX_PRESETS: MixPreset[] = [
   { key: "nonqm", label: "Non-QM", mix: { fha: 10, va: 5, conv: 45, nonqm: 40 } },
 ];
 
+// Production numbers start zeroed — every figure on screen should be the
+// recruit's real data, never filler. HTL deal terms (split/holdback/mix)
+// keep their standard-offer defaults so the flow stays one-tap.
 export const defaultState = (): ModelState => ({
   recruitName: "",
   nmls: "",
-  annualVolume: 48_000_000,
-  annualFiles: 120,
-  avgLoanAmount: 400_000,
+  annualVolume: 0,
+  annualFiles: 0,
+  avgLoanAmount: 0,
   avgLoanOverride: false,
   loSplit: 90,
-  currentSplit: 2.0, // 200 BPS
+  currentSplit: null, // BPS field starts empty
   holdbackPct: 10,
   loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
   buckets: defaultBuckets(),

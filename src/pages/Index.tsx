@@ -38,7 +38,7 @@ import {
 } from "@/lib/retrReportStore";
 import { useAuth } from "@/lib/auth";
 
-const STORAGE_KEY = "htl_lo_proforma_v6";
+const STORAGE_KEY = "htl_lo_proforma_v7"; // v7: zeroed-out defaults (drop pre-filled v6 drafts)
 const GATE_KEY = "htl_nmls_gate_v1";
 
 // One-tap quick picks — recruiting targets are $10M+ producers.
@@ -541,8 +541,8 @@ const Index = () => {
           <div className="premium-card p-5">
             <Stat
               label="Difference vs Current Platform"
-              value={`${(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}${fmtUSD(calc.diffAnnual ?? 0)}`}
-              accent={(calc.diffAnnual ?? 0) >= 0 ? "success" : "destructive"}
+              value={calc.diffAnnual == null ? "—" : `${calc.diffAnnual >= 0 ? "+" : ""}${fmtUSD(calc.diffAnnual)}`}
+              accent={calc.diffAnnual == null ? undefined : calc.diffAnnual >= 0 ? "success" : "destructive"}
             />
             {calc.diffAnnual != null && (
               <p className="text-xs text-muted-foreground mt-1 tabular-nums">
