@@ -99,10 +99,17 @@
   * {
     @apply border-border;
   }
+  html {
+    /* Kill the gray flash on tap (iOS/Android) and double-tap-to-zoom delay on controls. */
+    -webkit-tap-highlight-color: transparent;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "cv11", "ss01";
     font-variant-numeric: tabular-nums;
+  }
+  button, [role="button"], a, label, input, select {
+    touch-action: manipulation;
   }
   h1, h2, h3, h4 {
     font-family: 'Playfair Display', Georgia, serif;

@@ -82,6 +82,19 @@ export const PROCESSOR_DEFAULTS = {
 export const LOA_EXTRA_BONUS = 300;
 export const LOAN_PARTNER_EXTRA_BONUS = 350;
 
+// One-tap loan-type mixes (percent of files; each sums to 100).
+export interface MixPreset {
+  key: string;
+  label: string;
+  mix: LoanTypeMix;
+}
+export const MIX_PRESETS: MixPreset[] = [
+  { key: "balanced", label: "Balanced", mix: { fha: 20, va: 15, conv: 55, nonqm: 10 } },
+  { key: "gov", label: "Gov-Heavy", mix: { fha: 35, va: 25, conv: 35, nonqm: 5 } },
+  { key: "conv", label: "Conv-Heavy", mix: { fha: 5, va: 5, conv: 85, nonqm: 5 } },
+  { key: "nonqm", label: "Non-QM", mix: { fha: 10, va: 5, conv: 45, nonqm: 40 } },
+];
+
 export const defaultState = (): ModelState => ({
   recruitName: "",
   nmls: "",

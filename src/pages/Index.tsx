@@ -23,9 +23,10 @@ import { toast } from "@/hooks/use-toast";
 import {
   ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
-  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
+  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource, MIX_PRESETS,
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
+import { Chips } from "@/components/Chips";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
@@ -39,6 +40,13 @@ import { useAuth } from "@/lib/auth";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
 const GATE_KEY = "htl_nmls_gate_v1";
+
+// One-tap quick picks — recruiting targets are $10M+ producers.
+const VOLUME_CHIPS = [12, 18, 24, 36, 48, 75].map(m => ({ label: `$${m}M`, value: m * 1_000_000 }));
+const BPS_CHIPS = [100, 125, 150, 200, 250, 275].map(b => ({ label: String(b), value: b }));
+const MIX_KEYS = ["fha", "va", "conv", "nonqm"] as const;
+// Stop scroll-wheel / trackpad from silently changing focused number inputs.
+const blurOnWheel = (e: React.WheelEvent<HTMLInputElement>) => e.currentTarget.blur();
 
 // Map a parsed RETR report onto the model — shared by the NMLS gate,
 // the "Pull RETR data" button, and the PDF drop zone.
@@ -90,10 +98,10 @@ const Stat = ({ label, value, accent, mono = true }: { label: string; value: str
   );
 };
 
-const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode; defaultOpen?: boolean; compact?: boolean }> = ({ icon, title, children, right, defaultOpen = true, compact = false }) => {
+const Section: React.FC<{ icon?: React.ReactNode; title: string; children: React.ReactNode; right?: React.ReactNode; defaultOpen?: boolean; compact?: boolean; id?: string }> = ({ icon, title, children, right, defaultOpen = true, compact = false, id }) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className={`premium-card ${compact ? "px-4 py-2 md:px-5 md:py-2.5" : "p-6 md:p-8"}`}>
+    <section id={id} className={`premium-card scroll-mt-4 ${compact ? "px-4 py-2 md:px-5 md:py-2.5" : "p-6 md:p-8"}`}>
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className={`flex flex-wrap items-center justify-between gap-3 ${compact ? (open ? "mb-3" : "mb-0") : "mb-6"}`}>
           <div className="flex items-center gap-2">
@@ -321,6 +329,22 @@ const Index = () => {
   const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
   const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
 
+  // Volume edits keep the average loan steady and rescale the file count,
+  // so one number (volume) is usually all a user has to touch.
+  const setVolume = (v: number) => setState(s => {
+    const avg = s.avgLoanAmount > 0 ? s.avgLoanAmount : 400_000;
+    const files = v > 0 ? Math.max(1, Math.round(v / avg)) : 0;
+    return { ...s, annualVolume: v, annualFiles: files };
+  });
+
+  const activeMixPreset = MIX_PRESETS.find(p =>
+    MIX_KEYS.every(k => Math.abs(p.mix[k] - state.loanTypeMix[k]) < 0.51)
+  )?.key ?? null;
+  const setCorrEnabled = (on: boolean) => setState(s => ({
+    ...s,
+    buckets: s.buckets.map(b => b.channel === "Correspondent" ? { ...b, active: on } : b),
+  }));
+
   const updateBucket = (key: ChannelKey, patch: Partial<Bucket>) => {
     setState(s => ({
       ...s,
@@ -421,26 +445,28 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       {/* Hero header */}
       <header className="hero-bg text-primary-foreground border-b border-border/40">
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 md:py-10">
-          <div className="flex items-start justify-between gap-6">
-            <div className="flex items-start gap-6">
-              <div
-                className="rounded-lg bg-white flex items-center justify-center shadow-soft p-3 shrink-0"
-                style={{ width: "192px", height: "192px" }}
-              >
-                <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10">
+          <div className="flex items-start justify-between gap-4 md:gap-6 flex-wrap">
+            <div className="flex items-start gap-4 md:gap-6 flex-col sm:flex-row min-w-0">
+              <div className="rounded-lg bg-white flex items-center justify-center shadow-soft p-2 md:p-3 shrink-0 w-20 h-20 md:w-48 md:h-48">
+                <img
+                  src={htlLogo.url}
+                  alt="Hometown Lending"
+                  className="h-full w-full object-contain"
+                  onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
+                />
               </div>
-              <div className="pt-2">
-                <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(3rem, 7vw, 6rem)" }}>Hometown Lending</h1>
-                <p className="font-display font-semibold mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
-                  <span style={{ fontSize: "clamp(1.5rem, 3.5vw, 3rem)" }}>LO Pro Forma:</span>
-                  <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1rem, 1.8vw, 1.5rem)" }}>Your Production's True Value</span>
+              <div className="md:pt-2 min-w-0">
+                <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 7vw, 6rem)" }}>Hometown Lending</h1>
+                <p className="font-display font-semibold mt-2 md:mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
+                  <span style={{ fontSize: "clamp(1.25rem, 3.5vw, 3rem)" }}>LO Pro Forma:</span>
+                  <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(0.95rem, 1.8vw, 1.5rem)" }}>Your Production's True Value</span>
                 </p>
               </div>
 
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {isCloudConfigured() && (
                 <Button
                   asChild
@@ -503,7 +529,7 @@ const Index = () => {
       </header>
 
 
-      <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
+      <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-28 md:pb-8 space-y-8">
         {/* Headline KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="premium-card p-5">
@@ -556,7 +582,45 @@ const Index = () => {
               </a>
             )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* The two numbers that drive the answer come first. */}
+            <div className="space-y-2 md:col-span-1 lg:col-span-2">
+              <Label htmlFor="annual-volume">Annual Funded Volume</Label>
+              <CurrencyInput
+                id="annual-volume"
+                className="max-w-[240px]"
+                value={state.annualVolume}
+                placeholder="48,000,000"
+                onChange={setVolume}
+              />
+              <Chips aria-label="Volume quick picks" options={VOLUME_CHIPS} value={state.annualVolume} onChange={setVolume} />
+              <p className="text-xs text-muted-foreground">Tap a preset or type shorthand like <span className="font-medium text-foreground">48m</span>.</p>
+            </div>
+            <div className="space-y-2 md:col-span-1 lg:col-span-2">
+              <Label htmlFor="current-bps">Current Platform LO Comp (BPS)</Label>
+              <Input
+                id="current-bps"
+                className="max-w-[240px] tabular-nums"
+                type="number"
+                inputMode="numeric"
+                step="1"
+                min={0}
+                max={275}
+                onWheel={blurOnWheel}
+                value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
+                placeholder="e.g. 200"
+                onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
+              />
+              <Chips
+                aria-label="BPS quick picks"
+                options={BPS_CHIPS}
+                value={state.currentSplit == null ? null : Math.round(state.currentSplit * 100)}
+                onChange={b => setState(s => ({ ...s, currentSplit: b / 100 }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                3-digit BPS (200 = 2.00%). {state.currentSplit != null && <span className="font-semibold text-accent">= {fmtPct(state.currentSplit, 2)}</span>}
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>Loan Officer</Label>
               <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
@@ -577,23 +641,17 @@ const Index = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Annual Funded Volume</Label>
-              <CurrencyInput
-                className="max-w-[200px]"
-                value={state.annualVolume}
-                placeholder="48,000,000"
-                onChange={v => setState(s => ({ ...s, annualVolume: v }))}
-              />
-            </div>
-            <div className="space-y-2">
               <Label>Annual Funded File Count</Label>
               <Input
                 className="max-w-[200px]"
                 type="number"
+                inputMode="numeric"
+                onWheel={blurOnWheel}
                 value={state.annualFiles || ""}
                 placeholder="0"
-                onChange={e => setState(s => ({ ...s, annualFiles: +e.target.value || 0 }))}
+                onChange={e => setState(s => ({ ...s, annualFiles: +e.target.value || 0, avgLoanOverride: false }))}
               />
+              <p className="text-xs text-muted-foreground">Auto-syncs when volume changes.</p>
             </div>
             <div className="space-y-2">
               <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
@@ -608,51 +666,35 @@ const Index = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>HTL LO Split (%)</Label>
-              <div className="max-w-[200px]">
-                <Select value={String(state.loSplit)} onValueChange={v => setState(s => ({ ...s, loSplit: +v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="90">90%</SelectItem>
-                    <SelectItem value="85">85%</SelectItem>
-                    <SelectItem value="80">80%</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <Label>HTL LO Split</Label>
+              <Chips
+                aria-label="HTL LO split"
+                options={[90, 85, 80].map(v => ({ label: `${v}%`, value: v }))}
+                value={state.loSplit}
+                onChange={v => setState(s => ({ ...s, loSplit: v }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>Team-Support Holdback</Label>
-              <div className="max-w-[200px]">
-                <Select value={String(state.holdbackPct)} onValueChange={v => setState(s => ({ ...s, holdbackPct: +v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">0%</SelectItem>
-                    <SelectItem value="10">10%</SelectItem>
-                    <SelectItem value="20">20%</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Your LO BPS on Current Platform</Label>
-              <div className="max-w-[200px]">
-                <Input
-                  type="number"
-                  step="1"
-                  min={0}
-                  max={275}
-                  value={state.currentSplit == null ? "" : Math.round(state.currentSplit * 100)}
-                  placeholder="e.g. 200"
-                  onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                3-digit BPS (e.g. 200 = 2.00%). {state.currentSplit != null && <span className="font-semibold text-accent">= {fmtPct(state.currentSplit, 2)}</span>}
-              </p>
+              <Chips
+                aria-label="Team-support holdback"
+                options={[0, 10, 20].map(v => ({ label: `${v}%`, value: v }))}
+                value={state.holdbackPct}
+                onChange={v => setState(s => ({ ...s, holdbackPct: v }))}
+              />
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
               <Label>Loan Type Mix (Files)</Label>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl">
+              <Chips
+                aria-label="Loan mix presets"
+                options={MIX_PRESETS.map(p => ({ label: p.label, value: p.key }))}
+                value={activeMixPreset}
+                onChange={key => {
+                  const preset = MIX_PRESETS.find(p => p.key === key);
+                  if (preset) setState(s => ({ ...s, loanTypeMix: { ...preset.mix } }));
+                }}
+              />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl pt-1">
                 {(["fha","va","conv","nonqm"] as const).map(k => {
                   const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
                   const order: Array<"fha"|"va"|"conv"|"nonqm"> = ["fha","va","conv","nonqm"];
@@ -672,8 +714,10 @@ const Index = () => {
                       <Label className="text-xs">{labels[k]}</Label>
                       <Input
                         type="number"
+                        inputMode="numeric"
                         min={0}
                         step="1"
+                        onWheel={blurOnWheel}
                         value={counts[k]}
                         onChange={e => setState(s => {
                           const tot = Math.max(0, Math.round(s.annualFiles || 0));
@@ -848,17 +892,29 @@ const Index = () => {
 
 
         {/* Comparison Tool */}
-        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool">
-          <div className="mb-6 max-w-md">
-            <Label className="text-xs">Add Correspondent Channels</Label>
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              {state.buckets.filter(b => b.channel === "Correspondent").map(b => (
-                <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2 py-1.5 text-xs cursor-pointer">
-                  <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
-                  <span className="font-medium">{b.label}</span>
-                </label>
-              ))}
-            </div>
+        <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool" id="comparison">
+          <div className="mb-6 max-w-xl">
+            <Label className="text-xs">Channel Strategy</Label>
+            <Chips
+              aria-label="Channel strategy"
+              className="mt-2"
+              options={[
+                { label: "Broker Only", value: "broker" },
+                { label: "Broker + Correspondent", value: "corr" },
+              ]}
+              value={corrActive ? "corr" : "broker"}
+              onChange={v => setCorrEnabled(v === "corr")}
+            />
+            {corrActive && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {state.buckets.filter(b => b.channel === "Correspondent").map(b => (
+                  <label key={b.key} className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2.5 py-2 text-xs cursor-pointer">
+                    <Switch checked={b.active} onCheckedChange={v => updateBucket(b.key, { active: v })} />
+                    <span className="font-medium">{b.label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground mt-1.5">
               Routes VA / Conventional / Non-QM through Correspondent at {fmtUSD(CORR_FEE)}/file. FHA always stays Broker.
             </p>
@@ -896,7 +952,8 @@ const Index = () => {
                   </div>
 
                   {/* Hometown Lending */}
-                  <div className="premium-card p-6 bg-primary text-primary-foreground border-0 flex flex-col">
+                  {/* Not premium-card: its gradient background would paint over bg-primary and hide the white text. */}
+                  <div className="rounded-lg shadow-soft p-6 bg-primary text-primary-foreground flex flex-col">
                     <p className="text-xs uppercase tracking-wider text-accent font-semibold">Hometown Lending</p>
                     <p className="stat-label mt-1 !text-primary-foreground/70">{corrActive ? "Broker + Correspondent" : "Broker Only"}</p>
                     <p className="text-3xl font-bold text-accent tabular-nums mt-3">{fmtUSD(calc.finalLoNetComp)}</p>
@@ -989,9 +1046,11 @@ const Index = () => {
                         <Input
                           className="w-24"
                           type="number"
+                          inputMode="decimal"
                           step="0.01"
                           min={isBroker ? 0 : CORR_MIN}
                           max={isBroker ? BROKER_CAP : CORR_MAX}
+                          onWheel={blurOnWheel}
                           value={b.compPct}
                           onChange={e => updateBucket(b.key, { compPct: +e.target.value || 0 })}
                           disabled={isBroker}
@@ -1055,6 +1114,27 @@ const Index = () => {
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.
         </footer>
       </main>
+
+      {/* Mobile sticky result bar — the headline number follows you while editing. */}
+      <button
+        type="button"
+        onClick={() => document.getElementById("comparison")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        aria-label="Jump to comparison"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 hero-bg text-primary-foreground border-t border-accent/30 px-4 pt-2.5 text-left"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.625rem)" }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-wider text-primary-foreground/70 font-semibold">HTL Net · Annual</p>
+            <p className="text-xl font-bold tabular-nums leading-tight" style={{ color: "hsl(var(--success))" }}>{fmtUSD(calc.finalLoNetComp)}</p>
+          </div>
+          {calc.diffAnnual != null && (
+            <div className={`shrink-0 rounded-full px-3 py-1.5 text-sm font-semibold tabular-nums ${(calc.diffAnnual ?? 0) >= 0 ? "bg-success text-success-foreground" : "bg-destructive text-destructive-foreground"}`}>
+              {(calc.diffAnnual ?? 0) >= 0 ? "+" : ""}{fmtUSD(calc.diffAnnual ?? 0)}
+            </div>
+          )}
+        </div>
+      </button>
     </div>
   );
 };

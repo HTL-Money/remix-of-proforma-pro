@@ -41,8 +41,13 @@ export const NmlsGate = ({ onEnter, onSkip }: NmlsGateProps) => {
   return (
     <div className="min-h-screen hero-bg text-primary-foreground flex items-center justify-center px-4">
       <div className="w-full max-w-lg text-center space-y-8 py-16">
-        <div className="mx-auto rounded-lg bg-white flex items-center justify-center shadow-soft p-3" style={{ width: "160px", height: "160px" }}>
-          <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
+        <div className="mx-auto rounded-lg bg-white flex items-center justify-center shadow-soft p-3 w-28 h-28 sm:w-40 sm:h-40">
+          <img
+            src={htlLogo.url}
+            alt="Hometown Lending"
+            className="h-full w-full object-contain"
+            onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
+          />
         </div>
         <div className="space-y-2">
           <h1 className="font-display font-bold tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 5vw, 3.25rem)", lineHeight: 1.05 }}>

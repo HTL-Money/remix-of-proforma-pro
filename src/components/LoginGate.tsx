@@ -31,8 +31,13 @@ export const LoginGate = () => {
   return (
     <div className="min-h-screen hero-bg text-primary-foreground flex items-center justify-center px-4">
       <div className="w-full max-w-sm text-center space-y-8 py-16">
-        <div className="mx-auto rounded-lg bg-white flex items-center justify-center shadow-soft p-3" style={{ width: "140px", height: "140px" }}>
-          <img src={htlLogo.url} alt="Hometown Lending" className="h-full w-full object-contain" />
+        <div className="mx-auto rounded-lg bg-white flex items-center justify-center shadow-soft p-3 w-28 h-28 sm:w-36 sm:h-36">
+          <img
+            src={htlLogo.url}
+            alt="Hometown Lending"
+            className="h-full w-full object-contain"
+            onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
+          />
         </div>
         <div className="space-y-1">
           <h1 className="font-display font-bold tracking-tight text-3xl" style={{ color: "hsl(var(--success))" }}>Hometown Lending</h1>
