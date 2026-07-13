@@ -29,8 +29,36 @@ import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
 import { CloudSave } from "@/components/CloudSave";
+import { NmlsGate } from "@/components/NmlsGate";
+import { RetrParseResult } from "@/lib/retrParser";
+import {
+  StoredRetrReport, lookupRetrReport, saveRetrReport, normalizeNmls, isCloudConfigured,
+} from "@/lib/retrReportStore";
 
 const STORAGE_KEY = "htl_lo_proforma_v6";
+const GATE_KEY = "htl_nmls_gate_v1";
+
+// Map a parsed RETR report onto the model — shared by the NMLS gate,
+// the "Pull RETR data" button, and the PDF drop zone.
+const applyRetrResult = (s: ModelState, r: RetrParseResult): ModelState => {
+  const total = r.annualFiles;
+  const pct = (n: number) => total > 0 ? (n / total) * 100 : 0;
+  return {
+    ...s,
+    recruitName: r.recruitName ?? s.recruitName,
+    nmls: r.nmls ?? s.nmls,
+    annualVolume: r.annualVolume,
+    annualFiles: r.annualFiles,
+    avgLoanAmount: r.avgLoanAmount || s.avgLoanAmount,
+    avgLoanOverride: false,
+    loanTypeMix: {
+      fha: pct(r.byLoanType.fha),
+      va: pct(r.byLoanType.va),
+      conv: pct(r.byLoanType.conv),
+      nonqm: pct(r.byLoanType.nonqm),
+    },
+  };
+};
 
 const loadState = (): ModelState => {
   try {
@@ -243,6 +271,9 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
 // ---- Main page ----
 const Index = () => {
   const [state, setState] = useState<ModelState>(() => loadState());
+  const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY));
+  const [retrPdfUrl, setRetrPdfUrl] = useState<string | null>(null);
+  const [pullingRetr, setPullingRetr] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -294,8 +325,70 @@ const Index = () => {
 
   const reset = () => {
     setState(defaultState());
+    setRetrPdfUrl(null);
+    sessionStorage.removeItem(GATE_KEY);
+    setGated(true);
     toast({ title: "Model reset", description: "All inputs restored to defaults." });
   };
+
+  const applyStoredReport = (nmls: string, report: StoredRetrReport) => {
+    setState(applyRetrResult({ ...defaultState(), nmls }, report.parsed));
+    setRetrPdfUrl(report.pdfUrl);
+    toast({
+      title: "RETR data pulled",
+      description: `${report.loName ?? "Loan Officer"} (NMLS ${nmls}) — ${report.parsed.annualFiles} files, ${fmtUSD(report.parsed.annualVolume, { compact: true })}`,
+    });
+  };
+
+  const handleGateEnter = ({ nmls, report }: { nmls: string; report: StoredRetrReport | null }) => {
+    sessionStorage.setItem(GATE_KEY, "1");
+    setGated(false);
+    if (normalizeNmls(state.nmls) === nmls && state.annualVolume > 0) {
+      // Same LO as the in-progress draft — resume it rather than clobbering edits.
+      toast({ title: "Resumed", description: `Continuing your in-progress pro forma for NMLS ${nmls}.` });
+      return;
+    }
+    if (report) {
+      applyStoredReport(nmls, report);
+    } else {
+      setState({ ...defaultState(), nmls });
+      // When unconfigured, the gate already toasted "Working locally" — don't replace it (TOAST_LIMIT is 1).
+      if (isCloudConfigured()) {
+        toast({ title: "No RETR report on file", description: `Drop the RETR PDF for NMLS ${nmls} in the Production section to import and share it.` });
+      }
+    }
+  };
+
+  const handleGateSkip = () => {
+    sessionStorage.setItem(GATE_KEY, "1");
+    setGated(false);
+  };
+
+  const pullRetr = async () => {
+    const nmls = normalizeNmls(state.nmls);
+    if (!nmls) {
+      toast({ title: "Enter an NMLS number first", description: "Add the LO's NMLS next to their name, then pull." });
+      return;
+    }
+    if (!isCloudConfigured()) {
+      toast({ title: "Supabase not configured", description: "Add credentials to .env to pull shared RETR data." });
+      return;
+    }
+    setPullingRetr(true);
+    try {
+      const report = await lookupRetrReport(nmls);
+      if (report) applyStoredReport(nmls, report);
+      else toast({ title: "No RETR report on file", description: `Nothing stored yet for NMLS ${nmls}. Drop the PDF below to import and share it.` });
+    } catch (e) {
+      toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setPullingRetr(false);
+    }
+  };
+
+  if (gated) {
+    return <NmlsGate onEnter={handleGateEnter} onSkip={handleGateSkip} />;
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -387,33 +480,52 @@ const Index = () => {
 
         {/* Production */}
         <Section icon={<Calculator className="h-5 w-5" />} title="Production" compact>
-          <div className="mb-4">
+          <div className="mb-4 space-y-1">
             <RetrImport
-              onImport={(r) => {
-                const total = r.annualFiles;
-                const pct = (n: number) => total > 0 ? (n / total) * 100 : 0;
-                setState(s => ({
-                  ...s,
-                  recruitName: r.recruitName ?? s.recruitName,
-                  annualVolume: r.annualVolume,
-                  annualFiles: r.annualFiles,
-                  avgLoanAmount: r.avgLoanAmount || s.avgLoanAmount,
-                  avgLoanOverride: false,
-                  loanTypeMix: {
-                    fha: pct(r.byLoanType.fha),
-                    va: pct(r.byLoanType.va),
-                    conv: pct(r.byLoanType.conv),
-                    nonqm: pct(r.byLoanType.nonqm),
-                  },
-                }));
+              hint={normalizeNmls(state.nmls) && !retrPdfUrl ? `to import & share for NMLS ${normalizeNmls(state.nmls)}` : undefined}
+              onImport={(r, file) => {
+                const enteredNmls = normalizeNmls(state.nmls);
+                if (r.nmls && enteredNmls && r.nmls !== enteredNmls) {
+                  toast({ title: "NMLS mismatch", description: `This PDF is for NMLS ${r.nmls}, not ${enteredNmls}. Using ${r.nmls}.`, variant: "destructive" });
+                }
+                setState(s => applyRetrResult(s, r));
                 toast({ title: "RETR imported", description: `${r.recruitName ?? "Loan Officer"} — ${r.annualFiles} files, ${fmtUSD(r.annualVolume, { compact: true })}` });
+                const shareNmls = r.nmls ?? enteredNmls;
+                if (shareNmls && isCloudConfigured()) {
+                  saveRetrReport(shareNmls, r, file)
+                    .then(url => {
+                      setRetrPdfUrl(url);
+                      toast({ title: "Report shared", description: `RETR report for NMLS ${shareNmls} is now on file for the whole team.` });
+                    })
+                    .catch(e => toast({ title: "Couldn't share report", description: e instanceof Error ? e.message : String(e), variant: "destructive" }));
+                }
               }}
             />
+            {retrPdfUrl && (
+              <a href={retrPdfUrl} target="_blank" rel="noreferrer" className="inline-block text-xs text-accent underline underline-offset-2 hover:opacity-80">
+                Download the RETR PDF on file{normalizeNmls(state.nmls) ? ` for NMLS ${normalizeNmls(state.nmls)}` : ""}
+              </a>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Loan Officer</Label>
               <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
+            </div>
+            <div className="space-y-2">
+              <Label>NMLS #</Label>
+              <div className="flex gap-2 max-w-[240px]">
+                <Input
+                  inputMode="numeric"
+                  className="tabular-nums"
+                  value={state.nmls}
+                  onChange={e => setState(s => ({ ...s, nmls: e.target.value }))}
+                  placeholder="123456"
+                />
+                <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={pullRetr} disabled={pullingRetr} title="Pull stored RETR data for this NMLS">
+                  {pullingRetr ? "Pulling…" : "Pull RETR"}
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Annual Funded Volume</Label>

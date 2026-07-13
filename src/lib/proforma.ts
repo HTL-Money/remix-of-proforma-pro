@@ -38,6 +38,7 @@ export interface LoanTypeMix {
 
 export interface ModelState {
   recruitName: string;
+  nmls: string;
   annualVolume: number;
   annualFiles: number;
   avgLoanAmount: number;
@@ -83,6 +84,7 @@ export const LOAN_PARTNER_EXTRA_BONUS = 350;
 
 export const defaultState = (): ModelState => ({
   recruitName: "",
+  nmls: "",
   annualVolume: 48_000_000,
   annualFiles: 120,
   avgLoanAmount: 400_000,
