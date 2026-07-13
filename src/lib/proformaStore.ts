@@ -26,6 +26,20 @@ export const listProformas = async (): Promise<ProformaSummary[]> => {
   return data ?? [];
 };
 
+// Every save keeps a permanent copy in proforma_snapshots (append-only
+// history). A snapshot failure never blocks the save itself.
+const snapshot = async (proformaId: string, name: string, state: ModelState): Promise<void> => {
+  try {
+    const supabase = requireSupabase();
+    const { error } = await supabase
+      .from("proforma_snapshots")
+      .insert({ proforma_id: proformaId, name, data: state });
+    if (error) console.warn("Snapshot not stored:", error.message);
+  } catch (e) {
+    console.warn("Snapshot not stored:", e);
+  }
+};
+
 export const saveProforma = async (name: string, state: ModelState): Promise<string> => {
   const supabase = requireSupabase();
   const { data, error } = await supabase
@@ -34,6 +48,7 @@ export const saveProforma = async (name: string, state: ModelState): Promise<str
     .select("id")
     .single();
   if (error) throw new Error(error.message);
+  await snapshot(data.id, name, state);
   return data.id;
 };
 
@@ -44,6 +59,7 @@ export const updateProforma = async (id: string, name: string, state: ModelState
     .update({ name, data: state, updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw new Error(error.message);
+  await snapshot(id, name, state);
 };
 
 export const loadProforma = async (id: string): Promise<{ name: string; state: ModelState }> => {

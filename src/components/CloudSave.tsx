@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Cloud, Download, Loader2, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, Cloud, Download, Loader2, Mail, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
-import { ModelState } from "@/lib/proforma";
+import { ModelState, calculate } from "@/lib/proforma";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/lib/auth";
+import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
 import {
   ProformaSummary, listProformas, loadProforma, saveProforma, updateProforma, deleteProforma,
 } from "@/lib/proformaStore";
@@ -17,6 +19,7 @@ interface CloudSaveProps {
 }
 
 export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ProformaSummary[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -25,6 +28,35 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
   const [currentName, setCurrentName] = useState<string | null>(null);
   const [saveName, setSaveName] = useState("");
   const [deleteArmId, setDeleteArmId] = useState<string | null>(null);
+  // Post-save confirmation step: verify where the recap email should go.
+  const [step, setStep] = useState<"save" | "confirm">("save");
+  const [recapEmail, setRecapEmail] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const enterConfirmStep = () => {
+    setRecapEmail(user?.email ?? "");
+    setStep("confirm");
+  };
+
+  const handleSendRecap = async () => {
+    const to = recapEmail.trim();
+    if (!isValidEmail(to)) {
+      toast({ title: "Check the email address", description: "That doesn't look like a valid email.", variant: "destructive" });
+      return;
+    }
+    setSending(true);
+    try {
+      const name = saveName.trim() || currentName || "Untitled Pro Forma";
+      await sendRecap(to, buildRecapPayload(name, state, calculate(state), currentId ?? undefined));
+      toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
+      setStep("save");
+      setOpen(false);
+    } catch (e) {
+      toast({ title: "Couldn't send the recap", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setSending(false);
+    }
+  };
 
   const refresh = async () => {
     if (!supabase) return;
@@ -40,6 +72,7 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
 
   useEffect(() => {
     if (open) {
+      setStep("save");
       setDeleteArmId(null);
       setSaveName(prev => prev || currentName || state.recruitName || "");
       refresh();
@@ -55,6 +88,7 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       setCurrentName(name);
       toast({ title: "Saved to cloud", description: `“${name}” is saved.` });
       refresh();
+      enterConfirmStep();
     } catch (e) {
       toast({ title: "Save failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -71,6 +105,7 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       setCurrentName(name);
       toast({ title: "Updated", description: `“${name}” now has your latest inputs.` });
       refresh();
+      enterConfirmStep();
     } catch (e) {
       toast({ title: "Update failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -131,12 +166,46 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
         </DialogTrigger>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Cloud Saves</DialogTitle>
+            <DialogTitle>{step === "confirm" ? "Saved — Send the Recap?" : "Cloud Saves"}</DialogTitle>
           </DialogHeader>
           {!supabase ? (
             <p className="text-sm text-muted-foreground py-2">
               Supabase isn't configured. Copy <code>.env.example</code> to <code>.env</code>, add your project URL and anon key, then restart the app.
             </p>
+          ) : step === "confirm" ? (
+            <div className="space-y-4 py-2">
+              <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm">
+                <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
+                <span>
+                  <span className="font-medium">“{saveName.trim() || currentName || "Untitled Pro Forma"}”</span> is saved — a copy is stored in the database.
+                </span>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="recap-email">Email the full recap to</Label>
+                <Input
+                  id="recap-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={recapEmail}
+                  onChange={e => setRecapEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  onKeyDown={e => { if (e.key === "Enter") handleSendRecap(); }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Verify this address — the recap goes here. If it isn't right, type the email it should be sent to.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" disabled={sending} onClick={() => { setStep("save"); setOpen(false); }}>
+                  Skip
+                </Button>
+                <Button onClick={handleSendRecap} disabled={sending} className="gold-accent text-accent-foreground hover:opacity-90">
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />}
+                  {sending ? "Sending…" : "Send Recap"}
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-5 py-2">
               <div className="space-y-2">
