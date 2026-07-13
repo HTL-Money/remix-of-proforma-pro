@@ -99,7 +99,7 @@ const Targets = () => {
             <p className="text-sm text-primary-foreground/75 mt-1">Your recruiting list. Import from CSV, then open a pro forma for any LO.</p>
           </div>
           <Button asChild variant="outline" className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground">
-            <Link to="/"><ArrowLeft className="h-4 w-4 mr-1" /> Pro Forma</Link>
+            <Link to="/calculator"><ArrowLeft className="h-4 w-4 mr-1" /> Pro Forma</Link>
           </Button>
         </div>
       </header>
@@ -218,7 +218,7 @@ const Targets = () => {
                             : <span className="text-xs text-muted-foreground">—</span>}
                         </td>
                         <td className="px-4 text-right whitespace-nowrap">
-                          <Button size="sm" variant="outline" onClick={() => navigate(`/?nmls=${t.nmls}`)}>
+                          <Button size="sm" variant="outline" onClick={() => navigate(`/calculator?nmls=${t.nmls}`)}>
                             <ExternalLink className="h-3.5 w-3.5 mr-1" /> Pro Forma
                           </Button>
                           <Button size="icon" variant="ghost" onClick={() => remove(t.nmls)} className="ml-1 text-destructive hover:bg-destructive/10">

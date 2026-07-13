@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/auth";
 import { buildRecapPayload, sendRecap, isValidEmail, RecapPayload } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
+import { autoAdvanceOnRecap } from "@/lib/pipeline";
 import {
   ProformaSummary, listProformas, loadProforma, saveProforma, updateProforma, deleteProforma,
 } from "@/lib/proformaStore";
@@ -63,6 +64,9 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       // its HTML comparison cells — never a blocked send.
       const chartPng = renderRecapChartPng(pendingRecap.payload);
       await sendRecap(to, pendingRecap.payload, chartPng ?? undefined);
+      // Light pipeline automation: a sent recap advances the matching target
+      // LO to "Pro Forma Sent" (forward only; never throws).
+      autoAdvanceOnRecap(pendingRecap.payload.nmls);
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       const wasResend = pendingRecap.source === "resend";
       setPendingRecap(null);
