@@ -96,6 +96,17 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (supabaseUrl && serviceKey) {
+      // The chart is the one client-supplied artifact in the email, so the
+      // audit row records its fingerprint (hash + size) — never the bytes.
+      let chart: { sha256: string; bytes: number } | null = null;
+      if (chartPng) {
+        try {
+          const bytes = Uint8Array.from(atob(chartPng), c => c.charCodeAt(0));
+          const digest = await crypto.subtle.digest("SHA-256", bytes);
+          const sha256 = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+          chart = { sha256, bytes: bytes.length };
+        } catch { /* best effort — never blocks the log */ }
+      }
       // sent_by from the caller's JWT payload (already verified by the platform).
       let sentBy: string | null = null;
       const auth = req.headers.get("authorization") ?? "";
@@ -114,7 +125,7 @@ Deno.serve(async (req: Request) => {
         },
         // Numbers only in the audit log — never image bytes. The defensive
         // spread also strips a chartPng a buggy client might nest in recap.
-        body: JSON.stringify({ proforma_id: recap.proformaId ?? null, sent_to: to, sent_by: sentBy, payload: { ...recap, chartPng: undefined } }),
+        body: JSON.stringify({ proforma_id: recap.proformaId ?? null, sent_to: to, sent_by: sentBy, payload: { ...recap, chartPng: undefined, chart } }),
       });
     }
   } catch (e) {

@@ -10,9 +10,11 @@ import type { RecapPayload } from "../../supabase/functions/send-recap/template"
 import { BRAND } from "../../supabase/functions/send-recap/template";
 import { fmtUSD } from "@/lib/proforma";
 
+// Sized for phones: the <img> is fluid, so a 600-wide design renders at
+// ~0.57x on a 360dp screen — fonts below are chosen to stay legible there.
 export const CHART_WIDTH = 600; // CSS px — matches the email's 600px container
-export const CHART_HEIGHT = 280;
-export const CHART_SCALE = 2; // retina: physical canvas is 1200×560
+export const CHART_HEIGHT = 310;
+export const CHART_SCALE = 2; // retina: physical canvas is 1200×620
 
 export interface RecapChartPanel {
   title: string;
@@ -115,43 +117,40 @@ export const renderRecapChartPng = (r: RecapPayload): string | null => {
     ctx.textBaseline = "middle";
 
     // Left panel: current platform, strictly grayscale, deliberately smaller.
-    roundedRect(ctx, 24, 35, 254, 210, 8);
+    roundedRect(ctx, 24, 45, 254, 220, 8);
     ctx.fillStyle = BRAND.grayBg;
     ctx.fill();
     const lcx = 24 + 254 / 2;
-    setLetterSpacing(ctx, "2px");
+    setLetterSpacing(ctx, "1.5px");
     ctx.fillStyle = BRAND.grayMid;
-    ctx.font = `bold 11px ${FONT}`;
-    ctx.fillText(data.current.title, lcx, 68);
+    fillTextFit(ctx, data.current.title, lcx, 82, "bold", 16, 214);
     setLetterSpacing(ctx, "0px");
-    ctx.font = `12px ${FONT}`;
-    ctx.fillText(data.current.subtitle, lcx, 90);
+    ctx.font = `16px ${FONT}`;
+    ctx.fillText(data.current.subtitle, lcx, 110);
     ctx.fillStyle = BRAND.grayDark;
-    fillTextFit(ctx, data.current.annual, lcx, 124, "bold", 26, 214);
+    fillTextFit(ctx, data.current.annual, lcx, 150, "bold", 32, 214);
     ctx.fillStyle = BRAND.grayMid;
-    ctx.font = `12px ${FONT}`;
-    ctx.fillText(data.current.monthly, lcx, 150);
-    drawBar(ctx, 44, 180, 214, 10, data.current.barFrac, "#e0e0e0", BRAND.grayMid);
+    ctx.font = `17px ${FONT}`;
+    ctx.fillText(data.current.monthly, lcx, 182);
+    drawBar(ctx, 44, 208, 214, 10, data.current.barFrac, "#e0e0e0", BRAND.grayMid);
 
     // Right panel: Hometown Lending, brand color, larger.
-    roundedRect(ctx, 300, 14, 276, 252, 8);
+    roundedRect(ctx, 300, 19, 276, 272, 8);
     ctx.fillStyle = BRAND.navy;
     ctx.fill();
     const rcx = 300 + 276 / 2;
-    setLetterSpacing(ctx, "2px");
+    setLetterSpacing(ctx, "1.5px");
     ctx.fillStyle = BRAND.mint;
-    ctx.font = `bold 12px ${FONT}`;
-    ctx.fillText(data.htl.title, rcx, 52);
+    fillTextFit(ctx, data.htl.title, rcx, 62, "bold", 16, 236);
     setLetterSpacing(ctx, "0px");
     ctx.fillStyle = "#ffffff";
-    ctx.font = `12px ${FONT}`;
-    ctx.fillText(data.htl.subtitle, rcx, 74);
+    fillTextFit(ctx, data.htl.subtitle, rcx, 92, "normal", 16, 236);
     ctx.fillStyle = BRAND.mint;
-    fillTextFit(ctx, data.htl.annual, rcx, 120, "bold", 40, 236);
+    fillTextFit(ctx, data.htl.annual, rcx, 146, "bold", 46, 236);
     ctx.fillStyle = "#d5ece2";
-    ctx.font = `13px ${FONT}`;
-    ctx.fillText(data.htl.monthly, rcx, 152);
-    drawBar(ctx, 320, 196, 236, 12, data.htl.barFrac, "#24406e", BRAND.mint);
+    ctx.font = `17px ${FONT}`;
+    ctx.fillText(data.htl.monthly, rcx, 186);
+    drawBar(ctx, 320, 222, 236, 12, data.htl.barFrac, "#24406e", BRAND.mint);
 
     const url = canvas.toDataURL("image/png");
     if (!url.startsWith("data:image/png;base64,")) return null;

@@ -46,11 +46,12 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
   const enterConfirmStep = (pending: PendingRecap) => {
     setPendingRecap(pending);
     setRecapEmail(user?.email ?? "");
+    setDeleteArmId(null); // an armed delete must not survive the round-trip back to the list
     setStep("confirm");
   };
 
   const handleSendRecap = async () => {
-    if (!pendingRecap) return;
+    if (!pendingRecap || sending) return; // Enter in the email field must not double-send
     const to = recapEmail.trim();
     if (!isValidEmail(to)) {
       toast({ title: "Check the email address", description: "That doesn't look like a valid email.", variant: "destructive" });

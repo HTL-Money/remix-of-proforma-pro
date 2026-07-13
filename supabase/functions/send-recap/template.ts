@@ -88,8 +88,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   // Alt text carries the dollar amounts so clients that block CID images
   // (plus the gain banner below) still tell the whole story.
   const chartAlt = hasComparison
-    ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} per year vs. Hometown Lending ${usd(r.htl.annual)} per year`
-    : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} per year`;
+    ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} per year (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} per year (${usd(r.htl.monthly)} per month)`
+    : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} per year (${usd(r.htl.monthly)} per month)`;
 
   const bucketRows = r.buckets
     .map(
