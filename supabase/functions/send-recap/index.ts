@@ -32,6 +32,8 @@ const CHART_B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 const PNG_B64_PREFIX = "iVBORw0KGgo";
 const MAX_CHART_B64_CHARS = 2_000_000;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
@@ -115,7 +117,7 @@ Deno.serve(async (req: Request) => {
       if (parts.length === 3) {
         try { sentBy = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))).sub ?? null; } catch { /* best effort */ }
       }
-      await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
+      const logResp = await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
         method: "POST",
         headers: {
           apikey: serviceKey,
@@ -125,8 +127,16 @@ Deno.serve(async (req: Request) => {
         },
         // Numbers only in the audit log — never image bytes. The defensive
         // spread also strips a chartPng a buggy client might nest in recap.
-        body: JSON.stringify({ proforma_id: recap.proformaId ?? null, sent_to: to, sent_by: sentBy, payload: { ...recap, chartPng: undefined, chart } }),
+        // proforma_id is nulled unless it's a real UUID: a junk value would
+        // make Postgres reject the row, silently skipping the audit trail.
+        body: JSON.stringify({
+          proforma_id: UUID_RE.test(recap.proformaId ?? "") ? recap.proformaId : null,
+          sent_to: to,
+          sent_by: sentBy,
+          payload: { ...recap, chartPng: undefined, chart },
+        }),
       });
+      if (!logResp.ok) console.error("recap_emails log failed", logResp.status, await logResp.text().catch(() => ""));
     }
   } catch (e) {
     console.error("recap_emails log failed (non-fatal)", e);
