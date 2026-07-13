@@ -37,9 +37,13 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   proformaId,
 });
 
-export const sendRecap = async (to: string, recap: RecapPayload): Promise<void> => {
+export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: string): Promise<void> => {
   const supabase = requireSupabase();
-  const { error } = await supabase.functions.invoke("send-recap", { body: { to, recap } });
+  // chartPng rides beside recap, never inside it — the function's audit log
+  // stores the recap numbers only, not image bytes.
+  const { error } = await supabase.functions.invoke("send-recap", {
+    body: chartPng ? { to, recap, chartPng } : { to, recap },
+  });
   if (error) {
     // FunctionsHttpError carries the function's JSON response; surface its message.
     const ctx = (error as { context?: Response }).context;

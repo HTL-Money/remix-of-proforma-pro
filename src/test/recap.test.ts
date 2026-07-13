@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildRecapPayload, isValidEmail } from "@/lib/recapEmail";
 import { calculate, defaultState } from "@/lib/proforma";
-import { renderRecapHtml, BRANDING_LINE } from "../../supabase/functions/send-recap/template";
+import { renderRecapHtml, BRANDING_LINE, CHART_CID } from "../../supabase/functions/send-recap/template";
 
 const goldenState = () => ({
   ...defaultState(),
@@ -77,6 +77,47 @@ describe("renderRecapHtml", () => {
     const out = renderRecapHtml(buildRecapPayload("x", s, calculate(s)));
     expect(out).toContain("No current-platform comp entered");
     expect(out).not.toContain("Your Gain at Hometown Lending");
+  });
+});
+
+describe("renderRecapHtml with an inline chart image", () => {
+  const p = buildRecapPayload("Jane — 90%", goldenState(), calculate(goldenState()));
+  const withChart = renderRecapHtml(p, { chartCid: CHART_CID });
+  const usd = (n: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+
+  it("embeds the CID image in place of the HTML comparison cells", () => {
+    expect(withChart).toContain(`src="cid:${CHART_CID}"`);
+    expect(withChart).toContain('width="600"');
+    expect(withChart).not.toContain("font-size:40px"); // HTML HTL cell gone
+    expect(withChart).not.toContain("#f2f2f2"); // grayscale current cell gone
+  });
+
+  it("keeps the gain banner and text sections alongside the image", () => {
+    for (const s of ["Your Gain at Hometown Lending", "Production Buckets", "LO Economics", BRANDING_LINE]) {
+      expect(withChart).toContain(s);
+    }
+  });
+
+  it("carries both annual amounts in the alt text for image-blocking clients", () => {
+    const alt = /alt="([^"]+)"/.exec(withChart)?.[1] ?? "";
+    expect(alt).toContain(usd(p.current.annual ?? 0));
+    expect(alt).toContain(usd(p.htl.annual));
+  });
+
+  it("renders an HTL-only alt when there is no comparison", () => {
+    const s = { ...goldenState(), currentSplit: null };
+    const out = renderRecapHtml(buildRecapPayload("x", s, calculate(s)), { chartCid: CHART_CID });
+    const alt = /alt="([^"]+)"/.exec(out)?.[1] ?? "";
+    expect(alt).toContain("Hometown Lending");
+    expect(alt).not.toContain("Current platform");
+  });
+
+  it("renders the classic HTML cells when no chart is provided", () => {
+    const plain = renderRecapHtml(p, {});
+    expect(plain).not.toContain("cid:");
+    expect(plain).toContain("font-size:40px");
+    expect(plain).toContain("Current Platform");
   });
 });
 

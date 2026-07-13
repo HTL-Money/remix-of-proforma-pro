@@ -8,7 +8,8 @@ import { toast } from "@/hooks/use-toast";
 import { ModelState, calculate } from "@/lib/proforma";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/auth";
-import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
+import { buildRecapPayload, sendRecap, isValidEmail, RecapPayload } from "@/lib/recapEmail";
+import { renderRecapChartPng } from "@/lib/recapChart";
 import {
   ProformaSummary, listProformas, loadProforma, saveProforma, updateProforma, deleteProforma,
 } from "@/lib/proformaStore";
@@ -29,16 +30,27 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
   const [saveName, setSaveName] = useState("");
   const [deleteArmId, setDeleteArmId] = useState<string | null>(null);
   // Post-save confirmation step: verify where the recap email should go.
+  // The payload is prepared when the step is entered (from the just-saved
+  // state, or from a cloud save for a resend) so sending never depends on
+  // what's currently loaded in the editor.
+  interface PendingRecap {
+    name: string;
+    payload: RecapPayload;
+    source: "save" | "resend";
+  }
   const [step, setStep] = useState<"save" | "confirm">("save");
+  const [pendingRecap, setPendingRecap] = useState<PendingRecap | null>(null);
   const [recapEmail, setRecapEmail] = useState("");
   const [sending, setSending] = useState(false);
 
-  const enterConfirmStep = () => {
+  const enterConfirmStep = (pending: PendingRecap) => {
+    setPendingRecap(pending);
     setRecapEmail(user?.email ?? "");
     setStep("confirm");
   };
 
   const handleSendRecap = async () => {
+    if (!pendingRecap) return;
     const to = recapEmail.trim();
     if (!isValidEmail(to)) {
       toast({ title: "Check the email address", description: "That doesn't look like a valid email.", variant: "destructive" });
@@ -46,15 +58,32 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
     }
     setSending(true);
     try {
-      const name = saveName.trim() || currentName || "Untitled Pro Forma";
-      await sendRecap(to, buildRecapPayload(name, state, calculate(state), currentId ?? undefined));
+      // Null chart (no comparison, or no canvas) just means the email keeps
+      // its HTML comparison cells — never a blocked send.
+      const chartPng = renderRecapChartPng(pendingRecap.payload);
+      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined);
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
+      const wasResend = pendingRecap.source === "resend";
+      setPendingRecap(null);
       setStep("save");
-      setOpen(false);
+      if (!wasResend) setOpen(false); // a resend returns to the list instead
     } catch (e) {
       toast({ title: "Couldn't send the recap", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleResend = async (item: ProformaSummary) => {
+    setBusy(true);
+    try {
+      // Load the saved copy directly — the editor's state is untouched.
+      const { name, state: loaded } = await loadProforma(item.id);
+      enterConfirmStep({ name, payload: buildRecapPayload(name, loaded, calculate(loaded), item.id), source: "resend" });
+    } catch (e) {
+      toast({ title: "Couldn't prepare the recap", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -73,6 +102,7 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
   useEffect(() => {
     if (open) {
       setStep("save");
+      setPendingRecap(null);
       setDeleteArmId(null);
       setSaveName(prev => prev || currentName || state.recruitName || "");
       refresh();
@@ -88,7 +118,7 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       setCurrentName(name);
       toast({ title: "Saved to cloud", description: `“${name}” is saved.` });
       refresh();
-      enterConfirmStep();
+      enterConfirmStep({ name, payload: buildRecapPayload(name, state, calculate(state), id), source: "save" });
     } catch (e) {
       toast({ title: "Save failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -105,7 +135,7 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       setCurrentName(name);
       toast({ title: "Updated", description: `“${name}” now has your latest inputs.` });
       refresh();
-      enterConfirmStep();
+      enterConfirmStep({ name, payload: buildRecapPayload(name, state, calculate(state), currentId), source: "save" });
     } catch (e) {
       toast({ title: "Update failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -166,7 +196,9 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
         </DialogTrigger>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{step === "confirm" ? "Saved — Send the Recap?" : "Cloud Saves"}</DialogTitle>
+            <DialogTitle>
+              {step === "confirm" ? (pendingRecap?.source === "resend" ? "Resend the Recap" : "Saved — Send the Recap?") : "Cloud Saves"}
+            </DialogTitle>
           </DialogHeader>
           {!supabase ? (
             <p className="text-sm text-muted-foreground py-2">
@@ -177,7 +209,10 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
               <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm">
                 <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
                 <span>
-                  <span className="font-medium">“{saveName.trim() || currentName || "Untitled Pro Forma"}”</span> is saved — a copy is stored in the database.
+                  <span className="font-medium">“{pendingRecap?.name ?? "Untitled Pro Forma"}”</span>
+                  {pendingRecap?.source === "resend"
+                    ? " — re-sending the saved copy from the cloud. Your current inputs aren't affected."
+                    : " is saved — a copy is stored in the database."}
                 </span>
               </div>
               <div className="space-y-2">
@@ -197,8 +232,17 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
                 </p>
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" disabled={sending} onClick={() => { setStep("save"); setOpen(false); }}>
-                  Skip
+                <Button
+                  variant="ghost"
+                  disabled={sending}
+                  onClick={() => {
+                    const wasResend = pendingRecap?.source === "resend";
+                    setPendingRecap(null);
+                    setStep("save");
+                    if (!wasResend) setOpen(false); // resend: back to the list
+                  }}
+                >
+                  {pendingRecap?.source === "resend" ? "Back" : "Skip"}
                 </Button>
                 <Button onClick={handleSendRecap} disabled={sending} className="gold-accent text-accent-foreground hover:opacity-90">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />}
@@ -244,6 +288,17 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
                         </div>
                         <Button variant="outline" size="sm" disabled={busy} onClick={() => handleLoad(item)}>
                           <Download className="h-3.5 w-3.5 mr-1" /> Load
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={busy}
+                          onClick={() => handleResend(item)}
+                          aria-label={`Resend recap for ${item.name}`}
+                          title="Resend recap"
+                          className="shrink-0"
+                        >
+                          <Mail className="h-4 w-4" />
                         </Button>
                         {deleteArmId === item.id ? (
                           <Button variant="destructive" size="sm" disabled={busy} onClick={() => handleDelete(item)}>

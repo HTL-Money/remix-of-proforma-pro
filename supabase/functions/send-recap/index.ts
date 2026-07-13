@@ -8,7 +8,7 @@
 // signed-in users can send. The function owns the email template — clients
 // send structured numbers, never HTML, so this can't be used as an open relay.
 
-import { renderRecapHtml, RecapPayload } from "./template.ts";
+import { renderRecapHtml, RecapPayload, CHART_CID } from "./template.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -23,6 +23,15 @@ const json = (status: number, body: unknown) =>
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Optional inline chart: strict standard base64 of a PNG. The base64 of the
+// fixed 8-byte PNG signature is a fixed prefix, so this guarantees the bytes
+// really are a PNG without decoding — the content_type below can never lie.
+// Cap ~2 MB of base64 (~1.5 MB decoded): the real chart is ~50–200 KB, so
+// this is generous headroom while keeping an authenticated relay un-abusable.
+const CHART_B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const PNG_B64_PREFIX = "iVBORw0KGgo";
+const MAX_CHART_B64_CHARS = 2_000_000;
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
@@ -32,6 +41,7 @@ Deno.serve(async (req: Request) => {
 
   let to = "";
   let recap: RecapPayload;
+  let chartPng: string | undefined;
   try {
     const body = await req.json();
     to = String(body.to ?? "").trim();
@@ -40,18 +50,39 @@ Deno.serve(async (req: Request) => {
     if (!recap || typeof recap.htl?.annual !== "number" || typeof recap.savedName !== "string") {
       return json(400, { error: "Invalid recap payload." });
     }
+    // chartPng rides beside recap, never inside it — the only legitimate
+    // producer is our client, so anything malformed is a hard 400 (matching
+    // the posture on `to`/`recap`), not a silently degraded email.
+    const rawChart = body.chartPng;
+    if (rawChart != null) {
+      if (typeof rawChart !== "string" || rawChart.length > MAX_CHART_B64_CHARS) {
+        return json(400, { error: "Chart image too large or malformed." });
+      }
+      if (rawChart.length === 0 || rawChart.length % 4 !== 0 || !CHART_B64_RE.test(rawChart) || !rawChart.startsWith(PNG_B64_PREFIX)) {
+        return json(400, { error: "Invalid chart image data." });
+      }
+      chartPng = rawChart;
+    }
   } catch {
     return json(400, { error: "Invalid JSON body." });
   }
 
   const from = Deno.env.get("RECAP_FROM") ?? "Hometown Lending <onboarding@resend.dev>";
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
-  const html = renderRecapHtml(recap);
+  const html = renderRecapHtml(recap, chartPng ? { chartCid: CHART_CID } : {});
+
+  const emailBody: Record<string, unknown> = { from, to: [to], subject, html };
+  if (chartPng) {
+    // Inline CID attachment, referenced from the HTML as <img src="cid:...">.
+    emailBody.attachments = [
+      { content: chartPng, filename: "earnings-comparison.png", content_type: "image/png", content_id: CHART_CID },
+    ];
+  }
 
   const resendResp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to: [to], subject, html }),
+    body: JSON.stringify(emailBody),
   });
 
   if (!resendResp.ok) {
@@ -81,7 +112,9 @@ Deno.serve(async (req: Request) => {
           "Content-Type": "application/json",
           Prefer: "return=minimal",
         },
-        body: JSON.stringify({ proforma_id: recap.proformaId ?? null, sent_to: to, sent_by: sentBy, payload: recap }),
+        // Numbers only in the audit log — never image bytes. The defensive
+        // spread also strips a chartPng a buggy client might nest in recap.
+        body: JSON.stringify({ proforma_id: recap.proformaId ?? null, sent_to: to, sent_by: sentBy, payload: { ...recap, chartPng: undefined } }),
       });
     }
   } catch (e) {

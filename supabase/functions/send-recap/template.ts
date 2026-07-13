@@ -54,16 +54,42 @@ const GRAY_MID = "#7a7a7a";
 
 export const BRANDING_LINE = "Hometown Lending: Your True Value Awaits.";
 
+// Content-ID shared by the Resend attachment and the <img src="cid:..."> in
+// the HTML, so the two can never drift apart (index.ts imports it too).
+export const CHART_CID = "earnings-chart";
+
+/** Palette exported so the client-side chart renderer (src/lib/recapChart.ts)
+ *  paints the exact colors this template uses. */
+export const BRAND = {
+  navy: NAVY,
+  green: GREEN,
+  mint: MINT,
+  grayBg: GRAY_BG,
+  grayDark: GRAY_DARK,
+  grayMid: GRAY_MID,
+} as const;
+
+export interface RenderOptions {
+  /** When set, the earnings comparison renders as an inline CID image instead of HTML cells. */
+  chartCid?: string;
+}
+
 const detailRow = (label: string, value: string) => `
   <tr>
     <td style="padding:6px 0;color:${GRAY_MID};font-size:13px;">${label}</td>
     <td align="right" style="padding:6px 0;color:${NAVY};font-size:13px;font-weight:600;">${value}</td>
   </tr>`;
 
-export const renderRecapHtml = (r: RecapPayload): string => {
+export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): string => {
   const hasComparison = r.current.annual != null && r.gain.annual != null;
   const gainAnnual = r.gain.annual ?? 0;
   const gainSign = gainAnnual >= 0 ? "+" : "";
+
+  // Alt text carries the dollar amounts so clients that block CID images
+  // (plus the gain banner below) still tell the whole story.
+  const chartAlt = hasComparison
+    ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} per year vs. Hometown Lending ${usd(r.htl.annual)} per year`
+    : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} per year`;
 
   const bucketRows = r.buckets
     .map(
@@ -101,6 +127,27 @@ export const renderRecapHtml = (r: RecapPayload): string => {
       <div style="color:#d5ece2;font-size:13px;margin-top:6px;">${usd(r.htl.monthly)} / month</div>
     </td>`;
 
+  // The chart image spans the full 600px container (it paints its own 24px
+  // margins, mirroring the row padding the HTML cells get). width="600" is
+  // for Outlook desktop, which ignores CSS widths.
+  const comparisonSection = opts.chartCid
+    ? `
+        <!-- Earnings comparison chart (inline CID image) -->
+        <tr><td style="padding:24px 0 0 0;">
+          <img src="cid:${esc(opts.chartCid)}" width="600" alt="${esc(chartAlt)}" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />
+        </td></tr>`
+    : `
+        <!-- Side-by-side: grayscale current (left) vs larger color HTL (right) -->
+        <tr><td style="padding:24px 24px 0 24px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              ${currentCell}
+              <td width="4%">&nbsp;</td>
+              ${htlCell}
+            </tr>
+          </table>
+        </td></tr>`;
+
   const gainBanner = hasComparison
     ? `
     <tr><td style="padding:18px 24px 0 24px;">
@@ -127,16 +174,7 @@ export const renderRecapHtml = (r: RecapPayload): string => {
           <div style="color:#ffffff;font-size:14px;margin-top:4px;">LO Pro Forma Recap${r.loName ? ` — ${esc(r.loName)}` : ""}${r.nmls ? ` (NMLS ${esc(r.nmls)})` : ""}</div>
         </td></tr>
 
-        <!-- Side-by-side: grayscale current (left) vs larger color HTL (right) -->
-        <tr><td style="padding:24px 24px 0 24px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              ${currentCell}
-              <td width="4%">&nbsp;</td>
-              ${htlCell}
-            </tr>
-          </table>
-        </td></tr>
+        ${comparisonSection}
 
         ${gainBanner}
 
