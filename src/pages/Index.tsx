@@ -282,7 +282,11 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkNmls = normalizeNmls(searchParams.get("nmls") ?? "");
-  const { authRequired, user, signOut } = useAuth();
+  const { authRequired, loading: authLoading, user, signOut } = useAuth();
+  // Cloud saves, recap email, and the team RETR lookup all touch the
+  // database — which RLS restricts to authenticated users. When Supabase
+  // isn't configured at all, there's no login concept, so everyone's "team."
+  const isTeamMember = !authRequired || !!user;
   const [state, setState] = useState<ModelState>(() => loadState());
   const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY) && !deepLinkNmls);
   const [retrPdfUrl, setRetrPdfUrl] = useState<string | null>(null);
@@ -293,12 +297,14 @@ const Index = () => {
   }, [state]);
 
   // Deep link from the Targets page: ?nmls=... auto-loads that LO, skipping the gate.
+  // Waits out authLoading so a signed-in user's session (still resolving on
+  // first paint) isn't mistaken for an anonymous visitor.
   useEffect(() => {
-    if (!deepLinkNmls) return;
+    if (!deepLinkNmls || authLoading) return;
     sessionStorage.setItem(GATE_KEY, "1");
     setGated(false);
     (async () => {
-      if (isCloudConfigured()) {
+      if (isCloudConfigured() && isTeamMember) {
         try {
           const report = await lookupRetrReport(deepLinkNmls);
           if (report) applyStoredReport(deepLinkNmls, report);
@@ -308,11 +314,14 @@ const Index = () => {
           toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
         }
       } else {
+        if (isCloudConfigured() && !isTeamMember) {
+          toast({ title: "Sign in to pull RETR data", description: "Stored RETR reports are shared with your team once you're signed in." });
+        }
         setState({ ...defaultState(), nmls: deepLinkNmls });
       }
       setSearchParams({}, { replace: true });
     })();
-  }, [deepLinkNmls]); // eslint-disable-line
+  }, [deepLinkNmls, authLoading]); // eslint-disable-line
 
   // Keep avg loan in sync
   useEffect(() => {
@@ -425,6 +434,12 @@ const Index = () => {
       toast({ title: "Supabase not configured", description: "Add credentials to .env to pull shared RETR data." });
       return;
     }
+    if (!isTeamMember) {
+      // The lookup would otherwise reach the database and fail on RLS —
+      // tell a public visitor why up front instead of showing an error.
+      toast({ title: "Sign in to pull RETR data", description: "Stored RETR reports are shared with your team once you're signed in." });
+      return;
+    }
     setPullingRetr(true);
     try {
       const report = await lookupRetrReport(nmls);
@@ -467,7 +482,7 @@ const Index = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {isCloudConfigured() && (
+              {isCloudConfigured() && isTeamMember && (
                 <Button
                   asChild
                   variant="outline"
@@ -477,10 +492,12 @@ const Index = () => {
                   <Link to="/targets" title="Target loan officers"><ListChecks className="h-4 w-4 mr-1" /> Target LOs</Link>
                 </Button>
               )}
-              <CloudSave
-                state={state}
-                onLoad={(loaded) => setState(loaded)}
-              />
+              {isTeamMember && (
+                <CloudSave
+                  state={state}
+                  onLoad={(loaded) => setState(loaded)}
+                />
+              )}
               {authRequired && user && (
                 <Button
                   variant="outline"
@@ -566,7 +583,10 @@ const Index = () => {
                 setState(s => applyRetrResult(s, r));
                 toast({ title: "RETR imported", description: `${r.recruitName ?? "Loan Officer"} — ${r.annualFiles} files, ${fmtUSD(r.annualVolume, { compact: true })}` });
                 const shareNmls = r.nmls ?? enteredNmls;
-                if (shareNmls && isCloudConfigured()) {
+                // Parsing and applying the PDF is a local action, fine for
+                // anyone. Sharing it to the team's database is a team action —
+                // skip it quietly for a public visitor rather than error.
+                if (shareNmls && isCloudConfigured() && isTeamMember) {
                   saveRetrReport(shareNmls, r, file)
                     .then(url => {
                       setRetrPdfUrl(url);
