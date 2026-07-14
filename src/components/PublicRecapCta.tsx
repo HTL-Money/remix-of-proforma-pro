@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Mail } from "lucide-react";
+import { CalendarCheck, CheckCircle2, Loader2, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,13 @@ import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
 import { submitPublicProforma } from "@/lib/proformaStore";
 
+// PLACEHOLDERS — swap these for the real assets when available.
+// AJ_VIDEO_URL accepts a YouTube/Vimeo embed URL or a hosted mp4; the
+// component renders an iframe either way (YouTube/Vimeo embed URLs work
+// directly, and most video hosts provide an embeddable player URL).
+const AJ_VIDEO_URL = "https://www.youtube.com/embed/PLACEHOLDER_AJ_VIDEO_ID";
+const BOOKING_URL = "https://calendly.com/PLACEHOLDER_HTL_BOOKING";
+
 interface PublicRecapCtaProps {
   state: ModelState;
   calc: Calc;
@@ -19,11 +26,18 @@ interface PublicRecapCtaProps {
 // available to them: email themselves the recap. The save (tagged
 // source: 'public') and the email are independent best-effort steps, same
 // as the rest of this app's save/snapshot pattern — one failing never
-// blocks the other.
+// blocks the other. After a successful send, the dialog becomes the real
+// CTA: AJ's video + the booking link.
 export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
   const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<"email" | "sent">("email");
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) setStep("email"); // fresh entry always starts at the email step
+  };
 
   const handleSend = async () => {
     const to = email.trim();
@@ -43,7 +57,7 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
       const chartPng = renderRecapChartPng(payload);
       await sendRecap(to, payload, chartPng ?? undefined);
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
-      setOpen(false);
+      setStep("sent");
     } catch (e) {
       toast({ title: "Couldn't send the recap", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -52,7 +66,7 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button
           variant="outline"
@@ -62,29 +76,54 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
           <Mail className="h-4 w-4 mr-1" /> Email me this recap
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={step === "sent" ? "sm:max-w-xl" : "sm:max-w-md"}>
         <DialogHeader>
-          <DialogTitle>Email me this ProForma</DialogTitle>
+          <DialogTitle>{step === "sent" ? "Recap sent — take the next step" : "Email me this ProForma"}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2 py-2">
-          <Label htmlFor="public-recap-email">Send the full recap to</Label>
-          <Input
-            id="public-recap-email"
-            type="email"
-            inputMode="email"
-            autoComplete="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="name@example.com"
-            onKeyDown={e => { if (e.key === "Enter") handleSend(); }}
-          />
-        </div>
-        <DialogFooter>
-          <Button onClick={handleSend} disabled={sending} className="gold-accent text-accent-foreground hover:opacity-90">
-            {sending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />}
-            {sending ? "Sending…" : "Send Recap"}
-          </Button>
-        </DialogFooter>
+        {step === "sent" ? (
+          <div className="space-y-4 py-2">
+            <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm">
+              <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
+              <span>Your full recap is on its way to <span className="font-medium">{email.trim()}</span>.</span>
+            </div>
+            <div className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black">
+              <iframe
+                src={AJ_VIDEO_URL}
+                title="A message from AJ at Hometown Lending"
+                className="h-full w-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+            <Button asChild className="w-full gold-accent text-accent-foreground hover:opacity-90" size="lg">
+              <a href={BOOKING_URL} target="_blank" rel="noopener noreferrer">
+                <CalendarCheck className="h-4 w-4 mr-2" /> Book a call with AJ
+              </a>
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="public-recap-email">Send the full recap to</Label>
+              <Input
+                id="public-recap-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="name@example.com"
+                onKeyDown={e => { if (e.key === "Enter") handleSend(); }}
+              />
+            </div>
+            <DialogFooter>
+              <Button onClick={handleSend} disabled={sending} className="gold-accent text-accent-foreground hover:opacity-90">
+                {sending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />}
+                {sending ? "Sending…" : "Send Recap"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
