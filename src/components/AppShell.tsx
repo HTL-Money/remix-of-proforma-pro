@@ -2,22 +2,30 @@
 // slide-over drawer on mobile, content area to the right. Wraps every route.
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Calculator, LayoutDashboard, ListChecks, LogOut, Mail, Menu } from "lucide-react";
+import { Calculator, LayoutDashboard, ListChecks, LogIn, LogOut, Mail, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
-const NAV = [
+const TEAM_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/calculator", label: "Calculator", icon: Calculator },
   { to: "/targets", label: "Targets", icon: ListChecks },
   { to: "/emails", label: "Sent Emails", icon: Mail },
 ];
 
+// Signed-out visitors get the calculator only — everything else here is
+// team data (saves, pipeline, recap history) behind login.
+const PUBLIC_NAV = [
+  { to: "/calculator", label: "Calculator", icon: Calculator },
+];
+
 const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
   const location = useLocation();
   const { user, authRequired, signOut } = useAuth();
+  const isTeamMember = !authRequired || !!user;
+  const items = isTeamMember ? TEAM_NAV : PUBLIC_NAV;
   return (
     <div className="flex h-full flex-col">
       <div className="px-5 pt-6 pb-5">
@@ -27,8 +35,15 @@ const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/60 mt-0.5">LO Recruiting</div>
       </div>
       <nav className="flex-1 px-3 space-y-1" aria-label="Main">
-        {NAV.map(item => {
-          const active = item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to);
+        {items.map(item => {
+          // "/" only exists as a nav target for team members; the public nav's
+          // one item (Calculator) is also what renders at "/" for a signed-out
+          // visitor, so treat both paths as its active state.
+          const active = item.to === "/"
+            ? location.pathname === "/"
+            : item.to === "/calculator"
+              ? location.pathname === "/" || location.pathname.startsWith("/calculator")
+              : location.pathname.startsWith(item.to);
           return (
             <Link
               key={item.to}
@@ -59,6 +74,17 @@ const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
           >
             <LogOut className="h-4 w-4 mr-2" /> Sign out
           </Button>
+        </div>
+      )}
+      {authRequired && !user && (
+        <div className="px-3 pb-5 pt-3 border-t border-white/10">
+          <Link
+            to="/targets"
+            onClick={onNavigate}
+            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-white/65 hover:bg-white/5 hover:text-white transition-colors"
+          >
+            <LogIn className="h-4 w-4 shrink-0" /> Team sign in
+          </Link>
         </div>
       )}
     </div>

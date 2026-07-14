@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { LoginGate } from "@/components/LoginGate";
 import { AppShell } from "@/components/AppShell";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Dashboard from "./pages/Dashboard.tsx";
 import Index from "./pages/Index.tsx";
 import Targets from "./pages/Targets.tsx";
@@ -14,6 +15,9 @@ import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
 
+// Gates a single route to signed-in team members. The calculator is public
+// and never wrapped in this — only the team data pages (dashboard, targets,
+// sent emails) require a login.
 const RequireAuth = ({ children }: { children: React.ReactNode }) => {
   const { authRequired, loading, user } = useAuth();
   if (!authRequired) return <>{children}</>;
@@ -24,35 +28,40 @@ const RequireAuth = ({ children }: { children: React.ReactNode }) => {
 
 // "/" used to be the calculator, and shared links like /?nmls=123 still point
 // there — keep them working by forwarding to /calculator with the same params.
+// A signed-out visitor lands on the calculator itself (no login wall); a
+// signed-in team member lands on the dashboard.
 const Home = () => {
   const [params] = useSearchParams();
+  const { authRequired, loading, user } = useAuth();
   if (params.get("nmls") != null) return <Navigate to={`/calculator?${params.toString()}`} replace />;
+  if (authRequired && loading) return <div className="min-h-screen hero-bg" />;
+  if (authRequired && !user) return <Index />;
   return <Dashboard />;
 };
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <AuthProvider>
-        <BrowserRouter>
-          <RequireAuth>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <AuthProvider>
+          <BrowserRouter>
             <AppShell>
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/calculator" element={<Index />} />
-                <Route path="/targets" element={<Targets />} />
-                <Route path="/emails" element={<SentEmails />} />
+                <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
+                <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </AppShell>
-          </RequireAuth>
-        </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
-  </QueryClientProvider>
+          </BrowserRouter>
+        </AuthProvider>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;
