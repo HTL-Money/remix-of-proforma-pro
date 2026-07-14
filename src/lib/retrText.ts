@@ -8,6 +8,7 @@
 
 export interface RetrParseResult {
   recruitName: string | null;
+  nmls: string | null;
   annualVolume: number;       // $ total (purchase + refi + other)
   annualFiles: number;        // total count
   avgLoanAmount: number;      // derived
@@ -41,6 +42,10 @@ export const parseRetrText = (fullText: string): RetrParseResult => {
   if (!recruitName) {
     warnings.push("Couldn't find the loan officer name in this PDF.");
   }
+
+  // NMLS number — "NMLS #123456", "NMLS 123456", "(NMLS: 123456)"
+  const nmlsMatch = text.match(/NMLS\s*[#:]?\s*(\d{4,12})/i);
+  const nmls = nmlsMatch ? nmlsMatch[1] : null;
 
   // Totals — "Loan Volume: $10,220,790 (37)"
   const volMatch = text.match(/Loan Volume:\s*\$([\d,]+)\s*\((\d+)\)/i);
@@ -95,6 +100,7 @@ export const parseRetrText = (fullText: string): RetrParseResult => {
 
   return {
     recruitName,
+    nmls,
     annualVolume,
     annualFiles,
     avgLoanAmount,

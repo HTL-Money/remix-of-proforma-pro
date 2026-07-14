@@ -31,6 +31,30 @@ const sumBucketField = (
   field: "loNetBeforeHoldback" | "teamHoldback" | "initialLoCash"
 ) => calc.buckets.reduce((acc, b) => acc + b[field], 0);
 
+describe("defaultState: zeroed-out start", () => {
+  it("production numbers start at zero / empty; HTL deal terms keep standard-offer defaults", () => {
+    const s = defaultState();
+    expect(s.annualVolume).toBe(0);
+    expect(s.annualFiles).toBe(0);
+    expect(s.avgLoanAmount).toBe(0);
+    expect(s.currentSplit).toBeNull();
+    expect(s.recruitName).toBe("");
+    expect(s.nmls).toBe("");
+    // Deal terms are the standard HTL offer, not filler data — they stay.
+    expect(s.loSplit).toBe(90);
+    expect(s.holdbackPct).toBe(10);
+    expect(s.loanTypeMix).toEqual({ fha: 20, va: 15, conv: 55, nonqm: 10 });
+  });
+
+  it("calculate() on the zeroed default state returns all-zero results without error", () => {
+    const calc = calculate(defaultState());
+    expect(calc.finalLoNetComp).toBe(0);
+    expect(calc.totals.grossRevenue).toBe(0);
+    expect(calc.diffAnnual).toBeNull();
+    expect(calc.currentPlatformAnnual).toBeNull();
+  });
+});
+
 describe("allocateFiles (exercised via calculate())", () => {
   it("routes FHA files to broker_qm always, correspondent inactive", () => {
     const s = baseState({

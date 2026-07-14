@@ -6,10 +6,11 @@ import { fmtUSD, fmtNum } from "@/lib/proforma";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  onImport: (r: RetrParseResult) => void;
+  onImport: (r: RetrParseResult, file: File) => void;
+  hint?: string;
 }
 
-export const RetrImport = ({ onImport }: Props) => {
+export const RetrImport = ({ onImport, hint }: Props) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -25,7 +26,7 @@ export const RetrImport = ({ onImport }: Props) => {
         throw new Error("Couldn't find 'Loan Volume: $X (N)' in this PDF. Is it a RETR Track Record?");
       }
       setLast(result);
-      onImport(result);
+      onImport(result, file);
     } catch (e: any) {
       setError(e?.message ?? "Failed to parse PDF.");
     } finally {
@@ -53,7 +54,7 @@ export const RetrImport = ({ onImport }: Props) => {
         <div className="flex items-center gap-2 text-sm">
           {busy ? <Loader2 className="h-4 w-4 animate-spin text-accent" /> : <Upload className="h-4 w-4 text-accent" />}
           <span className="font-medium">Drop RETR PDF</span>
-          <span className="text-muted-foreground hidden sm:inline">to auto-fill production fields</span>
+          <span className="text-muted-foreground hidden sm:inline">{hint ?? "to auto-fill production fields"}</span>
         </div>
         <Button type="button" variant="outline" size="sm" disabled={busy}>
           <FileText className="h-3.5 w-3.5" /> Browse
@@ -76,6 +77,7 @@ export const RetrImport = ({ onImport }: Props) => {
           <span className="inline-flex items-center gap-1 text-success">
             <CheckCircle2 className="h-3.5 w-3.5" /> Imported
             {last.recruitName ? `: ${last.recruitName}` : ""}
+            {last.nmls ? ` (NMLS ${last.nmls})` : ""}
           </span>
           <span className="tabular-nums">{fmtUSD(last.annualVolume, { compact: true })} • {fmtNum(last.annualFiles)} files</span>
           <span className="tabular-nums">Purchase {fmtNum(last.purchaseCount)} ({fmtUSD(last.purchaseVolume, { compact: true })}) • Refi {fmtNum(last.refiCount)} ({fmtUSD(last.refiVolume, { compact: true })})</span>

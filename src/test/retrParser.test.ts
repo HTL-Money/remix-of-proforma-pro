@@ -31,6 +31,7 @@ describe("parseRetrText", () => {
     const result = parseRetrText(text);
 
     expect(result.recruitName).toBe("Jane Q. Smith");
+    expect(result.nmls).toBe("123456");
     expect(result.annualVolume).toBe(10220790);
     expect(result.annualFiles).toBe(37);
     expect(result.avgLoanAmount).toBe(Math.round(10220790 / 37));
@@ -205,6 +206,32 @@ describe("parseRetrText", () => {
     expect(result.refiVolume).toBe(4345678);
     expect(result.byLoanType).toEqual({ fha: 3, va: 7, conv: 35, nonqm: 0 });
     expect(result.warnings).toEqual([]);
+  });
+
+  // ---- 8. NMLS extraction ----
+  it("extracts the NMLS number from 'NMLS 123456' (no hash) and '(NMLS: 987654)' shapes", () => {
+    const hashless = parseRetrText([
+      "Loan Officer Track Record: Ida Digit NMLS 445566",
+      "Loan Volume: $1,000,000 (10)",
+      "Conventional: $1,000,000 (10)",
+    ].join(" "));
+    expect(hashless.nmls).toBe("445566");
+
+    const parenColon = parseRetrText([
+      "Loan Officer Track Record: Jo Paren (NMLS: 987654)",
+      "Loan Volume: $1,000,000 (10)",
+      "Conventional: $1,000,000 (10)",
+    ].join(" "));
+    expect(parenColon.nmls).toBe("987654");
+  });
+
+  it("returns null nmls when the NMLS token has no number after it", () => {
+    const result = parseRetrText([
+      "Loan Officer Track Record: Bob Builder NMLS",
+      "Loan Volume: $5,000,000 (100)",
+      "Conventional: $5,000,000 (100)",
+    ].join(" "));
+    expect(result.nmls).toBeNull();
   });
 
   it("handles a large parenthesized file count alongside a comma-formatted dollar amount", () => {
