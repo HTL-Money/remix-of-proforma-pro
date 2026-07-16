@@ -52,6 +52,17 @@ export const saveProforma = async (name: string, state: ModelState): Promise<str
   return data.id;
 };
 
+// Anonymous submission: writes a `source: 'public'` row and nothing else —
+// no `.select()` round-trip, since granting anon any select (even scoped to
+// `source = 'public'`) would let anyone with the anon key list every prior
+// public submission via a direct REST call. No snapshot either; snapshots
+// are team save-history, not meaningful for a one-shot anonymous send.
+export const submitPublicProforma = async (name: string, state: ModelState): Promise<void> => {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from(TABLE).insert({ name, data: state, source: "public" });
+  if (error) throw new Error(error.message);
+};
+
 export const updateProforma = async (id: string, name: string, state: ModelState): Promise<void> => {
   const supabase = requireSupabase();
   const { error } = await supabase

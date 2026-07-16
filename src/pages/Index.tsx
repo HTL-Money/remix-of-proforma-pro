@@ -31,6 +31,7 @@ import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { RetrImport } from "@/components/RetrImport";
 import { CloudSave } from "@/components/CloudSave";
+import { PublicRecapCta } from "@/components/PublicRecapCta";
 import { NmlsGate } from "@/components/NmlsGate";
 import { RetrParseResult } from "@/lib/retrParser";
 import {
@@ -497,6 +498,9 @@ const Index = () => {
                   state={state}
                   onLoad={(loaded) => setState(loaded)}
                 />
+              )}
+              {isCloudConfigured() && !isTeamMember && (
+                <PublicRecapCta state={state} calc={calc} />
               )}
               {authRequired && user && (
                 <Button

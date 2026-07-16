@@ -10,9 +10,11 @@
 //
 // Deploy:   supabase functions deploy send-recap
 //
-// Called with the user's JWT (verify_jwt is on by default), so only
-// signed-in users can send. The function owns the email template — clients
-// send structured numbers, never HTML, so this can't be used as an open relay.
+// verify_jwt (on by default) only checks that the bearer token is a validly
+// signed project JWT — the public anon key IS one, so this function is
+// reachable by anyone with the anon key, signed in or not. The function
+// owns the email template (clients send structured numbers, never HTML) and
+// rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID } from "./template.ts";
 
@@ -39,6 +41,28 @@ const PNG_B64_PREFIX = "iVBORw0KGgo";
 const MAX_CHART_B64_CHARS = 2_000_000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Per-recipient cap. The anon key is public, so this function is reachable
+// without signing in (see the note above) — this is the actual abuse guard.
+const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+
+/** True if `to` is still under the send cap. Fails open on error — a rate-limit outage must never block a legitimate send. */
+const withinRateLimit = async (supabaseUrl: string, serviceKey: string, to: string): Promise<boolean> => {
+  try {
+    const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+    const resp = await fetch(
+      `${supabaseUrl}/rest/v1/recap_emails?select=id&sent_to=eq.${encodeURIComponent(to)}&created_at=gte.${encodeURIComponent(since)}`,
+      { method: "HEAD", headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Prefer: "count=exact" } },
+    );
+    const range = resp.headers.get("content-range"); // "0-4/12" or "*/0"
+    const count = range ? Number(range.split("/")[1]) : NaN;
+    return !Number.isFinite(count) || count < RATE_LIMIT_MAX;
+  } catch (e) {
+    console.error("rate limit check failed (fail-open)", e);
+    return true;
+  }
+};
 
 // ---- Email providers -------------------------------------------------------
 
@@ -166,6 +190,12 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: "Invalid JSON body." });
   }
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (supabaseUrl && serviceKey && !(await withinRateLimit(supabaseUrl, serviceKey, to))) {
+    return json(429, { error: "Too many recap emails sent to this address recently. Try again in a bit." });
+  }
+
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
   const html = renderRecapHtml(recap, chartPng ? { chartCid: CHART_CID } : {});
 
@@ -182,8 +212,6 @@ Deno.serve(async (req: Request) => {
 
   // Log the send with the service role (RLS has no client insert policy).
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (supabaseUrl && serviceKey) {
       // The chart is the one client-supplied artifact in the email, so the
       // audit row records its fingerprint (hash + size) — never the bytes.
