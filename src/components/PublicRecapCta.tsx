@@ -15,7 +15,7 @@ import { submitPublicProforma } from "@/lib/proformaStore";
 // component renders an iframe either way (YouTube/Vimeo embed URLs work
 // directly, and most video hosts provide an embeddable player URL).
 const AJ_VIDEO_URL = "https://www.youtube.com/embed/PLACEHOLDER_AJ_VIDEO_ID";
-const BOOKING_URL = "https://calendly.com/PLACEHOLDER_HTL_BOOKING";
+const BOOKING_URL = "https://outlook.office.com/bookwithme/user/6ae2ff896ce64b4085b2e829a6228568@hometownlend.com?anonymous&ismsaljsauthenabled&ep=pcard";
 
 interface PublicRecapCtaProps {
   state: ModelState;
