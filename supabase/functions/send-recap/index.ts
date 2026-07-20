@@ -197,7 +197,10 @@ Deno.serve(async (req: Request) => {
   }
 
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
-  const html = renderRecapHtml(recap, chartPng ? { chartCid: CHART_CID } : {});
+  // BOOKING_URL secret (Microsoft Bookings page) turns on the "Book a
+  // recruiting call" button in the email; unset = button omitted.
+  const bookingUrl = Deno.env.get("BOOKING_URL") || undefined;
+  const html = renderRecapHtml(recap, { ...(chartPng ? { chartCid: CHART_CID } : {}), bookingUrl });
 
   try {
     if (graph) await sendViaGraph(graph, to, subject, html, chartPng);

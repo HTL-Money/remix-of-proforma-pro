@@ -72,6 +72,13 @@ export const BRAND = {
 export interface RenderOptions {
   /** When set, the earnings comparison renders as an inline CID image instead of HTML cells. */
   chartCid?: string;
+  /**
+   * When set, a "Book a recruiting call" button renders above the footer,
+   * linking here (Microsoft Bookings / Calendly — the page shows live
+   * availability when clicked, so the email itself never goes stale).
+   * Unset = section omitted entirely; no dead links in real emails.
+   */
+  bookingUrl?: string;
 }
 
 const detailRow = (label: string, value: string) => `
@@ -161,6 +168,23 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
     </td></tr>`
     : "";
 
+  // Bulletproof table-based button (no CSS-only tricks — Outlook-safe).
+  const bookingCta = opts.bookingUrl
+    ? `
+    <tr><td style="padding:26px 24px 6px 24px;" align="center">
+      <div style="color:${NAVY};font-size:16px;font-weight:700;">Like these numbers?</div>
+      <div style="color:${GRAY_MID};font-size:13px;margin-top:4px;">Grab a time that works for you — the calendar always shows live availability.</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:14px auto 0 auto;">
+        <tr><td align="center" style="background:${GREEN};border-radius:8px;">
+          <a href="${esc(opts.bookingUrl)}" target="_blank"
+             style="display:inline-block;padding:14px 34px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
+            Book a recruiting call
+          </a>
+        </td></tr>
+      </table>
+    </td></tr>`
+    : "";
+
   return `<!doctype html>
 <html>
 <body style="margin:0;padding:0;background:#eef1f5;font-family:Arial,Helvetica,sans-serif;">
@@ -225,6 +249,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             </tr>
           </table>
         </td></tr>
+
+        ${bookingCta}
 
         <!-- Branding line -->
         <tr><td style="background:${NAVY};padding:20px 24px;text-align:center;margin-top:16px;">

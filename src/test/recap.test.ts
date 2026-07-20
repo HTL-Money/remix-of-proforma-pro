@@ -121,6 +121,36 @@ describe("renderRecapHtml with an inline chart image", () => {
   });
 });
 
+describe("renderRecapHtml booking CTA", () => {
+  const s = goldenState();
+  const p = buildRecapPayload("x", s, calculate(s));
+
+  it("renders the booking button when a bookingUrl is provided", () => {
+    const out = renderRecapHtml(p, { bookingUrl: "https://outlook.office365.com/book/HTL@hometownlend.com/" });
+    expect(out).toContain("Book a recruiting call");
+    expect(out).toContain('href="https://outlook.office365.com/book/HTL@hometownlend.com/"');
+    expect(out).toContain("live availability");
+  });
+
+  it("omits the section entirely when no bookingUrl is set — no dead links", () => {
+    const out = renderRecapHtml(p, {});
+    expect(out).not.toContain("Book a recruiting call");
+    expect(out).not.toContain("live availability");
+  });
+
+  it("escapes a hostile bookingUrl so it can't break out of the href", () => {
+    const out = renderRecapHtml(p, { bookingUrl: 'https://x.test/"><script>alert(1)</script>' });
+    expect(out).not.toContain("<script>alert(1)</script>");
+    expect(out).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
+  it("composes with the inline chart option", () => {
+    const out = renderRecapHtml(p, { chartCid: CHART_CID, bookingUrl: "https://x.test/book" });
+    expect(out).toContain(`cid:${CHART_CID}`);
+    expect(out).toContain("Book a recruiting call");
+  });
+});
+
 describe("isValidEmail", () => {
   it("accepts normal addresses and rejects junk", () => {
     expect(isValidEmail("jamesm@hometownlend.com")).toBe(true);
