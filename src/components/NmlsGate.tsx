@@ -3,6 +3,7 @@ import { ArrowRight, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { lookupRetrReport, normalizeNmls, isCloudConfigured, StoredRetrReport } from "@/lib/retrReportStore";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
@@ -14,6 +15,10 @@ interface NmlsGateProps {
 export const NmlsGate = ({ onEnter, onSkip }: NmlsGateProps) => {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const { authRequired, user } = useAuth();
+  // Anonymous visitors get the live RETR API only — the shared report store
+  // is authenticated-only under RLS and the query would just fail.
+  const isTeamMember = !authRequired || !!user;
 
   const submit = async () => {
     const nmls = normalizeNmls(value);
@@ -28,7 +33,7 @@ export const NmlsGate = ({ onEnter, onSkip }: NmlsGateProps) => {
     }
     setBusy(true);
     try {
-      const report = await lookupRetrReport(nmls);
+      const report = await lookupRetrReport(nmls, { sharedStore: isTeamMember });
       onEnter({ nmls, report });
     } catch (e) {
       toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });

@@ -37,6 +37,7 @@ import { RetrParseResult } from "@/lib/retrParser";
 import {
   StoredRetrReport, lookupRetrReport, saveRetrReport, normalizeNmls, isCloudConfigured,
 } from "@/lib/retrReportStore";
+import { RetrDateRange, RETR_DEFAULT_RANGE, RETR_RANGE_OPTIONS } from "@/lib/retrApi";
 import { useAuth } from "@/lib/auth";
 
 const STORAGE_KEY = "htl_lo_proforma_v7"; // v7: zeroed-out defaults (drop pre-filled v6 drafts)
@@ -292,6 +293,9 @@ const Index = () => {
   const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY) && !deepLinkNmls);
   const [retrPdfUrl, setRetrPdfUrl] = useState<string | null>(null);
   const [pullingRetr, setPullingRetr] = useState(false);
+  // Live-pull window. Defaults to 6 months (RETR flagged a data gap that makes
+  // longer windows unreliable right now); the result is annualized either way.
+  const [retrRange, setRetrRange] = useState<RetrDateRange>(RETR_DEFAULT_RANGE);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -305,19 +309,23 @@ const Index = () => {
     sessionStorage.setItem(GATE_KEY, "1");
     setGated(false);
     (async () => {
-      if (isCloudConfigured() && isTeamMember) {
+      if (isCloudConfigured()) {
+        // Everyone gets the live RETR API; the shared report store fallback is
+        // team-only (its RLS is authenticated-only and would just fail).
         try {
-          const report = await lookupRetrReport(deepLinkNmls);
+          const report = await lookupRetrReport(deepLinkNmls, { sharedStore: isTeamMember });
           if (report) applyStoredReport(deepLinkNmls, report);
-          else { setState({ ...defaultState(), nmls: deepLinkNmls }); toast({ title: "No RETR report on file", description: `Nothing stored yet for NMLS ${deepLinkNmls}. Drop the PDF to import and share it.` }); }
+          else {
+            setState({ ...defaultState(), nmls: deepLinkNmls });
+            toast(isTeamMember
+              ? { title: "No RETR report on file", description: `Nothing stored yet for NMLS ${deepLinkNmls}. Drop the PDF to import and share it.` }
+              : { title: "No RETR data found", description: `No live RETR data for NMLS ${deepLinkNmls} yet — enter production below.` });
+          }
         } catch (e) {
           setState({ ...defaultState(), nmls: deepLinkNmls });
           toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
         }
       } else {
-        if (isCloudConfigured() && !isTeamMember) {
-          toast({ title: "Sign in to pull RETR data", description: "Stored RETR reports are shared with your team once you're signed in." });
-        }
         setState({ ...defaultState(), nmls: deepLinkNmls });
       }
       setSearchParams({}, { replace: true });
@@ -395,9 +403,10 @@ const Index = () => {
   const applyStoredReport = (nmls: string, report: StoredRetrReport) => {
     setState(applyRetrResult({ ...defaultState(), nmls }, report.parsed));
     setRetrPdfUrl(report.pdfUrl);
+    const annualized = report.parsed.warnings.some(w => w.includes("annualized"));
     toast({
       title: "RETR data pulled",
-      description: `${report.loName ?? "Loan Officer"} (NMLS ${nmls}) — ${report.parsed.annualFiles} files, ${fmtUSD(report.parsed.annualVolume, { compact: true })}`,
+      description: `${report.loName ?? "Loan Officer"} (NMLS ${nmls}) — ${report.parsed.annualFiles} files, ${fmtUSD(report.parsed.annualVolume, { compact: true })}${annualized ? " (annualized pace)" : ""}`,
     });
   };
 
@@ -415,7 +424,9 @@ const Index = () => {
       setState({ ...defaultState(), nmls });
       // When unconfigured, the gate already toasted "Working locally" — don't replace it (TOAST_LIMIT is 1).
       if (isCloudConfigured()) {
-        toast({ title: "No RETR report on file", description: `Drop the RETR PDF for NMLS ${nmls} in the Production section to import and share it.` });
+        toast(isTeamMember
+          ? { title: "No RETR report on file", description: `Drop the RETR PDF for NMLS ${nmls} in the Production section to import and share it.` }
+          : { title: "No RETR data found", description: `No live RETR data for NMLS ${nmls} yet — enter production below.` });
       }
     }
   };
@@ -435,17 +446,15 @@ const Index = () => {
       toast({ title: "Supabase not configured", description: "Add credentials to .env to pull shared RETR data." });
       return;
     }
-    if (!isTeamMember) {
-      // The lookup would otherwise reach the database and fail on RLS —
-      // tell a public visitor why up front instead of showing an error.
-      toast({ title: "Sign in to pull RETR data", description: "Stored RETR reports are shared with your team once you're signed in." });
-      return;
-    }
     setPullingRetr(true);
     try {
-      const report = await lookupRetrReport(nmls);
+      // Live RETR API for everyone; team members also fall back to the
+      // shared report store (its RLS is authenticated-only).
+      const report = await lookupRetrReport(nmls, { sharedStore: isTeamMember, dateRange: retrRange });
       if (report) applyStoredReport(nmls, report);
-      else toast({ title: "No RETR report on file", description: `Nothing stored yet for NMLS ${nmls}. Drop the PDF below to import and share it.` });
+      else toast(isTeamMember
+        ? { title: "No RETR report on file", description: `Nothing stored yet for NMLS ${nmls}. Drop the PDF below to import and share it.` }
+        : { title: "No RETR data found", description: `No live RETR data for NMLS ${nmls} yet — you can still fill in production by hand.` });
     } catch (e) {
       toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -651,18 +660,29 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>NMLS #</Label>
-              <div className="flex gap-2 max-w-[240px]">
-                <Input
-                  inputMode="numeric"
-                  className="tabular-nums"
-                  value={state.nmls}
-                  onChange={e => setState(s => ({ ...s, nmls: e.target.value }))}
-                  placeholder="123456"
-                />
-                <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={pullRetr} disabled={pullingRetr} title="Pull stored RETR data for this NMLS">
+              <Input
+                inputMode="numeric"
+                className="tabular-nums max-w-[200px]"
+                value={state.nmls}
+                onChange={e => setState(s => ({ ...s, nmls: e.target.value }))}
+                placeholder="123456"
+              />
+              <div className="flex gap-2 max-w-[200px]">
+                <Select value={String(retrRange)} onValueChange={v => setRetrRange(Number(v) as RetrDateRange)}>
+                  <SelectTrigger className="h-10 w-[96px] shrink-0" aria-label="RETR window">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RETR_RANGE_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" className="h-10 flex-1" onClick={pullRetr} disabled={pullingRetr} title="Pull RETR production for this NMLS">
                   {pullingRetr ? "Pulling…" : "Pull RETR"}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">Live pull window — shorter windows are annualized.</p>
             </div>
             <div className="space-y-2">
               <Label>Annual Funded File Count</Label>
