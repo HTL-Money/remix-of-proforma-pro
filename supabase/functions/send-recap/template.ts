@@ -128,7 +128,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
     ? `
     <td width="46%" valign="middle" style="background:${GRAY_BG};border-radius:8px;padding:20px 16px;text-align:center;">
       <div style="color:${GRAY_MID};font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Current Platform</div>
-      <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">${r.currentBps ?? 0} BPS</div>
+      <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">${Number(r.currentBps ?? 0)} BPS</div>
       <div style="color:${GRAY_DARK};font-size:26px;font-weight:700;margin-top:10px;">${usd(r.current.annual ?? 0)}</div>
       <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">${usd(r.current.monthly ?? 0)} / month</div>
     </td>`
@@ -141,7 +141,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   const htlCell = `
     <td width="50%" valign="middle" style="background:${NAVY};border-radius:8px;padding:26px 16px;text-align:center;">
       <div style="color:${MINT};font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Hometown Lending</div>
-      <div style="color:#ffffff;font-size:12px;margin-top:4px;">${r.corrActive ? "Broker + Correspondent" : "Broker Only"} · ${r.loSplit}% split</div>
+      <div style="color:#ffffff;font-size:12px;margin-top:4px;">${r.corrActive ? "Broker + Correspondent" : "Broker Only"} · ${Number(r.loSplit)}% split</div>
       <div style="color:${MINT};font-size:40px;font-weight:800;margin-top:10px;line-height:1;">${usd(r.htl.annual)}</div>
       <div style="color:#d5ece2;font-size:13px;margin-top:6px;">${usd(r.htl.monthly)} / month</div>
     </td>`;
@@ -232,10 +232,10 @@ ${
             ${detailRow("Annual funded volume", usd(r.volume))}
             ${detailRow("Annual funded files", num(r.files))}
             ${detailRow("Average loan amount", usd(r.avgLoan))}
-            ${detailRow("HTL LO split", `${r.loSplit}%`)}
-            ${detailRow("Team-support holdback", `${r.holdbackPct}%`)}
+            ${detailRow("HTL LO split", `${Number(r.loSplit)}%`)}
+            ${detailRow("Team-support holdback", `${Number(r.holdbackPct)}%`)}
             ${detailRow("Channel strategy", r.corrActive ? "Broker + Correspondent" : "Broker Only")}
-            ${r.currentBps != null ? detailRow("Current platform comp", `${r.currentBps} BPS`) : ""}
+            ${r.currentBps != null ? detailRow("Current platform comp", `${Number(r.currentBps)} BPS`) : ""}
           </table>
         </td></tr>
 

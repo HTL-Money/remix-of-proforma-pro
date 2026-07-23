@@ -213,14 +213,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
     const envelope = (await r.json().catch(() => null)) as RetrEnvelope<unknown> | null;
     // RETR signals "no LO matches this NMLS" as HTTP 422 with a well-formed
-    // envelope (verified live) — that's a normal empty result, not an outage.
-    // Treat any parseable error-envelope as no-data so a recruit typing an
-    // unknown NMLS gets a friendly message instead of a scary failure; only a
-    // truly unparseable / non-envelope response is a hard 502.
-    if (envelope && (envelope.error || envelope.success === false || !envelope.data)) {
-      return json(200, { ok: true, data: null, message: envelope.message ?? "No RETR data found for this NMLS." });
+    // envelope (verified live). Treat ONLY that specific signal as a normal
+    // empty result — a genuine RETR 5xx that still returns an error envelope
+    // must surface as 502, not masquerade as "no data" (which would hide an
+    // outage behind a friendly message AND, via the negative-cache below,
+    // poison a valid LO's lookup for 24h).
+    const isNoMatch =
+      r.status === 422 ||
+      (envelope?.success === false && /\bno\b.*\b(lo|match|found|data)\b/i.test(envelope?.message ?? ""));
+    if (isNoMatch) {
+      // Negative-cache the miss (data: null). cacheGet reads it back as a hit,
+      // so repeat lookups skip RETR — and, critically, the row now counts
+      // toward withinUpstreamBudget. Without this, a stream of distinct
+      // unknown NMLS ids never writes a row, never trips the daily cap, and
+      // burns RETR's real rate limit without bound.
+      await cachePut(supabaseUrl, serviceKey, nmlsId, dateRange, null);
+      return json(200, { ok: true, data: null, message: envelope?.message ?? "No RETR data found for this NMLS." });
     }
-    if (!r.ok || !envelope) {
+    if (!r.ok || !envelope || envelope.error || envelope.success === false || !envelope.data) {
       console.error("RETR stats call failed", r.status, envelope?.message);
       return json(502, { error: `RETR lookup failed (${r.status}).` });
     }

@@ -224,7 +224,27 @@ Deno.serve(async (req: Request) => {
     to = String(body.to ?? "").trim();
     recap = body.recap as RecapPayload;
     if (!EMAIL_RE.test(to)) return json(400, { error: "Invalid recipient email address." });
-    if (!recap || typeof recap.htl?.annual !== "number" || typeof recap.savedName !== "string") {
+    // Validate the FULL shape the template dereferences — not just two fields.
+    // renderRecapHtml reads recap.current/gain/buckets/totals unconditionally;
+    // a partial payload that slipped past a two-field check would throw at
+    // render time (outside any try) → an ungraceful platform 500 with no CORS.
+    // The numeric checks also close an HTML-injection hole: loSplit/holdbackPct/
+    // currentBps are interpolated into the email, so a string here is markup.
+    const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
+    const isNumOrNull = (v: unknown) => v == null || isNum(v);
+    if (
+      !recap ||
+      typeof recap.savedName !== "string" ||
+      !recap.htl || !isNum(recap.htl.annual) || !isNum(recap.htl.monthly) ||
+      !recap.current || !isNumOrNull(recap.current.annual) || !isNumOrNull(recap.current.monthly) ||
+      !recap.gain || !isNumOrNull(recap.gain.annual) || !isNumOrNull(recap.gain.monthly) ||
+      !isNum(recap.loSplit) || !isNum(recap.holdbackPct) || !isNumOrNull(recap.currentBps) ||
+      !isNumOrNull(recap.volume) || !isNumOrNull(recap.files) || !isNumOrNull(recap.avgLoan) ||
+      !Array.isArray(recap.buckets) ||
+      !recap.buckets.every(b => b && typeof b.label === "string" && isNum(b.compPct)) ||
+      !recap.totals ||
+      ![recap.totals.loNetBeforeHoldback, recap.totals.teamHoldback, recap.totals.brokerPaidTotal, recap.totals.finalLoNetComp].every(isNumOrNull)
+    ) {
       return json(400, { error: "Invalid recap payload." });
     }
     // Binary artifacts ride beside recap, never inside it — the only
