@@ -97,6 +97,20 @@ const periodTitle = (months: number): string =>
   periodLabel(months).replace(/\b\w/g, c => c.toUpperCase());
 const tel = (phone: string) => phone.replace(/[^\d+]/g, "");
 
+// Duplicated (intentionally) from src/lib/recapLink.ts's encodeRecap — this
+// file has zero app imports by design (portable across Deno and vitest), so
+// the encoder is small enough to keep here rather than reach across runtimes.
+// Must stay byte-for-byte identical to recapLink.ts's algorithm so a link
+// built here decodes correctly on the client (see recap.test.ts's
+// cross-implementation round-trip test).
+const toB64Url = (s: string): string => {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+const encodeRecapToken = (r: RecapPayload): string => toB64Url(JSON.stringify(r));
+
 // Content-ID shared by the Resend attachment and the <img src="cid:..."> in
 // the HTML, so the two can never drift apart (index.ts imports it too).
 export const CHART_CID = "earnings-chart";
@@ -130,6 +144,14 @@ export interface RenderOptions {
    * Unset = section omitted entirely; no dead links in real emails.
    */
   bookingUrl?: string;
+  /**
+   * When set (the app's public origin, e.g. https://app.hometownlend.com), a
+   * "watch your personalized recap online" link renders, pointing at the
+   * hosted /r page — which shows the same vault GIF instantly and swaps in
+   * the Higgsfield cinematic clip once it finishes rendering (Part K).
+   * Unset = link omitted; no dead/placeholder link in real emails.
+   */
+  appOrigin?: string;
 }
 
 const detailRow = (label: string, value: string) => `
@@ -213,6 +235,18 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
           </table>
         </td></tr>`;
 
+  // "Watch online" link to the hosted /r page — sits right under the hero so
+  // it reads as "there's more, and it's personalized," not a generic CTA.
+  const watchOnlineLink = opts.appOrigin
+    ? `
+    <tr><td align="center" style="padding:14px 24px 0 24px;">
+      <a href="${esc(`${opts.appOrigin.replace(/\/$/, "")}/r?d=${encodeRecapToken(r)}`)}" target="_blank"
+         style="color:${GREEN};font-size:13px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
+        🎬 Watch your personalized recap online →
+      </a>
+    </td></tr>`
+    : "";
+
   const gainBanner = hasComparison
     ? `
     <tr><td style="padding:18px 24px 0 24px;">
@@ -283,6 +317,8 @@ ${
           <div style="color:${MINT};font-size:26px;font-weight:800;font-family:Georgia,'Times New Roman',serif;">Hometown Lending</div>
           <div style="color:#ffffff;font-size:14px;margin-top:4px;">LO Pro Forma Recap${r.loName ? ` — ${esc(r.loName)}` : ""}${r.nmls ? ` (NMLS ${esc(r.nmls)})` : ""}</div>
         </td></tr>
+
+        ${watchOnlineLink}
 
         ${comparisonSection}
 

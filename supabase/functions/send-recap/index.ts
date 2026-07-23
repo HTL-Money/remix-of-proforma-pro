@@ -311,10 +311,14 @@ Deno.serve(async (req: Request) => {
   // BOOKING_URL secret (Microsoft Bookings page) turns on the "Book a
   // recruiting call" button in the email; unset = button omitted.
   const bookingUrl = Deno.env.get("BOOKING_URL") || undefined;
+  // APP_ORIGIN (e.g. https://app.hometownlend.com or the Vercel preview URL)
+  // turns on the "watch your personalized recap online" link to /r.
+  const appOrigin = Deno.env.get("APP_ORIGIN") || undefined;
   const html = renderRecapHtml(recap, {
     ...(chartPng ? { chartCid: CHART_CID } : {}),
     ...(gif ? { gifCid: GIF_CID } : {}),
     bookingUrl,
+    appOrigin,
   });
 
   const attachments = { chartPng, gif, docx };

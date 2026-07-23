@@ -13,6 +13,8 @@ import { renderRecapChartPng } from "@/lib/recapChart";
 import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { autoAdvanceOnRecap } from "@/lib/pipeline";
+import { hashRecap } from "@/lib/recapLink";
+import { enqueueRecapVideo } from "@/lib/higgsfieldVideo";
 import {
   ProformaSummary, listProformas, loadProforma, saveProforma, updateProforma, deleteProforma,
 } from "@/lib/proformaStore";
@@ -70,6 +72,8 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       const gif = vaultParams ? renderVaultGifBase64(vaultParams) : null;
       const docx = await buildRecapDocxBase64(pendingRecap.payload);
       await sendRecap(to, pendingRecap.payload, chartPng ?? undefined, { gif, docx });
+      // Part K: fire-and-forget cinematic video generation, same as the public flow.
+      if (chartPng) void enqueueRecapVideo(hashRecap(pendingRecap.payload), chartPng);
       // Light pipeline automation: a sent recap advances the matching target
       // LO to "Pro Forma Sent" (forward only; never throws).
       autoAdvanceOnRecap(pendingRecap.payload.nmls);

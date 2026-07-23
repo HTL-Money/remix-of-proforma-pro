@@ -11,6 +11,8 @@ import { renderRecapChartPng } from "@/lib/recapChart";
 import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { submitPublicProforma } from "@/lib/proformaStore";
+import { hashRecap } from "@/lib/recapLink";
+import { enqueueRecapVideo } from "@/lib/higgsfieldVideo";
 
 // Aryan's live Microsoft Bookings page. The per-recruit cinematic video will
 // live on the hosted recap page (Part K) — never embedded inline here.
@@ -60,6 +62,10 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
       const gif = vaultParams ? renderVaultGifBase64(vaultParams) : null;
       const docx = await buildRecapDocxBase64(payload);
       await sendRecap(to, payload, chartPng ?? undefined, { gif, docx });
+      // Part K: kick off the per-recruit cinematic video (fire-and-forget —
+      // ~45s to render, never blocks this send). The hosted /r page (linked
+      // from the email) polls for it and swaps it in once ready.
+      if (chartPng) void enqueueRecapVideo(hashRecap(payload), chartPng);
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       setStep("sent");
     } catch (e) {

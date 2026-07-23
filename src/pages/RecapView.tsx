@@ -1,8 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CalendarCheck } from "lucide-react";
-import { decodeRecap } from "@/lib/recapLink";
+import { decodeRecap, hashRecap } from "@/lib/recapLink";
 import { periodLabelTitle } from "@/lib/retrApi";
+import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
+import { pollRecapVideoStatus } from "@/lib/higgsfieldVideo";
+
+const POLL_INTERVAL_MS = 4000;
+const MAX_POLL_ATTEMPTS = 45; // ~3 minutes, matching the "send now, page auto-fills" design
 
 // Aryan's live Microsoft Bookings page (same link used in the email + CTA).
 const BOOKING_URL =
@@ -28,6 +33,58 @@ const MINT = "#6FBF9E";
 const RecapView = () => {
   const [params] = useSearchParams();
   const recap = useMemo(() => decodeRecap(params.get("d")), [params]);
+  const [gifDataUrl, setGifDataUrl] = useState<string | null>(null);
+  const [videoState, setVideoState] = useState<"idle" | "processing" | "completed" | "failed">("idle");
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+
+  // Render the vault GIF client-side, immediately — the exact same renderer
+  // the email uses, so this page never depends on the GIF having been stored
+  // anywhere. (Hooks run unconditionally; each guards internally on `recap`
+  // being present, so the invalid-link early return below doesn't violate the
+  // rules of hooks.)
+  useEffect(() => {
+    if (!recap) return;
+    const p = vaultParamsFromRecap(recap);
+    if (!p) return;
+    const gif = renderVaultGifBase64(p);
+    if (gif) setGifDataUrl(`data:image/gif;base64,${gif}`);
+  }, [recap]);
+
+  // Poll for the Part K cinematic video. Generation was kicked off at send
+  // time (PublicRecapCta/CloudSave), so by the time a recruit opens this
+  // link it may already be done — otherwise this polls until it is, or gives
+  // up quietly after ~3 minutes and just leaves the GIF showing.
+  useEffect(() => {
+    if (!recap) return;
+    const hash = hashRecap(recap);
+    let cancelled = false;
+    let attempts = 0;
+    setVideoState("processing");
+    const tick = async () => {
+      if (cancelled) return;
+      const result = await pollRecapVideoStatus(hash);
+      if (cancelled) return;
+      if (result.status === "completed" && result.url) {
+        setVideoUrl(result.url);
+        setVideoState("completed");
+        return;
+      }
+      if (result.status === "failed") {
+        setVideoState("failed");
+        return;
+      }
+      attempts += 1;
+      if (attempts >= MAX_POLL_ATTEMPTS) {
+        setVideoState("failed"); // give up quietly — the GIF keeps showing
+        return;
+      }
+      setTimeout(tick, POLL_INTERVAL_MS);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+    };
+  }, [recap]);
 
   if (!recap) {
     return (
@@ -74,6 +131,34 @@ const RecapView = () => {
       </header>
 
       <main className="mx-auto mt-6 w-full max-w-2xl px-4 space-y-5">
+        {/* Hero: the vault GIF plays instantly; the Part K cinematic clip
+            (Higgsfield) swaps in automatically once it finishes rendering —
+            no reload needed. Omitted entirely when there's no comparison to
+            animate. */}
+        {gifDataUrl && (
+          <section className="overflow-hidden rounded-xl shadow-sm" style={{ background: "#101318" }}>
+            {videoState === "completed" && videoUrl ? (
+              <video
+                src={videoUrl}
+                poster={gifDataUrl}
+                controls
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="block w-full"
+              />
+            ) : (
+              <img src={gifDataUrl} alt="Your earnings animation" className="block w-full" />
+            )}
+            {videoState === "processing" && (
+              <div className="px-4 py-2 text-center text-[11px] text-white/60">
+                Your personalized cinematic recap is rendering — this page will update automatically.
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Comparison */}
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-xl bg-[#f2f2f2] p-6 text-center">

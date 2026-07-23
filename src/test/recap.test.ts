@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildRecapPayload, isValidEmail } from "@/lib/recapEmail";
 import { calculate, defaultState } from "@/lib/proforma";
 import { renderRecapHtml, BRANDING_LINE, CHART_CID, RECRUITER, COMPANY, UNSUBSCRIBE_EMAIL } from "../../supabase/functions/send-recap/template";
+import { decodeRecap } from "@/lib/recapLink";
 
 const goldenState = () => ({
   ...defaultState(),
@@ -188,6 +189,36 @@ describe("renderRecapHtml — signature, CAN-SPAM footer, period-aware labels", 
     const six = { ...goldenState(), productionPeriodMonths: 6 };
     expect(buildRecapPayload("x", six, calculate(six)).periodMonths).toBe(6);
     expect(buildRecapPayload("x", goldenState(), calculate(goldenState())).periodMonths).toBe(12);
+  });
+});
+
+describe("renderRecapHtml — watch-online link (Part K foundation)", () => {
+  const s = goldenState();
+  const p = buildRecapPayload("Jordan — 90%", s, calculate(s));
+
+  it("omits the link entirely when no appOrigin is set — no dead link", () => {
+    const out = renderRecapHtml(p, {});
+    expect(out).not.toContain("Watch your personalized recap online");
+  });
+
+  it("renders a /r link pointing at the given origin when appOrigin is set", () => {
+    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
+    expect(out).toContain("Watch your personalized recap online");
+    expect(out).toMatch(/href="https:\/\/app\.example\.com\/r\?d=[^"]+"/);
+  });
+
+  it("strips a trailing slash on the origin, matching src/lib/recapLink.ts's buildRecapPageUrl", () => {
+    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com/" });
+    expect(out).toContain('href="https://app.example.com/r?d=');
+    expect(out).not.toContain("app.example.com//r");
+  });
+
+  it("cross-implementation: the token this Deno-side template builds decodes correctly with the client's recapLink.ts decodeRecap", () => {
+    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
+    const token = /\/r\?d=([^"]+)"/.exec(out)?.[1] ?? "";
+    expect(token.length).toBeGreaterThan(0);
+    const decoded = decodeRecap(token);
+    expect(decoded).toEqual(p);
   });
 });
 

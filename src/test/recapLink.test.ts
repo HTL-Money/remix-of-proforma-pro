@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeRecap, decodeRecap, buildRecapPageUrl } from "@/lib/recapLink";
+import { encodeRecap, decodeRecap, buildRecapPageUrl, hashRecap } from "@/lib/recapLink";
 import { buildRecapPayload } from "@/lib/recapEmail";
 import { calculate, defaultState } from "@/lib/proforma";
 
@@ -48,5 +48,34 @@ describe("recapLink encode/decode", () => {
     // Valid base64url of JSON that isn't a recap shape → rejected.
     const notRecap = encodeRecap({ hello: "world" } as unknown as ReturnType<typeof sample>);
     expect(decodeRecap(notRecap)).toBeNull();
+  });
+});
+
+describe("hashRecap (Part K video dedupe key)", () => {
+  it("is deterministic — the same payload always hashes the same", () => {
+    const p = sample();
+    expect(hashRecap(p)).toBe(hashRecap({ ...p }));
+  });
+
+  it("produces a 16-char lowercase hex key", () => {
+    expect(hashRecap(sample())).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("ignores savedName/proformaId — same scenario dedupes across different saves", () => {
+    const p = sample();
+    const savedTwice = { ...p, savedName: "A totally different name", proformaId: "some-other-uuid" };
+    expect(hashRecap(savedTwice)).toBe(hashRecap(p));
+  });
+
+  it("changes when the numbers actually differ", () => {
+    const p = sample();
+    const differentVolume = { ...p, volume: p.volume + 1 };
+    expect(hashRecap(differentVolume)).not.toBe(hashRecap(p));
+  });
+
+  it("changes when the period differs, even with identical dollar totals", () => {
+    const p = sample();
+    const sixMo = { ...p, periodMonths: 6 };
+    expect(hashRecap(sixMo)).not.toBe(hashRecap({ ...p, periodMonths: 12 }));
   });
 });

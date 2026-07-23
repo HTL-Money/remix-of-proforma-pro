@@ -43,3 +43,40 @@ export const decodeRecap = (param: string | null | undefined): RecapPayload | nu
 
 export const buildRecapPageUrl = (recap: RecapPayload, origin: string): string =>
   `${origin.replace(/\/$/, "")}/r?d=${encodeRecap(recap)}`;
+
+// Deterministic, non-cryptographic hash — a dedupe/lookup KEY for the Part K
+// cinematic video pipeline, not a security boundary, so a fast string hash
+// (FNV-1a, run twice with different seeds for a wider keyspace) is plenty and
+// works identically in the browser, Deno, and jsdom with no dependencies.
+// Depends only on the numbers/identity that define a "scenario" — NOT
+// savedName/proformaId — so two saves of the identical scenario share one
+// generated clip instead of paying for a duplicate.
+const fnv1a = (str: string, seed: number): number => {
+  let h = seed;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+};
+
+export const hashRecap = (r: RecapPayload): string => {
+  const key = JSON.stringify({
+    loName: r.loName,
+    nmls: r.nmls,
+    volume: r.volume,
+    files: r.files,
+    avgLoan: r.avgLoan,
+    currentBps: r.currentBps,
+    loSplit: r.loSplit,
+    holdbackPct: r.holdbackPct,
+    corrActive: r.corrActive,
+    currentAnnual: r.current.annual,
+    htlAnnual: r.htl.annual,
+    gainAnnual: r.gain.annual,
+    periodMonths: r.periodMonths ?? 12,
+  });
+  const a = fnv1a(key, 0x811c9dc5).toString(16).padStart(8, "0");
+  const b = fnv1a(key, 0x9e3779b9).toString(16).padStart(8, "0");
+  return a + b; // 16 hex chars
+};
