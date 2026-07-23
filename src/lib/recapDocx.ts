@@ -162,8 +162,15 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
               kv("Final LO net comp", usd(r.totals.finalLoNetComp)),
             ]),
 
+            // The report gets forwarded and detached from the email, so it
+            // carries its own disclaimer instead of relying on the email footer.
             new Paragraph({
-              spacing: { before: 360 },
+              spacing: { before: 300 },
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: "All figures are illustrative and not a guarantee of compensation.", italics: true, color: GRAY, size: 18 })],
+            }),
+            new Paragraph({
+              spacing: { before: 120 },
               alignment: AlignmentType.CENTER,
               children: [new TextRun({ text: BRANDING_LINE, italics: true, color: GREEN, size: 20 })],
             }),

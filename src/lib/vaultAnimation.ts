@@ -666,6 +666,11 @@ export const drawVaultFrame = (ctx: CanvasRenderingContext2D, t: number, params:
     fillTextFit(ctx, "AT HOMETOWN LENDING", rcx, py + 48, "bold", 15, 240);
     ctx.fillStyle = BRAND.navy;
     fillTextFit(ctx, params.htlLabel, rcx, py + 98, "bold", 44, 250);
+    // The GIF travels without the email around it, so the closing card
+    // carries its own disclaimer.
+    ctx.fillStyle = BRAND.grayMid;
+    ctx.font = `italic 11px ${FONT}`;
+    ctx.fillText("All figures are illustrative.", VAULT_W / 2, py + panelH - 16);
     ctx.globalAlpha = 1;
   }
 

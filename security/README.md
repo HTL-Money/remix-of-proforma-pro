@@ -62,6 +62,14 @@ payload-isolation test.
    the team's saved list; rows carry no privileges. Revisit if it's abused in
    practice (captcha or a lightweight proof-of-work would slot into
    `submitPublicProforma`).
+3b. **NMLS enumeration through `retr-proxy`.** The anonymous self-serve flow
+   is the product's core premise, so the proxy is anon-reachable by design —
+   which also means anyone with the anon key can look up any LO's production
+   stats through it. Backstops: strict input validation, 24-hour cache-first,
+   and a global upstream budget (150 RETR calls/day → 429), so bulk scraping
+   is slow and capped, and the underlying data is commercially available from
+   RETR anyway. Accepted at current scale; a per-IP throttle is the designated
+   next step if the budget starts tripping.
 4. **Encryption at rest** is whatever the Supabase tier provides (AES-256 at
    the infrastructure level). No application-layer encryption — acceptable for
    this data class; revisit if regulated data ever enters `ModelState`.

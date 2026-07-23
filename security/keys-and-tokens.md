@@ -16,7 +16,7 @@ server-side secret stores.
 | `RECAP_SENDER` | Supabase function secrets | Never | Mailbox the recap sends as |
 | `RESEND_API_KEY` | Supabase function secrets | Never | Resend send-only API |
 | `RECAP_FROM`, `BOOKING_URL` | Supabase function secrets | Never (rendered into emails) | Configuration, not credentials |
-| `RETR_CLIENT_ID` / `RETR_CLIENT_SECRET` (future) | Supabase function secrets | Never | RETR stats API (retr-proxy branch) |
+| `RETR_CLIENT_ID` / `RETR_CLIENT_SECRET` | Supabase function secrets | Never | RETR stats API OAuth (used only inside `retr-proxy`; access/refresh tokens live in function memory, never persisted or logged) |
 | Supabase Auth session JWT | Browser localStorage (`sb-*-auth-token`), managed by supabase-js | Yes — it IS the user's session | `authenticated`-role RLS access while valid |
 
 ## Token architecture ("is our tokenization robust?")
@@ -53,6 +53,11 @@ member departure and annually.
    cold start.
 3. **Resend key**: Resend dashboard → revoke + re-issue → `supabase secrets
    set RESEND_API_KEY=...`.
+3b. **RETR client secret**: request reissue from RETR (kevan@retr.app) →
+   `supabase secrets set RETR_CLIENT_SECRET=...` → confirm one live lookup →
+   old secret dies upstream. **Do this after initial go-live**: the first
+   credentials transited a chat channel during setup and should be treated as
+   exposed-once.
 4. **A leaked commit**: rotating the credential is the fix — git history
    rewriting is cosmetic. Then add the leaked pattern to the secret-scan
    regexes in `src/test/security.test.ts` so it can't come back.

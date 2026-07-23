@@ -15,6 +15,7 @@ recomputes on every test run and enforces).
 | `target_los` | — | SELECT / INSERT / UPDATE / DELETE | full |
 | `stage_events` | — | SELECT / INSERT (append-only) | full |
 | `recap_emails` | — | SELECT only (rows are written by `send-recap` with the service role) | full |
+| `retr_stats_cache` | — | — (RLS enabled with **zero client policies**: only `retr-proxy` touches it, service-role) | full |
 | `storage.objects` (bucket `retr-reports`) | — | SELECT / INSERT / UPDATE scoped to the bucket | full |
 | `storage.buckets` (`retr-reports`) | private (`public = false` since migration `20260713020000`) | — | — |
 

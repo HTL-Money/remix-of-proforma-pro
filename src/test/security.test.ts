@@ -149,6 +149,18 @@ describe("RLS invariants (net state across all migrations)", () => {
     }
   });
 
+  it("retr_stats_cache has RLS enabled and ZERO client policies", () => {
+    // The cache is service-role-only by design: any policy appearing on it
+    // would widen the anon-visible surface of RETR production data.
+    expect(policies.filter(p => p.table.includes("retr_stats_cache"))).toEqual([]);
+    const dir = join(ROOT, "supabase", "migrations");
+    const sql = readdirSync(dir)
+      .filter(f => f.endsWith(".sql"))
+      .map(f => readFileSync(join(dir, f), "utf8"))
+      .join("\n");
+    expect(sql).toMatch(/retr_stats_cache\s+enable\s+row\s+level\s+security/i);
+  });
+
   it("the retr-reports bucket ends up private", () => {
     const dir = join(ROOT, "supabase", "migrations");
     const files = readdirSync(dir).filter(f => f.endsWith(".sql")).sort();
