@@ -816,3 +816,73 @@ describe("KNOWN DIVERGENCE: per-bucket holdback clamping vs. aggregate clamping 
     expect(sumBucketField(calc, "teamHoldback")).toBeCloseTo(calc.totals.teamHoldback, 2); // invariant still holds
   });
 });
+
+describe("productionPeriodMonths: period-aware monthly + salary proration", () => {
+  // A RETR pull that isn't annualized (Part J) means annualVolume/annualFiles
+  // can be a raw partial-year total. calculate() must keep "monthly" and flat
+  // employee salaries honest for whatever window that is — this is the fix
+  // the code review + user confirmed before annualization was removed.
+  const employee = (over: Partial<Employee> = {}): Employee => ({
+    id: "e1",
+    name: "Processor Pat",
+    role: "Processor",
+    salary: 40_000,
+    salarySource: "Broker",
+    qmBonus: 0,
+    nonQmBonus: 0,
+    bonusSource: "Broker",
+    extraBonus: 0,
+    ...over,
+  });
+
+  it("defaults to 12 months — byte-identical to the pre-Part-J behavior", () => {
+    const s = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()] });
+    expect(s.productionPeriodMonths).toBe(12);
+    const calc = calculate(s);
+    expect(calc.periodMonths).toBe(12);
+    expect(calc.brokerPaidSalaries).toBeCloseTo(40_000, 2); // full annual salary, unprorated
+    expect(calc.monthlyLoNet).toBeCloseTo(calc.finalLoNetComp / 12, 6);
+  });
+
+  it("a 6-month pull prorates the flat salary to half, not a full year", () => {
+    const annual = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 12 });
+    const sixMo = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 6 });
+    const calcAnnual = calculate(annual);
+    const calcSixMo = calculate(sixMo);
+    // Same revenue-side numbers (by construction of this test), half the salary cost.
+    expect(calcSixMo.brokerPaidSalaries).toBeCloseTo(calcAnnual.brokerPaidSalaries / 2, 2);
+    expect(calcSixMo.totals.loNetBeforeHoldback).toBeCloseTo(calcAnnual.totals.loNetBeforeHoldback, 2);
+    // So the 6-month pull's comp is HIGHER (half the salary deducted from the
+    // same revenue) — the opposite, correct direction from the un-prorated bug.
+    expect(calcSixMo.finalLoNetComp).toBeGreaterThan(calcAnnual.finalLoNetComp);
+  });
+
+  it("monthly divides by the actual period, not a hardcoded 12", () => {
+    const threeMo = baseState({ annualVolume: 6_000_000, annualFiles: 20, productionPeriodMonths: 3 });
+    const calc = calculate(threeMo);
+    expect(calc.periodMonths).toBe(3);
+    expect(calc.monthlyLoNet).toBeCloseTo(calc.finalLoNetComp / 3, 6);
+  });
+
+  it("current-platform monthly comp is also period-aware", () => {
+    const s = baseState({ annualVolume: 6_000_000, annualFiles: 20, currentSplit: 2.0, productionPeriodMonths: 6 });
+    const calc = calculate(s);
+    expect(calc.currentPlatformMonthly).toBeCloseTo(calc.currentPlatformAnnual! / 6, 6);
+  });
+
+  it("per-file bonuses need no proration — they already scale with the period's file count", () => {
+    const emp = employee({ qmBonus: 150, nonQmBonus: 250, bonusSource: "Broker" });
+    const s = baseState({ annualVolume: 6_000_000, annualFiles: 20, employees: [emp], productionPeriodMonths: 6 });
+    const calc = calculate(s);
+    // qmFiles/nonQmFiles come straight from the period's own allocation — no ×periodFrac applied to bonus cost.
+    const expectedBonus = calc.totals.qmFiles * 150 + calc.totals.nonQmFiles * 250;
+    expect(calc.brokerPaidBonuses).toBeCloseTo(expectedBonus, 2);
+  });
+
+  it("calculateBrokerOnly inherits period-awareness (delegates to calculate)", () => {
+    const s = baseState({ annualVolume: 6_000_000, annualFiles: 20, employees: [employee()], productionPeriodMonths: 6 });
+    const calc = calculateBrokerOnly(s);
+    expect(calc.periodMonths).toBe(6);
+    expect(calc.brokerPaidSalaries).toBeCloseTo(20_000, 2); // half of the 40k annual salary
+  });
+});

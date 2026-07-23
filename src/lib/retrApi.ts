@@ -8,13 +8,43 @@ import { RetrParseResult } from "@/lib/retrText";
 import { supabase } from "@/lib/supabaseClient";
 
 export type RetrDateRange = 3 | 6 | 12 | 14;
-export const RETR_DEFAULT_RANGE: RetrDateRange = 6;
+export const RETR_DEFAULT_RANGE: RetrDateRange = 12;
 export const RETR_RANGE_OPTIONS: { value: RetrDateRange; label: string }[] = [
   { value: 3, label: "3 mo" },
   { value: 6, label: "6 mo" },
   { value: 12, label: "12 mo" },
   { value: 14, label: "14 mo" },
 ];
+
+const NUMBER_WORDS: Record<number, string> = {
+  1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
+  7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven",
+};
+
+/**
+ * Human phrase for a production window: "annual" at exactly 12 months,
+ * "previous N months" under a year, "N years" for a clean multi-year
+ * multiple of 12, and the literal "N months" for anything else (e.g. 14).
+ * Drives every field/recap label that used to hardcode "Annual" — so a
+ * pull that isn't a full year never claims to be one.
+ */
+export const periodLabel = (months: number): string => {
+  if (months === 12) return "annual";
+  if (months < 12) {
+    const word = NUMBER_WORDS[months] ?? String(months);
+    return `previous ${word} month${months === 1 ? "" : "s"}`;
+  }
+  if (months % 12 === 0) {
+    const years = months / 12;
+    const word = NUMBER_WORDS[years] ?? String(years);
+    return `${word} year${years === 1 ? "" : "s"}`;
+  }
+  return `${months} months`;
+};
+
+/** Title-cased variant for field labels, e.g. "Previous Three Months". */
+export const periodLabelTitle = (months: number): string =>
+  periodLabel(months).replace(/\b\w/g, c => c.toUpperCase());
 
 /** RETR's LoanOfficerStatsDto, per their OpenAPI spec. */
 export interface LoanOfficerStatsDto {
@@ -38,41 +68,34 @@ export interface LoanOfficerStatsDto {
 }
 
 /**
- * Map a windowed RETR stats pull onto the calculator's annual fields.
- *
- * The calculator models a 12-month year, so a 3/6/14-month window is scaled
- * by 12/months ("annualized pace") — flagged in `warnings` so the UI can say
- * so. The average loan amount is window-invariant and never scaled. Conv
- * absorbs whatever the FHA/VA counts don't cover (jumbo, non-QM, reverse,
- * other), the same convention the PDF parser uses, so the mix always
- * reconciles to the annualized file count.
+ * Map a windowed RETR stats pull onto the calculator's fields — as the
+ * ACTUAL figures for that window, never annualized. A 6-month pull shows a
+ * real 6-month total labeled "previous six months," not a ×2 estimate
+ * wearing an "annual" label (the guessed-comp/compliance concern a shorter
+ * window used to create). `periodMonths` carries the window forward so
+ * `calculate()` can keep "monthly" and employee-salary proration honest for
+ * whatever period this is. The average loan amount is naturally
+ * window-invariant (a per-loan average, not a total). Conv absorbs whatever
+ * the FHA/VA counts don't cover (jumbo, non-QM, reverse, other), the same
+ * convention the PDF parser uses, so the mix always reconciles to the
+ * window's file count.
  */
 export const annualizeLoStats = (dto: LoanOfficerStatsDto, months: RetrDateRange): RetrParseResult => {
-  const factor = 12 / months;
-  const scale = (n: number | null | undefined) => Math.round((n ?? 0) * factor);
+  const annualFiles = Math.round(dto.loanCount ?? 0);
+  const annualVolume = Math.round(dto.loanVolume ?? 0);
+  const avgLoanAmount = annualFiles > 0 ? annualVolume / annualFiles : 0;
 
-  const rawCount = dto.loanCount ?? 0;
-  const rawVolume = dto.loanVolume ?? 0;
-  const annualFiles = scale(rawCount);
-  const annualVolume = Math.round(rawVolume * factor);
-  const avgLoanAmount = rawCount > 0 ? rawVolume / rawCount : 0;
-
-  const fha = Math.min(scale(dto.fhaCount), annualFiles);
-  const va = Math.min(scale(dto.vaCount), Math.max(0, annualFiles - fha));
+  const fha = Math.min(Math.round(dto.fhaCount ?? 0), annualFiles);
+  const va = Math.min(Math.round(dto.vaCount ?? 0), Math.max(0, annualFiles - fha));
   const conv = Math.max(0, annualFiles - fha - va);
 
-  const purchaseCount = scale(dto.purchaseCount);
-  const refiCount = scale(dto.refiCount);
+  const purchaseCount = Math.round(dto.purchaseCount ?? 0);
+  const refiCount = Math.round(dto.refiCount ?? 0);
   // RETR's DTO has no purchase/refi volume split — derive from the average.
   const purchaseVolume = Math.round(avgLoanAmount * purchaseCount);
   const refiVolume = Math.round(avgLoanAmount * refiCount);
 
   const recruitName = [dto.firstName, dto.lastName].filter(Boolean).join(" ").trim() || null;
-
-  const warnings: string[] = [];
-  if (months !== 12) {
-    warnings.push(`Live RETR pull over a ${months}-month window — annualized ×${factor.toFixed(2)}.`);
-  }
 
   return {
     recruitName,
@@ -85,8 +108,9 @@ export const annualizeLoStats = (dto: LoanOfficerStatsDto, months: RetrDateRange
     refiCount,
     refiVolume,
     byLoanType: { fha, va, conv, nonqm: 0 },
-    rawText: `RETR API live pull (${months}-month window): ${JSON.stringify(dto)}`,
-    warnings,
+    rawText: `RETR API live pull (${months}-month window, actual — not annualized): ${JSON.stringify(dto)}`,
+    warnings: [],
+    periodMonths: months,
   };
 };
 

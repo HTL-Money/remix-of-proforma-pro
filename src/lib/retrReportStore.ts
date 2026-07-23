@@ -1,4 +1,4 @@
-import { RetrParseResult } from "@/lib/retrParser";
+import { RetrParseResult } from "@/lib/retrText";
 import { annualizeLoStats, fetchLoStats, RetrDateRange, RETR_DEFAULT_RANGE } from "@/lib/retrApi";
 import { requireSupabase, supabase } from "@/lib/supabaseClient";
 

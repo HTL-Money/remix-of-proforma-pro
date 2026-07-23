@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { annualizeLoStats, LoanOfficerStatsDto, RETR_DEFAULT_RANGE } from "@/lib/retrApi";
+import { annualizeLoStats, LoanOfficerStatsDto, RETR_DEFAULT_RANGE, periodLabel, periodLabelTitle } from "@/lib/retrApi";
 
 const dto = (over: Partial<LoanOfficerStatsDto> = {}): LoanOfficerStatsDto => ({
   firstName: "John",
@@ -15,7 +15,7 @@ const dto = (over: Partial<LoanOfficerStatsDto> = {}): LoanOfficerStatsDto => ({
   ...over,
 });
 
-describe("annualizeLoStats", () => {
+describe("annualizeLoStats — actual-period passthrough (no annualization)", () => {
   it("passes a 12-month window through unscaled, with no warning", () => {
     const r = annualizeLoStats(dto(), 12);
     expect(r.annualVolume).toBe(9_600_000);
@@ -25,35 +25,33 @@ describe("annualizeLoStats", () => {
     expect(r.refiCount).toBe(6);
     expect(r.byLoanType).toEqual({ fha: 8, va: 4, conv: 12, nonqm: 0 });
     expect(r.warnings).toEqual([]);
+    expect(r.periodMonths).toBe(12);
   });
 
-  it("annualizes a 6-month window by ×2 and says so", () => {
+  it("a 6-month window shows the REAL 6-month totals, not ×2", () => {
     const r = annualizeLoStats(dto(), 6);
-    expect(r.annualVolume).toBe(19_200_000);
-    expect(r.annualFiles).toBe(48);
-    expect(r.purchaseCount).toBe(36);
-    expect(r.refiCount).toBe(12);
-    expect(r.byLoanType.fha).toBe(16);
-    expect(r.byLoanType.va).toBe(8);
-    expect(r.byLoanType.conv).toBe(24);
-    expect(r.warnings).toHaveLength(1);
-    expect(r.warnings[0]).toMatch(/6-month window.*×2\.00/);
+    expect(r.annualVolume).toBe(9_600_000); // same raw DTO totals as the 12mo case
+    expect(r.annualFiles).toBe(24);
+    expect(r.byLoanType).toEqual({ fha: 8, va: 4, conv: 12, nonqm: 0 });
+    expect(r.periodMonths).toBe(6);
+    expect(r.warnings).toEqual([]);
   });
 
-  it("annualizes a 3-month window by ×4", () => {
+  it("a 3-month window is likewise unscaled", () => {
     const r = annualizeLoStats(dto(), 3);
-    expect(r.annualVolume).toBe(38_400_000);
-    expect(r.annualFiles).toBe(96);
+    expect(r.annualVolume).toBe(9_600_000);
+    expect(r.annualFiles).toBe(24);
+    expect(r.periodMonths).toBe(3);
   });
 
-  it("scales a 14-month window DOWN by 12/14", () => {
+  it("a 14-month window is likewise unscaled", () => {
     const r = annualizeLoStats(dto({ loanCount: 28, loanVolume: 14_000_000 }), 14);
-    expect(r.annualFiles).toBe(24); // 28 * 12/14
-    expect(r.annualVolume).toBe(12_000_000);
-    expect(r.warnings[0]).toMatch(/14-month window/);
+    expect(r.annualFiles).toBe(28);
+    expect(r.annualVolume).toBe(14_000_000);
+    expect(r.periodMonths).toBe(14);
   });
 
-  it("never scales the average loan amount", () => {
+  it("never scales the average loan amount (it's window-invariant by construction)", () => {
     for (const months of [3, 6, 12, 14] as const) {
       expect(annualizeLoStats(dto(), months).avgLoanAmount).toBe(400_000);
     }
@@ -67,7 +65,7 @@ describe("annualizeLoStats", () => {
     expect(r.byLoanType.conv).toBe(7);
   });
 
-  it("clamps FHA/VA so counts never exceed the annualized total", () => {
+  it("clamps FHA/VA so counts never exceed the total", () => {
     const r = annualizeLoStats(dto({ loanCount: 4, fhaCount: 4, vaCount: 4, convCount: 0 }), 12);
     expect(r.byLoanType.fha).toBe(4);
     expect(r.byLoanType.va).toBe(0);
@@ -95,7 +93,32 @@ describe("annualizeLoStats", () => {
     expect(annualizeLoStats(dto({ firstName: null, lastName: null }), 12).recruitName).toBeNull();
   });
 
-  it("defaults to a 6-month window constant", () => {
-    expect(RETR_DEFAULT_RANGE).toBe(6);
+  it("defaults to a 12-month window constant", () => {
+    expect(RETR_DEFAULT_RANGE).toBe(12);
+  });
+});
+
+describe("periodLabel / periodLabelTitle", () => {
+  it("labels a full year as annual", () => {
+    expect(periodLabel(12)).toBe("annual");
+    expect(periodLabelTitle(12)).toBe("Annual");
+  });
+
+  it("labels sub-year windows as 'previous N months'", () => {
+    expect(periodLabel(3)).toBe("previous three months");
+    expect(periodLabel(6)).toBe("previous six months");
+    expect(periodLabel(1)).toBe("previous one month");
+    expect(periodLabelTitle(3)).toBe("Previous Three Months");
+  });
+
+  it("labels an odd over-a-year window literally", () => {
+    expect(periodLabel(14)).toBe("14 months");
+    expect(periodLabelTitle(14)).toBe("14 Months");
+  });
+
+  it("labels a clean multi-year window as 'N years'", () => {
+    expect(periodLabel(24)).toBe("two years");
+    expect(periodLabel(36)).toBe("three years");
+    expect(periodLabelTitle(24)).toBe("Two Years");
   });
 });

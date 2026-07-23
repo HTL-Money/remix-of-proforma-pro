@@ -27,6 +27,10 @@ export interface RetrParseResult {
   // Human-readable notes about any values that couldn't be parsed cleanly
   // or that required reconciliation. Empty array = clean parse.
   warnings: string[];
+  // Months the figures above actually cover. Only the live-API path
+  // (retrApi.ts annualizeLoStats) sets this; the PDF-parse path below always
+  // represents a full RETR annual export, so callers default to 12 when unset.
+  periodMonths?: number;
 }
 
 export const num = (s: string) => Number(s.replace(/[^0-9.]/g, "")) || 0;
