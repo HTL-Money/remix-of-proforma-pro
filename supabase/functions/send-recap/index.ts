@@ -62,6 +62,18 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
+// Every recap is BCC'd to marketing for the team's records. The per-recipient
+// rate limit is keyed on `to` only (see withinRateLimit), so this fixed
+// internal BCC never counts against — or is throttled by — a recruit's cap.
+const BCC_RECIPIENTS = ["marketing@hometownlend.com"];
+// Replies always route to Aryan, whichever mailbox actually sends. Overridable
+// via secret so it can change without a code deploy.
+const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";
+// One-click unsubscribe (RFC 8058). Reliably honored on the Resend path; M365/
+// Graph restricts custom internet headers, so on the Graph path the visible
+// mailto in the email footer is the compliant unsubscribe mechanism.
+const UNSUBSCRIBE_MAILTO = "marketing@hometownlend.com";
+
 /** True if `to` is still under the send cap. Fails open on error — a rate-limit outage must never block a legitimate send. */
 const withinRateLimit = async (supabaseUrl: string, serviceKey: string, to: string): Promise<boolean> => {
   try {
@@ -124,12 +136,14 @@ interface RecapAttachments {
   docx?: string;
 }
 
-const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, att: RecapAttachments): Promise<void> => {
+const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, att: RecapAttachments, bcc: string[]): Promise<void> => {
   const message: Record<string, unknown> = {
     subject,
     body: { contentType: "HTML", content: html },
     toRecipients: [{ emailAddress: { address: to } }],
+    replyTo: [{ emailAddress: { address: REPLY_TO } }],
   };
+  if (bcc.length > 0) message.bccRecipients = bcc.map(a => ({ emailAddress: { address: a } }));
   const attachments: Record<string, unknown>[] = [];
   if (att.gif) {
     // Inline CID attachment: contentId matches <img src="cid:..."> in the HTML.
@@ -177,9 +191,20 @@ const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html:
   if (resp.status !== 202) throw new ProviderError("Microsoft 365", resp.status, await resp.text().catch(() => ""));
 };
 
-const sendViaResend = async (apiKey: string, to: string, subject: string, html: string, att: RecapAttachments): Promise<void> => {
+const sendViaResend = async (apiKey: string, to: string, subject: string, html: string, att: RecapAttachments, bcc: string[]): Promise<void> => {
   const from = Deno.env.get("RECAP_FROM") ?? "Hometown Lending <onboarding@resend.dev>";
-  const emailBody: Record<string, unknown> = { from, to: [to], subject, html };
+  const emailBody: Record<string, unknown> = {
+    from,
+    to: [to],
+    subject,
+    html,
+    reply_to: REPLY_TO,
+    headers: {
+      "List-Unsubscribe": `<mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+  };
+  if (bcc.length > 0) emailBody.bcc = bcc;
   const attachments: Record<string, unknown>[] = [];
   if (att.gif) {
     // Inline CID attachments, referenced from the HTML as <img src="cid:...">.
@@ -293,9 +318,12 @@ Deno.serve(async (req: Request) => {
   });
 
   const attachments = { chartPng, gif, docx };
+  // Never BCC an address that's already the primary recipient (e.g. a test
+  // send straight to marketing) — that would double-deliver.
+  const bcc = BCC_RECIPIENTS.filter(a => a.toLowerCase() !== to.toLowerCase());
   try {
-    if (graph) await sendViaGraph(graph, to, subject, html, attachments);
-    else await sendViaResend(resendKey!, to, subject, html, attachments);
+    if (graph) await sendViaGraph(graph, to, subject, html, attachments, bcc);
+    else await sendViaResend(resendKey!, to, subject, html, attachments, bcc);
   } catch (e) {
     if (e instanceof ProviderError) {
       console.error(e.provider, "error", e.status, e.detail);

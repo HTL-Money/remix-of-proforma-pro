@@ -12,11 +12,8 @@ import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { submitPublicProforma } from "@/lib/proformaStore";
 
-// PLACEHOLDERS — swap these for the real assets when available.
-// AJ_VIDEO_URL accepts a YouTube/Vimeo embed URL or a hosted mp4; the
-// component renders an iframe either way (YouTube/Vimeo embed URLs work
-// directly, and most video hosts provide an embeddable player URL).
-const AJ_VIDEO_URL = "https://www.youtube.com/embed/PLACEHOLDER_AJ_VIDEO_ID";
+// Aryan's live Microsoft Bookings page. The per-recruit cinematic video will
+// live on the hosted recap page (Part K) — never embedded inline here.
 const BOOKING_URL = "https://outlook.office.com/bookwithme/user/6ae2ff896ce64b4085b2e829a6228568@hometownlend.com?anonymous&ismsaljsauthenabled&ep=pcard";
 
 interface PublicRecapCtaProps {
@@ -93,19 +90,6 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
               <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
               <span>Your full recap is on its way to <span className="font-medium">{email.trim()}</span>.</span>
             </div>
-            {/* Hidden until a real video URL replaces the placeholder — a
-                dead embed reads worse than no embed (persona-panel finding). */}
-            {!AJ_VIDEO_URL.includes("PLACEHOLDER") && (
-              <div className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black">
-                <iframe
-                  src={AJ_VIDEO_URL}
-                  title="A message from AJ at Hometown Lending"
-                  className="h-full w-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
-              </div>
-            )}
             <Button asChild className="w-full gold-accent text-accent-foreground hover:opacity-90" size="lg">
               <a href={BOOKING_URL} target="_blank" rel="noopener noreferrer">
                 <CalendarCheck className="h-4 w-4 mr-2" /> Book a call with AJ

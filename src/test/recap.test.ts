@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildRecapPayload, isValidEmail } from "@/lib/recapEmail";
 import { calculate, defaultState } from "@/lib/proforma";
-import { renderRecapHtml, BRANDING_LINE, CHART_CID } from "../../supabase/functions/send-recap/template";
+import { renderRecapHtml, BRANDING_LINE, CHART_CID, RECRUITER, COMPANY, UNSUBSCRIBE_EMAIL } from "../../supabase/functions/send-recap/template";
 
 const goldenState = () => ({
   ...defaultState(),
@@ -148,6 +148,46 @@ describe("renderRecapHtml booking CTA", () => {
     const out = renderRecapHtml(p, { chartCid: CHART_CID, bookingUrl: "https://x.test/book" });
     expect(out).toContain(`cid:${CHART_CID}`);
     expect(out).toContain("Book a confidential 15-min walkthrough");
+  });
+});
+
+describe("renderRecapHtml — signature, CAN-SPAM footer, period-aware labels", () => {
+  const s = goldenState();
+  const html = renderRecapHtml(buildRecapPayload("Jane — 90%", s, calculate(s)));
+
+  it("renders the recruiter signature with reply-worthy contact details", () => {
+    expect(html).toContain(RECRUITER.name); // Aryan Jafarzadeh
+    expect(html).toContain(RECRUITER.title); // Founder / CEO
+    expect(html).toContain(`NMLS #${RECRUITER.nmls}`); // 1989264
+    expect(html).toContain(`mailto:${RECRUITER.email}`);
+    expect(html).toContain(RECRUITER.phone);
+  });
+
+  it("includes a compliant CAN-SPAM footer: company identity, address, unsubscribe", () => {
+    expect(html).toContain(`NMLS #${COMPANY.nmls}`); // 2712965
+    expect(html).toContain(COMPANY.address);
+    expect(html).toContain(`mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe`);
+    expect(html).toContain("not a guarantee of income");
+  });
+
+  it("labels production as Annual for a full-year (default) period", () => {
+    expect(html).toContain("Annual funded volume");
+    expect(html).toContain("Final LO net annual comp");
+  });
+
+  it("labels a non-annual pull window honestly — never a false 'Annual'", () => {
+    const six = { ...goldenState(), productionPeriodMonths: 6 };
+    const out = renderRecapHtml(buildRecapPayload("x", six, calculate(six)));
+    expect(out).toContain("Previous Six Months funded volume");
+    expect(out).toContain("Previous Six Months funded files");
+    expect(out).not.toContain("Annual funded volume");
+    expect(out).toContain("Final LO net comp — Previous Six Months");
+  });
+
+  it("threads periodMonths into the payload from the calc", () => {
+    const six = { ...goldenState(), productionPeriodMonths: 6 };
+    expect(buildRecapPayload("x", six, calculate(six)).periodMonths).toBe(6);
+    expect(buildRecapPayload("x", goldenState(), calculate(goldenState())).periodMonths).toBe(12);
   });
 });
 

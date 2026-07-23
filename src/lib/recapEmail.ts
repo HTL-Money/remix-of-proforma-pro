@@ -35,6 +35,9 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
     finalLoNetComp: calc.finalLoNetComp,
   },
   proformaId,
+  // Period the production figures cover, so the email labels honestly
+  // ("Annual" vs "Previous Six Months") instead of assuming a full year.
+  periodMonths: calc.periodMonths,
 });
 
 /** Optional binary artifacts riding beside the recap, all base64 (no data:
