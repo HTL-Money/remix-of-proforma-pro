@@ -183,8 +183,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
-  const keyId = Deno.env.get("HIGGSFIELD_KEY_ID") ?? "";
-  const keySecret = Deno.env.get("HIGGSFIELD_KEY_SECRET") ?? "";
+  // Prefixed names preferred; falls back to the generic KEY_ID/KEY_SECRET
+  // names the user actually created in the dashboard (verified 2026-07-23).
+  const keyId = Deno.env.get("HIGGSFIELD_KEY_ID") ?? Deno.env.get("KEY_ID") ?? "";
+  const keySecret = Deno.env.get("HIGGSFIELD_KEY_SECRET") ?? Deno.env.get("KEY_SECRET") ?? "";
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
