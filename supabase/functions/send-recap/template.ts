@@ -174,7 +174,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         <tr><td align="center" style="padding:18px 16px;">
           <div style="color:#eaf5f0;font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Your Gain at Hometown Lending</div>
           <div style="color:#ffffff;font-size:30px;font-weight:800;margin-top:6px;">${gainSign}${usd(gainAnnual)}</div>
-          <div style="color:#eaf5f0;font-size:13px;margin-top:4px;">${(r.gain.monthly ?? 0) >= 0 ? "+" : ""}${usd(r.gain.monthly ?? 0)} / month more in your pocket</div>
+          <div style="color:#eaf5f0;font-size:13px;margin-top:4px;">${(r.gain.monthly ?? 0) >= 0 ? "+" : ""}${usd(r.gain.monthly ?? 0)} / month in modeled net comp</div>
         </td></tr>
       </table>
     </td></tr>`
@@ -184,13 +184,13 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   const bookingCta = opts.bookingUrl
     ? `
     <tr><td style="padding:26px 24px 6px 24px;" align="center">
-      <div style="color:${NAVY};font-size:16px;font-weight:700;">Like these numbers?</div>
-      <div style="color:${GRAY_MID};font-size:13px;margin-top:4px;">Grab a time that works for you — the calendar always shows live availability.</div>
+      <div style="color:${NAVY};font-size:16px;font-weight:700;">Want to pressure-test these assumptions?</div>
+      <div style="color:${GRAY_MID};font-size:13px;margin-top:4px;">No pitch, no commitment — and nothing shared with anyone. Bring your numbers and poke holes in our math.</div>
       <table role="presentation" cellpadding="0" cellspacing="0" style="margin:14px auto 0 auto;">
         <tr><td align="center" style="background:${GREEN};border-radius:8px;">
           <a href="${esc(opts.bookingUrl)}" target="_blank"
              style="display:inline-block;padding:14px 34px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
-            Book a recruiting call
+            Book a confidential 15-min walkthrough
           </a>
         </td></tr>
       </table>

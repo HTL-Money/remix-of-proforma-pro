@@ -127,14 +127,14 @@ describe("renderRecapHtml booking CTA", () => {
 
   it("renders the booking button when a bookingUrl is provided", () => {
     const out = renderRecapHtml(p, { bookingUrl: "https://outlook.office365.com/book/HTL@hometownlend.com/" });
-    expect(out).toContain("Book a recruiting call");
+    expect(out).toContain("Book a confidential 15-min walkthrough");
     expect(out).toContain('href="https://outlook.office365.com/book/HTL@hometownlend.com/"');
-    expect(out).toContain("live availability");
+    expect(out).toContain("No pitch, no commitment");
   });
 
   it("omits the section entirely when no bookingUrl is set — no dead links", () => {
     const out = renderRecapHtml(p, {});
-    expect(out).not.toContain("Book a recruiting call");
+    expect(out).not.toContain("Book a confidential 15-min walkthrough");
     expect(out).not.toContain("live availability");
   });
 
@@ -147,7 +147,7 @@ describe("renderRecapHtml booking CTA", () => {
   it("composes with the inline chart option", () => {
     const out = renderRecapHtml(p, { chartCid: CHART_CID, bookingUrl: "https://x.test/book" });
     expect(out).toContain(`cid:${CHART_CID}`);
-    expect(out).toContain("Book a recruiting call");
+    expect(out).toContain("Book a confidential 15-min walkthrough");
   });
 });
 

@@ -1026,7 +1026,7 @@ const Index = () => {
                     {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
                   </p>
                   <p className="text-sm md:text-base text-accent-foreground/90 mt-2 tabular-nums">
-                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month more in your pocket
+                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month in modeled net comp
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6 max-w-2xl mx-auto">
                     <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">

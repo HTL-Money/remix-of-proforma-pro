@@ -163,16 +163,32 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
             ]),
 
             // The report gets forwarded and detached from the email, so it
-            // carries its own disclaimer instead of relying on the email footer.
+            // carries its own assumptions + disclaimer instead of relying on
+            // the email footer. Specific assumptions build trust; a bare
+            // "illustrative" reads as a fig leaf (persona-panel finding).
             new Paragraph({
               spacing: { before: 300 },
               alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: "All figures are illustrative and not a guarantee of compensation.", italics: true, color: GRAY, size: 18 })],
+              children: [
+                new TextRun({
+                  text: `Projection based on ${usd(r.volume)} annual volume, ${num(r.files)} files at a ${r.loSplit}% split. All figures are illustrative — not an offer of employment or compensation.`,
+                  italics: true,
+                  color: GRAY,
+                  size: 18,
+                }),
+              ],
             }),
             new Paragraph({
               spacing: { before: 120 },
               alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: BRANDING_LINE, italics: true, color: GREEN, size: 20 })],
+              children: [
+                new TextRun({
+                  text: `Prepared${r.nmls ? ` from NMLS #${r.nmls} production data` : ""} by Hometown Lending.`,
+                  italics: true,
+                  color: GRAY,
+                  size: 18,
+                }),
+              ],
             }),
           ],
         },

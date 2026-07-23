@@ -93,15 +93,19 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
               <CheckCircle2 className="h-4 w-4 mt-0.5 text-success shrink-0" />
               <span>Your full recap is on its way to <span className="font-medium">{email.trim()}</span>.</span>
             </div>
-            <div className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black">
-              <iframe
-                src={AJ_VIDEO_URL}
-                title="A message from AJ at Hometown Lending"
-                className="h-full w-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            </div>
+            {/* Hidden until a real video URL replaces the placeholder — a
+                dead embed reads worse than no embed (persona-panel finding). */}
+            {!AJ_VIDEO_URL.includes("PLACEHOLDER") && (
+              <div className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black">
+                <iframe
+                  src={AJ_VIDEO_URL}
+                  title="A message from AJ at Hometown Lending"
+                  className="h-full w-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            )}
             <Button asChild className="w-full gold-accent text-accent-foreground hover:opacity-90" size="lg">
               <a href={BOOKING_URL} target="_blank" rel="noopener noreferrer">
                 <CalendarCheck className="h-4 w-4 mr-2" /> Book a call with AJ

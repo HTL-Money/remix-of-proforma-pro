@@ -50,6 +50,14 @@ const storeToken = (b: { accessToken: string; refreshToken?: string; expiresIn?:
   };
 };
 
+// RETR wraps every response in an envelope: { error, success, message, data,
+// correlationId } — the tokens live under data (verified live 2026-07-23).
+const unwrapAuth = (b: unknown): { accessToken: string; refreshToken?: string; expiresIn?: number } | null => {
+  const env = b as { success?: boolean; data?: { accessToken?: string; refreshToken?: string; expiresIn?: number } } | null;
+  const d = env?.data;
+  return env?.success && d?.accessToken ? (d as { accessToken: string; refreshToken?: string; expiresIn?: number }) : null;
+};
+
 const authenticate = async (clientId: string, secret: string): Promise<void> => {
   const r = await fetch(`${RETR_BASE}/api/authapi/authenticate`, {
     method: "POST",
@@ -57,9 +65,9 @@ const authenticate = async (clientId: string, secret: string): Promise<void> => 
     body: JSON.stringify({ ClientId: clientId, Secret: secret }),
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
-  const b = await r.json().catch(() => null);
-  if (!r.ok || !b?.accessToken) throw new Error(`RETR authentication failed (${r.status})`);
-  storeToken(b);
+  const auth = unwrapAuth(await r.json().catch(() => null));
+  if (!r.ok || !auth) throw new Error(`RETR authentication failed (${r.status})`);
+  storeToken(auth);
 };
 
 const tryRefresh = async (clientId: string): Promise<boolean> => {
@@ -71,9 +79,9 @@ const tryRefresh = async (clientId: string): Promise<boolean> => {
       body: JSON.stringify({ ClientId: clientId, RefreshToken: tok.refreshToken }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    const b = await r.json().catch(() => null);
-    if (!r.ok || !b?.accessToken) return false;
-    storeToken(b);
+    const auth = unwrapAuth(await r.json().catch(() => null));
+    if (!r.ok || !auth) return false;
+    storeToken(auth);
     return true;
   } catch {
     return false;
@@ -204,13 +212,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json(429, { error: "RETR's rate limit was reached — try again shortly." });
     }
     const envelope = (await r.json().catch(() => null)) as RetrEnvelope<unknown> | null;
+    // RETR signals "no LO matches this NMLS" as HTTP 422 with a well-formed
+    // envelope (verified live) — that's a normal empty result, not an outage.
+    // Treat any parseable error-envelope as no-data so a recruit typing an
+    // unknown NMLS gets a friendly message instead of a scary failure; only a
+    // truly unparseable / non-envelope response is a hard 502.
+    if (envelope && (envelope.error || envelope.success === false || !envelope.data)) {
+      return json(200, { ok: true, data: null, message: envelope.message ?? "No RETR data found for this NMLS." });
+    }
     if (!r.ok || !envelope) {
       console.error("RETR stats call failed", r.status, envelope?.message);
       return json(502, { error: `RETR lookup failed (${r.status}).` });
-    }
-    if (envelope.error || envelope.success === false || !envelope.data) {
-      // RETR answered but has nothing for this NMLS/window — not an error.
-      return json(200, { ok: true, data: null, message: envelope.message ?? "No RETR data found for this NMLS." });
     }
     const fetchedAt = new Date().toISOString();
     await cachePut(supabaseUrl, serviceKey, nmlsId, dateRange, envelope.data);
