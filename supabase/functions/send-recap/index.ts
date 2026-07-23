@@ -16,7 +16,7 @@
 // owns the email template (clients send structured numbers, never HTML) and
 // rate-limits per recipient below, so it can't be used as an open relay.
 
-import { renderRecapHtml, RecapPayload, CHART_CID } from "./template.ts";
+import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -39,6 +39,21 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHART_B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 const PNG_B64_PREFIX = "iVBORw0KGgo";
 const MAX_CHART_B64_CHARS = 2_000_000;
+
+// Optional vault-hero GIF, same posture: strict base64 whose fixed prefix is
+// the base64 of the GIF89a magic bytes — content_type can't lie. 2 MB decoded
+// budget (the client enforces the same cap; see src/lib/vaultGif.ts) →
+// ~2.8 MB of base64. Graph's whole-message limit is ~4 MB, which the sum of
+// caps here (gif 2 MB + chart 1.5 MB + docx 1 MB decoded) can exceed only in
+// adversarial payloads — real clients send ~2.2 MB total — and Graph itself
+// rejects oversized messages with a 4xx we surface as a provider error.
+const GIF_B64_PREFIX = "R0lGODlh"; // = base64("GIF89a") exactly (6 bytes → 8 chars)
+const MAX_GIF_B64_CHARS = 2_800_000;
+
+// Optional Word report: a .docx is a ZIP, so the fixed prefix is the base64
+// of PK\x03\x04. 1 MB decoded cap — the real report is ~15–40 KB.
+const DOCX_B64_PREFIX = "UEsDB";
+const MAX_DOCX_B64_CHARS = 1_400_000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,23 +118,50 @@ const getGraphToken = async (cfg: GraphConfig): Promise<string> => {
   return graphToken.token;
 };
 
-const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, chartPng?: string): Promise<void> => {
+interface RecapAttachments {
+  chartPng?: string;
+  gif?: string;
+  docx?: string;
+}
+
+const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, att: RecapAttachments): Promise<void> => {
   const message: Record<string, unknown> = {
     subject,
     body: { contentType: "HTML", content: html },
     toRecipients: [{ emailAddress: { address: to } }],
   };
-  if (chartPng) {
+  const attachments: Record<string, unknown>[] = [];
+  if (att.gif) {
     // Inline CID attachment: contentId matches <img src="cid:..."> in the HTML.
-    message.attachments = [{
+    attachments.push({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: "your-earnings-animation.gif",
+      contentType: "image/gif",
+      contentBytes: att.gif,
+      contentId: GIF_CID,
+      isInline: true,
+    });
+  }
+  if (att.chartPng) {
+    attachments.push({
       "@odata.type": "#microsoft.graph.fileAttachment",
       name: "earnings-comparison.png",
       contentType: "image/png",
-      contentBytes: chartPng,
+      contentBytes: att.chartPng,
       contentId: CHART_CID,
       isInline: true,
-    }];
+    });
   }
+  if (att.docx) {
+    // Regular (non-inline) attachment: the Word report the recipient keeps.
+    attachments.push({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: "proforma-recap.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      contentBytes: att.docx,
+    });
+  }
+  if (attachments.length > 0) message.attachments = attachments;
   const post = async (token: string) =>
     fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.sender)}/sendMail`, {
       method: "POST",
@@ -135,15 +177,25 @@ const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html:
   if (resp.status !== 202) throw new ProviderError("Microsoft 365", resp.status, await resp.text().catch(() => ""));
 };
 
-const sendViaResend = async (apiKey: string, to: string, subject: string, html: string, chartPng?: string): Promise<void> => {
+const sendViaResend = async (apiKey: string, to: string, subject: string, html: string, att: RecapAttachments): Promise<void> => {
   const from = Deno.env.get("RECAP_FROM") ?? "Hometown Lending <onboarding@resend.dev>";
   const emailBody: Record<string, unknown> = { from, to: [to], subject, html };
-  if (chartPng) {
-    // Inline CID attachment, referenced from the HTML as <img src="cid:...">.
-    emailBody.attachments = [
-      { content: chartPng, filename: "earnings-comparison.png", content_type: "image/png", content_id: CHART_CID },
-    ];
+  const attachments: Record<string, unknown>[] = [];
+  if (att.gif) {
+    // Inline CID attachments, referenced from the HTML as <img src="cid:...">.
+    attachments.push({ content: att.gif, filename: "your-earnings-animation.gif", content_type: "image/gif", content_id: GIF_CID });
   }
+  if (att.chartPng) {
+    attachments.push({ content: att.chartPng, filename: "earnings-comparison.png", content_type: "image/png", content_id: CHART_CID });
+  }
+  if (att.docx) {
+    attachments.push({
+      content: att.docx,
+      filename: "proforma-recap.docx",
+      content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+  }
+  if (attachments.length > 0) emailBody.attachments = attachments;
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -165,6 +217,8 @@ Deno.serve(async (req: Request) => {
   let to = "";
   let recap: RecapPayload;
   let chartPng: string | undefined;
+  let gif: string | undefined;
+  let docx: string | undefined;
   try {
     const body = await req.json();
     to = String(body.to ?? "").trim();
@@ -173,18 +227,30 @@ Deno.serve(async (req: Request) => {
     if (!recap || typeof recap.htl?.annual !== "number" || typeof recap.savedName !== "string") {
       return json(400, { error: "Invalid recap payload." });
     }
-    // chartPng rides beside recap, never inside it — the only legitimate
-    // producer is our client, so anything malformed is a hard 400 (matching
-    // the posture on `to`/`recap`), not a silently degraded email.
-    const rawChart = body.chartPng;
-    if (rawChart != null) {
-      if (typeof rawChart !== "string" || rawChart.length > MAX_CHART_B64_CHARS) {
-        return json(400, { error: "Chart image too large or malformed." });
-      }
-      if (rawChart.length === 0 || rawChart.length % 4 !== 0 || !CHART_B64_RE.test(rawChart) || !rawChart.startsWith(PNG_B64_PREFIX)) {
-        return json(400, { error: "Invalid chart image data." });
-      }
-      chartPng = rawChart;
+    // Binary artifacts ride beside recap, never inside it — the only
+    // legitimate producer is our client, so anything malformed is a hard 400
+    // (matching the posture on `to`/`recap`), not a silently degraded email.
+    // Each is verified by size cap + strict base64 + magic-byte prefix, so
+    // the declared content types below can never lie about the bytes.
+    const validB64 = (raw: unknown, maxChars: number, magicPrefix: string): raw is string =>
+      typeof raw === "string" &&
+      raw.length > 0 &&
+      raw.length <= maxChars &&
+      raw.length % 4 === 0 &&
+      CHART_B64_RE.test(raw) &&
+      raw.startsWith(magicPrefix);
+
+    if (body.chartPng != null) {
+      if (!validB64(body.chartPng, MAX_CHART_B64_CHARS, PNG_B64_PREFIX)) return json(400, { error: "Invalid chart image data." });
+      chartPng = body.chartPng;
+    }
+    if (body.gif != null) {
+      if (!validB64(body.gif, MAX_GIF_B64_CHARS, GIF_B64_PREFIX)) return json(400, { error: "Invalid animation data." });
+      gif = body.gif;
+    }
+    if (body.docx != null) {
+      if (!validB64(body.docx, MAX_DOCX_B64_CHARS, DOCX_B64_PREFIX)) return json(400, { error: "Invalid report attachment data." });
+      docx = body.docx;
     }
   } catch {
     return json(400, { error: "Invalid JSON body." });
@@ -200,11 +266,16 @@ Deno.serve(async (req: Request) => {
   // BOOKING_URL secret (Microsoft Bookings page) turns on the "Book a
   // recruiting call" button in the email; unset = button omitted.
   const bookingUrl = Deno.env.get("BOOKING_URL") || undefined;
-  const html = renderRecapHtml(recap, { ...(chartPng ? { chartCid: CHART_CID } : {}), bookingUrl });
+  const html = renderRecapHtml(recap, {
+    ...(chartPng ? { chartCid: CHART_CID } : {}),
+    ...(gif ? { gifCid: GIF_CID } : {}),
+    bookingUrl,
+  });
 
+  const attachments = { chartPng, gif, docx };
   try {
-    if (graph) await sendViaGraph(graph, to, subject, html, chartPng);
-    else await sendViaResend(resendKey!, to, subject, html, chartPng);
+    if (graph) await sendViaGraph(graph, to, subject, html, attachments);
+    else await sendViaResend(resendKey!, to, subject, html, attachments);
   } catch (e) {
     if (e instanceof ProviderError) {
       console.error(e.provider, "error", e.status, e.detail);
@@ -216,17 +287,22 @@ Deno.serve(async (req: Request) => {
   // Log the send with the service role (RLS has no client insert policy).
   try {
     if (supabaseUrl && serviceKey) {
-      // The chart is the one client-supplied artifact in the email, so the
-      // audit row records its fingerprint (hash + size) — never the bytes.
-      let chart: { sha256: string; bytes: number } | null = null;
-      if (chartPng) {
+      // Client-supplied artifacts in the email are recorded by fingerprint
+      // (hash + size) — never the bytes.
+      const fingerprint = async (b64?: string): Promise<{ sha256: string; bytes: number } | null> => {
+        if (!b64) return null;
         try {
-          const bytes = Uint8Array.from(atob(chartPng), c => c.charCodeAt(0));
+          const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
           const digest = await crypto.subtle.digest("SHA-256", bytes);
           const sha256 = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
-          chart = { sha256, bytes: bytes.length };
-        } catch { /* best effort — never blocks the log */ }
-      }
+          return { sha256, bytes: bytes.length };
+        } catch {
+          return null; // best effort — never blocks the log
+        }
+      };
+      const chart = await fingerprint(chartPng);
+      const gifMeta = await fingerprint(gif);
+      const docxMeta = await fingerprint(docx);
       // sent_by from the caller's JWT payload (already verified by the platform).
       let sentBy: string | null = null;
       const auth = req.headers.get("authorization") ?? "";
@@ -243,15 +319,15 @@ Deno.serve(async (req: Request) => {
           "Content-Type": "application/json",
           Prefer: "return=minimal",
         },
-        // Numbers only in the audit log — never image bytes. The defensive
-        // spread also strips a chartPng a buggy client might nest in recap.
-        // proforma_id is nulled unless it's a real UUID: a junk value would
-        // make Postgres reject the row, silently skipping the audit trail.
+        // Numbers only in the audit log — never image/attachment bytes. The
+        // defensive spread also strips artifacts a buggy client might nest in
+        // recap. proforma_id is nulled unless it's a real UUID: a junk value
+        // would make Postgres reject the row, silently skipping the audit trail.
         body: JSON.stringify({
           proforma_id: UUID_RE.test(recap.proformaId ?? "") ? recap.proformaId : null,
           sent_to: to,
           sent_by: sentBy,
-          payload: { ...recap, chartPng: undefined, chart },
+          payload: { ...recap, chartPng: undefined, gif: undefined, docx: undefined, chart, gifMeta, docxMeta },
         }),
       });
       if (!logResp.ok) console.error("recap_emails log failed", logResp.status, await logResp.text().catch(() => ""));

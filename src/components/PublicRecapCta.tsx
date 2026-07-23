@@ -8,6 +8,8 @@ import { toast } from "@/hooks/use-toast";
 import { ModelState, Calc } from "@/lib/proforma";
 import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
+import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
+import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { submitPublicProforma } from "@/lib/proformaStore";
 
 // PLACEHOLDERS — swap these for the real assets when available.
@@ -55,7 +57,12 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
         console.warn("Public submission not stored:", e);
       }
       const chartPng = renderRecapChartPng(payload);
-      await sendRecap(to, payload, chartPng ?? undefined);
+      // Hero animation + Word report: both best-effort (they return null
+      // rather than throw) — a rendering hiccup never blocks the email.
+      const vaultParams = vaultParamsFromRecap(payload);
+      const gif = vaultParams ? renderVaultGifBase64(vaultParams) : null;
+      const docx = await buildRecapDocxBase64(payload);
+      await sendRecap(to, payload, chartPng ?? undefined, { gif, docx });
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       setStep("sent");
     } catch (e) {

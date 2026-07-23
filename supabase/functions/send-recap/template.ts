@@ -57,6 +57,8 @@ export const BRANDING_LINE = "Hometown Lending: Your True Value Awaits.";
 // Content-ID shared by the Resend attachment and the <img src="cid:..."> in
 // the HTML, so the two can never drift apart (index.ts imports it too).
 export const CHART_CID = "earnings-chart";
+// Same contract for the animated vault-hero GIF at the top of the email.
+export const GIF_CID = "vault-hero";
 
 /** Palette exported so the client-side chart renderer (src/lib/recapChart.ts)
  *  paints the exact colors this template uses. */
@@ -72,6 +74,12 @@ export const BRAND = {
 export interface RenderOptions {
   /** When set, the earnings comparison renders as an inline CID image instead of HTML cells. */
   chartCid?: string;
+  /**
+   * When set, the animated vault GIF (rendered client-side from this recap's
+   * numbers) leads the email as its hero, above the header. Unset = omitted;
+   * the email is exactly what it was before the animation existed.
+   */
+  gifCid?: string;
   /**
    * When set, a "Book a recruiting call" button renders above the footer,
    * linking here (Microsoft Bookings / Calendly — the page shows live
@@ -97,6 +105,10 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   const chartAlt = hasComparison
     ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} per year (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} per year (${usd(r.htl.monthly)} per month)`
     : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} per year (${usd(r.htl.monthly)} per month)`;
+
+  const heroAlt = hasComparison
+    ? `Animation: your current ${usd(r.current.annual ?? 0)} per year stacks up in a bank vault — then your Hometown Lending ${usd(r.htl.annual)} per year lands on top`
+    : `Animation: your Hometown Lending earnings of ${usd(r.htl.annual)} per year stack up in a bank vault`;
 
   const bucketRows = r.buckets
     .map(
@@ -191,7 +203,18 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5;padding:24px 8px;">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;">
-
+${
+  opts.gifCid
+    ? `
+        <!-- Animated vault hero (inline CID GIF) — the first thing they see.
+             width/height attrs keep image-blocking clients from collapsing
+             the slot; the alt text tells the story when images are off. -->
+        <tr><td style="background:#101318;">
+          <img src="cid:${esc(opts.gifCid)}" width="600" height="338" alt="${esc(heroAlt)}"
+               style="display:block;width:100%;max-width:600px;height:auto;border:0;" />
+        </td></tr>`
+    : ""
+}
         <!-- Header -->
         <tr><td style="background:${NAVY};padding:26px 24px;text-align:center;">
           <div style="color:${MINT};font-size:26px;font-weight:800;font-family:Georgia,'Times New Roman',serif;">Hometown Lending</div>

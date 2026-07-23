@@ -10,6 +10,8 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/auth";
 import { buildRecapPayload, sendRecap, isValidEmail, RecapPayload } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
+import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
+import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { autoAdvanceOnRecap } from "@/lib/pipeline";
 import {
   ProformaSummary, listProformas, loadProforma, saveProforma, updateProforma, deleteProforma,
@@ -61,9 +63,13 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
     setSending(true);
     try {
       // Null chart (no comparison, or no canvas) just means the email keeps
-      // its HTML comparison cells — never a blocked send.
+      // its HTML comparison cells — never a blocked send. Same posture for
+      // the vault animation and the Word report: null = email without them.
       const chartPng = renderRecapChartPng(pendingRecap.payload);
-      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined);
+      const vaultParams = vaultParamsFromRecap(pendingRecap.payload);
+      const gif = vaultParams ? renderVaultGifBase64(vaultParams) : null;
+      const docx = await buildRecapDocxBase64(pendingRecap.payload);
+      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined, { gif, docx });
       // Light pipeline automation: a sent recap advances the matching target
       // LO to "Pro Forma Sent" (forward only; never throws).
       autoAdvanceOnRecap(pendingRecap.payload.nmls);
