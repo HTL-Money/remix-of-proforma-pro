@@ -5,7 +5,6 @@ import type { ModelState } from "@/lib/proforma";
 import { stackHeights, VAULT_PHASES, VAULT_DURATION } from "@/lib/vaultAnimation";
 import { renderVaultGif, vaultParamsFromRecap } from "@/lib/vaultGif";
 import { buildRecapDocx } from "@/lib/recapDocx";
-import { renderRecapHtml, GIF_CID } from "../../supabase/functions/send-recap/template";
 
 const goldenState = (): ModelState => ({
   ...defaultState(),
@@ -116,22 +115,10 @@ describe("buildRecapDocx", () => {
   });
 });
 
-describe("renderRecapHtml — vault hero block", () => {
-  it("renders the hero img when gifCid is provided", () => {
-    const html = renderRecapHtml(payload(), { gifCid: GIF_CID });
-    expect(html).toContain(`cid:${GIF_CID}`);
-    expect(html).toContain('width="600" height="338"');
-  });
-
-  it("omits the hero entirely when gifCid is unset", () => {
-    const html = renderRecapHtml(payload());
-    expect(html).not.toContain("cid:vault-hero");
-  });
-
-  it("HTML-escapes nothing dangerous into the hero alt text", () => {
-    const html = renderRecapHtml(payload(), { gifCid: GIF_CID });
-    const alt = /alt="([^"]*)"/.exec(html)?.[1] ?? "";
-    expect(alt).toContain("bank vault");
-    expect(alt).not.toContain("<");
-  });
-});
+// The vault GIF is no longer the email's hero (superseded by the Gamma
+// presentation — see recap.test.ts's "watch-online link" suite for that);
+// renderVaultGif/vaultParamsFromRecap above are still exercised directly
+// since RecapView.tsx still renders the GIF as a supporting visual on the
+// hosted page. GIF_CID stays exported/used by the Graph/Resend attachment
+// paths in index.ts even though the template no longer references it as a
+// hero — no email-template test needed for that plumbing here.

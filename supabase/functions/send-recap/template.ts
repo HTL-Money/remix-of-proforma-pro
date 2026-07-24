@@ -132,12 +132,6 @@ export interface RenderOptions {
   /** When set, the earnings comparison renders as an inline CID image instead of HTML cells. */
   chartCid?: string;
   /**
-   * When set, the animated vault GIF (rendered client-side from this recap's
-   * numbers) leads the email as its hero, above the header. Unset = omitted;
-   * the email is exactly what it was before the animation existed.
-   */
-  gifCid?: string;
-  /**
    * When set, a "Book a recruiting call" button renders above the footer,
    * linking here (Microsoft Bookings / Calendly — the page shows live
    * availability when clicked, so the email itself never goes stale).
@@ -146,10 +140,11 @@ export interface RenderOptions {
   bookingUrl?: string;
   /**
    * When set (the app's public origin, e.g. https://app.hometownlend.com), a
-   * "watch your personalized recap online" link renders, pointing at the
-   * hosted /r page — which shows the same vault GIF instantly and swaps in
-   * the Higgsfield cinematic clip once it finishes rendering (Part K).
-   * Unset = link omitted; no dead/placeholder link in real emails.
+   * "Your Personalized Presentation" hero card renders at the very top of
+   * the email — the single deliverable in the email body — linking to the
+   * hosted /r page, which shows the Gamma-generated presentation once ready
+   * (or a "still preparing" state). Unset = the whole hero is omitted; no
+   * dead/placeholder link in real emails.
    */
   appOrigin?: string;
 }
@@ -173,10 +168,6 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   const chartAlt = hasComparison
     ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} ${periodPhrase} (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month)`
     : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month)`;
-
-  const heroAlt = hasComparison
-    ? `Animation: your current ${usd(r.current.annual ?? 0)} ${periodPhrase} stacks up in a bank vault — then your Hometown Lending ${usd(r.htl.annual)} ${periodPhrase} lands on top`
-    : `Animation: your Hometown Lending earnings of ${usd(r.htl.annual)} ${periodPhrase} stack up in a bank vault`;
 
   const bucketRows = r.buckets
     .map(
@@ -235,15 +226,25 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
           </table>
         </td></tr>`;
 
-  // "Watch online" link to the hosted /r page — sits right under the hero so
-  // it reads as "there's more, and it's personalized," not a generic CTA.
-  const watchOnlineLink = opts.appOrigin
+  // Presentation hero — the single deliverable in the email body. Always
+  // rendered (when appOrigin is set) regardless of whether Gamma has
+  // finished — the /r page itself carries the "still preparing" state, same
+  // "send now, page auto-fills" pattern used throughout this app.
+  const presentationHero = opts.appOrigin
     ? `
-    <tr><td align="center" style="padding:14px 24px 0 24px;">
-      <a href="${esc(`${opts.appOrigin.replace(/\/$/, "")}/r?d=${encodeRecapToken(r)}`)}" target="_blank"
-         style="color:${GREEN};font-size:13px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
-        🎬 Watch your personalized recap online →
-      </a>
+    <tr><td style="background:${NAVY};padding:32px 24px;text-align:center;">
+      <div style="color:${MINT};font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Your Personalized Presentation</div>
+      <div style="color:#ffffff;font-size:17px;font-weight:700;margin-top:10px;line-height:1.4;">
+        You already know you're leaving money on the table.<br />Here's exactly how much.
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px auto 0 auto;">
+        <tr><td align="center" style="background:${GREEN};border-radius:8px;">
+          <a href="${esc(`${opts.appOrigin.replace(/\/$/, "")}/r?d=${encodeRecapToken(r)}`)}" target="_blank"
+             style="display:inline-block;padding:13px 30px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
+            View Your Presentation →
+          </a>
+        </td></tr>
+      </table>
     </td></tr>`
     : "";
 
@@ -300,25 +301,13 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5;padding:24px 8px;">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;">
-${
-  opts.gifCid
-    ? `
-        <!-- Animated vault hero (inline CID GIF) — the first thing they see.
-             width/height attrs keep image-blocking clients from collapsing
-             the slot; the alt text tells the story when images are off. -->
-        <tr><td style="background:#101318;">
-          <img src="cid:${esc(opts.gifCid)}" width="600" height="338" alt="${esc(heroAlt)}"
-               style="display:block;width:100%;max-width:600px;height:auto;border:0;" />
-        </td></tr>`
-    : ""
-}
         <!-- Header -->
         <tr><td style="background:${NAVY};padding:26px 24px;text-align:center;">
           <div style="color:${MINT};font-size:26px;font-weight:800;font-family:Georgia,'Times New Roman',serif;">Hometown Lending</div>
           <div style="color:#ffffff;font-size:14px;margin-top:4px;">LO Pro Forma Recap${r.loName ? ` — ${esc(r.loName)}` : ""}${r.nmls ? ` (NMLS ${esc(r.nmls)})` : ""}</div>
         </td></tr>
 
-        ${watchOnlineLink}
+        ${presentationHero}
 
         ${comparisonSection}
 

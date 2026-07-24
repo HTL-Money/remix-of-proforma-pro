@@ -8,11 +8,10 @@ import { toast } from "@/hooks/use-toast";
 import { ModelState, Calc } from "@/lib/proforma";
 import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
-import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { submitPublicProforma } from "@/lib/proformaStore";
 import { hashRecap } from "@/lib/recapLink";
-import { enqueueRecapVideo } from "@/lib/higgsfieldVideo";
+import { enqueueRecapPresentation } from "@/lib/gammaPresentation";
 
 // Aryan's live Microsoft Bookings page. The per-recruit cinematic video will
 // live on the hosted recap page (Part K) — never embedded inline here.
@@ -56,16 +55,15 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
         console.warn("Public submission not stored:", e);
       }
       const chartPng = renderRecapChartPng(payload);
-      // Hero animation + Word report: both best-effort (they return null
-      // rather than throw) — a rendering hiccup never blocks the email.
-      const vaultParams = vaultParamsFromRecap(payload);
-      const gif = vaultParams ? renderVaultGifBase64(vaultParams) : null;
+      // Word report: best-effort (returns null rather than throws) — a
+      // rendering hiccup never blocks the email. The presentation (Gamma) is
+      // the single deliverable in the email body now — no separate graphic.
       const docx = await buildRecapDocxBase64(payload);
-      await sendRecap(to, payload, chartPng ?? undefined, { gif, docx });
-      // Part K: kick off the per-recruit cinematic video (fire-and-forget —
-      // ~45s to render, never blocks this send). The hosted /r page (linked
-      // from the email) polls for it and swaps it in once ready.
-      if (chartPng) void enqueueRecapVideo(hashRecap(payload), chartPng);
+      await sendRecap(to, payload, chartPng ?? undefined, { docx });
+      // Kick off the Gamma presentation (fire-and-forget — generation takes
+      // time, never blocks this send). The email's presentation link points
+      // at Gamma's own hosted URL once it's ready.
+      void enqueueRecapPresentation(hashRecap(payload), payload);
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       setStep("sent");
     } catch (e) {

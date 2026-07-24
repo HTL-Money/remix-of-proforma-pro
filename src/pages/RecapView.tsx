@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CalendarCheck } from "lucide-react";
+import { CalendarCheck, FileText } from "lucide-react";
 import { decodeRecap, hashRecap } from "@/lib/recapLink";
 import { periodLabelTitle } from "@/lib/retrApi";
 import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
-import { pollRecapVideoStatus } from "@/lib/higgsfieldVideo";
+import { pollRecapPresentationStatus } from "@/lib/gammaPresentation";
 
 const POLL_INTERVAL_MS = 4000;
 const MAX_POLL_ATTEMPTS = 45; // ~3 minutes, matching the "send now, page auto-fills" design
@@ -34,14 +34,15 @@ const RecapView = () => {
   const [params] = useSearchParams();
   const recap = useMemo(() => decodeRecap(params.get("d")), [params]);
   const [gifDataUrl, setGifDataUrl] = useState<string | null>(null);
-  const [videoState, setVideoState] = useState<"idle" | "processing" | "completed" | "failed">("idle");
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [presentationState, setPresentationState] = useState<"idle" | "processing" | "completed" | "failed">("idle");
+  const [presentationUrl, setPresentationUrl] = useState<string | null>(null);
 
   // Render the vault GIF client-side, immediately — the exact same renderer
-  // the email uses, so this page never depends on the GIF having been stored
-  // anywhere. (Hooks run unconditionally; each guards internally on `recap`
-  // being present, so the invalid-link early return below doesn't violate the
-  // rules of hooks.)
+  // the email used to use as its hero. It's no longer the email's hero (the
+  // Gamma presentation is, per the single-deliverable decision), but it's
+  // still a nice supporting visual on this page. (Hooks run unconditionally;
+  // each guards internally on `recap` being present, so the invalid-link
+  // early return below doesn't violate the rules of hooks.)
   useEffect(() => {
     if (!recap) return;
     const p = vaultParamsFromRecap(recap);
@@ -50,32 +51,32 @@ const RecapView = () => {
     if (gif) setGifDataUrl(`data:image/gif;base64,${gif}`);
   }, [recap]);
 
-  // Poll for the Part K cinematic video. Generation was kicked off at send
-  // time (PublicRecapCta/CloudSave), so by the time a recruit opens this
-  // link it may already be done — otherwise this polls until it is, or gives
-  // up quietly after ~3 minutes and just leaves the GIF showing.
+  // Poll for the Gamma presentation. Generation was kicked off at send time
+  // (PublicRecapCta/CloudSave), so by the time a recruit opens this link it
+  // may already be done — otherwise this polls until it is, or gives up
+  // quietly after ~3 minutes and just leaves the numbers below showing.
   useEffect(() => {
     if (!recap) return;
     const hash = hashRecap(recap);
     let cancelled = false;
     let attempts = 0;
-    setVideoState("processing");
+    setPresentationState("processing");
     const tick = async () => {
       if (cancelled) return;
-      const result = await pollRecapVideoStatus(hash);
+      const result = await pollRecapPresentationStatus(hash);
       if (cancelled) return;
       if (result.status === "completed" && result.url) {
-        setVideoUrl(result.url);
-        setVideoState("completed");
+        setPresentationUrl(result.url);
+        setPresentationState("completed");
         return;
       }
       if (result.status === "failed") {
-        setVideoState("failed");
+        setPresentationState("failed");
         return;
       }
       attempts += 1;
       if (attempts >= MAX_POLL_ATTEMPTS) {
-        setVideoState("failed"); // give up quietly — the GIF keeps showing
+        setPresentationState("failed"); // give up quietly
         return;
       }
       setTimeout(tick, POLL_INTERVAL_MS);
@@ -131,31 +132,37 @@ const RecapView = () => {
       </header>
 
       <main className="mx-auto mt-6 w-full max-w-2xl px-4 space-y-5">
-        {/* Hero: the vault GIF plays instantly; the Part K cinematic clip
-            (Higgsfield) swaps in automatically once it finishes rendering —
-            no reload needed. Omitted entirely when there's no comparison to
-            animate. */}
+        {/* Presentation — the single deliverable. Always shown once a Gamma
+            generation was kicked off at send time; this page just reflects
+            whatever state it's actually in, no reload needed once ready. */}
+        <section className="rounded-xl p-6 text-center shadow-sm" style={{ background: NAVY }}>
+          <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: MINT }}>
+            Your Personalized Presentation
+          </div>
+          {presentationState === "completed" && presentationUrl ? (
+            <a
+              href={presentationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg px-8 py-3.5 text-[15px] font-bold text-white"
+              style={{ background: GREEN }}
+            >
+              <FileText className="h-4 w-4" /> View Your Presentation →
+            </a>
+          ) : presentationState === "failed" ? (
+            <p className="mt-3 text-sm text-white/70">
+              We couldn't generate your presentation this time — the numbers below are still exact.
+            </p>
+          ) : (
+            <p className="mt-3 text-sm text-white/70">Preparing your presentation — this page will update automatically.</p>
+          )}
+        </section>
+
+        {/* Supporting visual — the same vault animation the email used to
+            lead with; not the star anymore, but still a nice touch here. */}
         {gifDataUrl && (
           <section className="overflow-hidden rounded-xl shadow-sm" style={{ background: "#101318" }}>
-            {videoState === "completed" && videoUrl ? (
-              <video
-                src={videoUrl}
-                poster={gifDataUrl}
-                controls
-                autoPlay
-                muted
-                loop
-                playsInline
-                className="block w-full"
-              />
-            ) : (
-              <img src={gifDataUrl} alt="Your earnings animation" className="block w-full" />
-            )}
-            {videoState === "processing" && (
-              <div className="px-4 py-2 text-center text-[11px] text-white/60">
-                Your personalized cinematic recap is rendering — this page will update automatically.
-              </div>
-            )}
+            <img src={gifDataUrl} alt="Your earnings animation" className="block w-full" />
           </section>
         )}
 

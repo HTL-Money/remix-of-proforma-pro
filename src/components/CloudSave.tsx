@@ -10,11 +10,10 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/auth";
 import { buildRecapPayload, sendRecap, isValidEmail, RecapPayload } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
-import { renderVaultGifBase64, vaultParamsFromRecap } from "@/lib/vaultGif";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { autoAdvanceOnRecap } from "@/lib/pipeline";
 import { hashRecap } from "@/lib/recapLink";
-import { enqueueRecapVideo } from "@/lib/higgsfieldVideo";
+import { enqueueRecapPresentation } from "@/lib/gammaPresentation";
 import {
   ProformaSummary, listProformas, loadProforma, saveProforma, updateProforma, deleteProforma,
 } from "@/lib/proformaStore";
@@ -66,14 +65,12 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
     try {
       // Null chart (no comparison, or no canvas) just means the email keeps
       // its HTML comparison cells — never a blocked send. Same posture for
-      // the vault animation and the Word report: null = email without them.
+      // the Word report: null = email without it.
       const chartPng = renderRecapChartPng(pendingRecap.payload);
-      const vaultParams = vaultParamsFromRecap(pendingRecap.payload);
-      const gif = vaultParams ? renderVaultGifBase64(vaultParams) : null;
       const docx = await buildRecapDocxBase64(pendingRecap.payload);
-      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined, { gif, docx });
-      // Part K: fire-and-forget cinematic video generation, same as the public flow.
-      if (chartPng) void enqueueRecapVideo(hashRecap(pendingRecap.payload), chartPng);
+      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined, { docx });
+      // Fire-and-forget Gamma presentation generation, same as the public flow.
+      void enqueueRecapPresentation(hashRecap(pendingRecap.payload), pendingRecap.payload);
       // Light pipeline automation: a sent recap advances the matching target
       // LO to "Pro Forma Sent" (forward only; never throws).
       autoAdvanceOnRecap(pendingRecap.payload.nmls);

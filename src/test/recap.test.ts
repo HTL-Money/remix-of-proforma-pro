@@ -192,18 +192,20 @@ describe("renderRecapHtml — signature, CAN-SPAM footer, period-aware labels", 
   });
 });
 
-describe("renderRecapHtml — watch-online link (Part K foundation)", () => {
+describe("renderRecapHtml — presentation hero (Part O: replaces the vault-GIF hero)", () => {
   const s = goldenState();
   const p = buildRecapPayload("Jordan — 90%", s, calculate(s));
 
-  it("omits the link entirely when no appOrigin is set — no dead link", () => {
+  it("omits the hero entirely when no appOrigin is set — no dead link", () => {
     const out = renderRecapHtml(p, {});
-    expect(out).not.toContain("Watch your personalized recap online");
+    expect(out).not.toContain("Your Personalized Presentation");
+    expect(out).not.toContain("View Your Presentation");
   });
 
-  it("renders a /r link pointing at the given origin when appOrigin is set", () => {
+  it("renders the presentation hero with a /r link pointing at the given origin when appOrigin is set", () => {
     const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
-    expect(out).toContain("Watch your personalized recap online");
+    expect(out).toContain("Your Personalized Presentation");
+    expect(out).toContain("View Your Presentation");
     expect(out).toMatch(/href="https:\/\/app\.example\.com\/r\?d=[^"]+"/);
   });
 

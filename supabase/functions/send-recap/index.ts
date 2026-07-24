@@ -17,6 +17,7 @@
 // rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
+import { decideSourcingAction, expiryTimestamp, SourcingRow } from "./sourcing.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -56,6 +57,16 @@ const DOCX_B64_PREFIX = "UEsDB";
 const MAX_DOCX_B64_CHARS = 1_400_000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// HTL5 referral-sourcing attribution — backend bookkeeping ONLY. Never read
+// by RecapPayload/template.ts/RecapView.tsx; the recap recipient never sees
+// any of this. First-sender-wins for LO_SOURCING_EXPIRY_MONTHS, after which a
+// new send may reassign it — but every reassignment logs an event and fires
+// an alert email, so a human reviews it rather than it silently overwriting.
+const LO_SOURCING_EXPIRY_MONTHS = Number(Deno.env.get("LO_SOURCING_EXPIRY_MONTHS") ?? "12");
+const LO_SOURCING_ALERT_TO = Deno.env.get("LO_SOURCING_ALERT_TO") || "marketing@hometownlend.com";
+
+const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // Per-recipient cap. The anon key is public, so this function is reachable
 // without signing in (see the note above) — this is the actual abuse guard.
@@ -229,6 +240,134 @@ const sendViaResend = async (apiKey: string, to: string, subject: string, html: 
   if (!resp.ok) throw new ProviderError("Resend", resp.status, await resp.text().catch(() => ""));
 };
 
+/** Best-effort: extracts the caller's user ID from their bearer JWT's `sub`
+ *  claim, but ONLY if it's a real UUID — the public anon key is itself a
+ *  valid JWT (see the file-header note), and its `sub` is not a real
+ *  auth.users id, so this naturally no-ops for anonymous/public sends. */
+const extractSenderId = (req: Request): string | null => {
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.replace(/^Bearer\s+/i, "");
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const sub = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))).sub ?? null;
+    return typeof sub === "string" && UUID_RE.test(sub) ? sub : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Looks up a signed-in sender's email via the Auth Admin API (service role)
+ *  so we can BCC them a copy — never trust a client-supplied "my own email"
+ *  value. Best-effort: null just means no sender-copy this time. */
+const lookupUserEmail = async (supabaseUrl: string, serviceKey: string, userId: string): Promise<string | null> => {
+  try {
+    const r = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return typeof data?.email === "string" ? data.email : null;
+  } catch (e) {
+    console.error("sender email lookup failed (non-fatal)", e);
+    return null;
+  }
+};
+
+const getSourcingRow = async (url: string, key: string, nmls: string): Promise<SourcingRow | null> => {
+  try {
+    const r = await fetch(
+      `${url}/rest/v1/lo_sourcing?nmls=eq.${encodeURIComponent(nmls)}&select=nmls,sourced_by,expires_at`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return Array.isArray(rows) && rows[0] ? (rows[0] as SourcingRow) : null;
+  } catch (e) {
+    console.error("lo_sourcing read failed", e);
+    return null;
+  }
+};
+
+const insertSourcingRow = async (url: string, key: string, nmls: string, sourcedBy: string): Promise<void> => {
+  try {
+    await fetch(`${url}/rest/v1/lo_sourcing`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ nmls, sourced_by: sourcedBy, expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_MONTHS) }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.error("lo_sourcing insert failed (non-fatal)", e);
+  }
+};
+
+/** Reassigns an EXPIRED sourcing row and logs the event — never called for a
+ *  still-valid row (that decision is made by decideSourcingAction, not here). */
+const reassignSourcingRow = async (
+  url: string,
+  key: string,
+  nmls: string,
+  previousSourcedBy: string,
+  newSourcedBy: string,
+): Promise<void> => {
+  try {
+    await fetch(`${url}/rest/v1/lo_sourcing?nmls=eq.${encodeURIComponent(nmls)}`, {
+      method: "PATCH",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        sourced_by: newSourcedBy,
+        sourced_at: new Date().toISOString(),
+        expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_MONTHS),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    await fetch(`${url}/rest/v1/lo_sourcing_events`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ nmls, previous_sourced_by: previousSourcedBy, new_sourced_by: newSourcedBy, reason: "expired_reassignment" }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.error("lo_sourcing reassignment failed (non-fatal)", e);
+  }
+};
+
+/** Fires the human-review alert on a reassignment. Reuses whichever email
+ *  provider is already configured — best-effort, never throws. */
+const sendSourcingAlert = async (nmls: string, previousSourcedBy: string, newSourcedBy: string): Promise<void> => {
+  try {
+    const graph = graphConfig();
+    const resendKey = Deno.env.get("RESEND_API_KEY");
+    if (!graph && !resendKey) return;
+    const subject = `LO sourcing reassigned — NMLS ${nmls}`;
+    const html = `<p>Sourcing attribution for NMLS <b>${escHtml(nmls)}</b> was reassigned after its expiry window.</p>
+      <p>Previous sourcer (user id): ${escHtml(previousSourcedBy)}<br/>New sourcer (user id): ${escHtml(newSourcedBy)}</p>
+      <p>This is an automatic alert — please review to confirm this is correct and nobody was taken advantage of.</p>`;
+    if (graph) await sendViaGraph(graph, LO_SOURCING_ALERT_TO, subject, html, {}, []);
+    else await sendViaResend(resendKey!, LO_SOURCING_ALERT_TO, subject, html, {}, []);
+  } catch (e) {
+    console.error("sourcing alert send failed (non-fatal)", e);
+  }
+};
+
+/** Records who sourced this LO, first-sender-wins with a configurable
+ *  expiry. Runs AFTER a successful send. Never surfaced to the recipient —
+ *  purely backend bookkeeping. */
+const recordSourcing = async (supabaseUrl: string, serviceKey: string, nmls: string, senderId: string): Promise<void> => {
+  const existing = await getSourcingRow(supabaseUrl, serviceKey, nmls);
+  const action = decideSourcingAction(existing, senderId, Date.now());
+  if (action.kind === "insert") {
+    await insertSourcingRow(supabaseUrl, serviceKey, nmls, senderId);
+  } else if (action.kind === "reassign") {
+    await reassignSourcingRow(supabaseUrl, serviceKey, nmls, action.previousSourcedBy, senderId);
+    await sendSourcingAlert(nmls, action.previousSourcedBy, senderId);
+  }
+  // "noop" — either the same sourcer sent again, or the row is still within
+  // its expiry window (protects the original recruiter from being overwritten).
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
@@ -312,19 +451,30 @@ Deno.serve(async (req: Request) => {
   // recruiting call" button in the email; unset = button omitted.
   const bookingUrl = Deno.env.get("BOOKING_URL") || undefined;
   // APP_ORIGIN (e.g. https://app.hometownlend.com or the Vercel preview URL)
-  // turns on the "watch your personalized recap online" link to /r.
+  // turns on the "Your Personalized Presentation" hero linking to /r.
   const appOrigin = Deno.env.get("APP_ORIGIN") || undefined;
   const html = renderRecapHtml(recap, {
     ...(chartPng ? { chartCid: CHART_CID } : {}),
-    ...(gif ? { gifCid: GIF_CID } : {}),
     bookingUrl,
     appOrigin,
   });
 
   const attachments = { chartPng, gif, docx };
+  // Sender-copy-back: a signed-in team member automatically gets a BCC copy
+  // of what they just sent — an automatic record with no manual CC needed.
+  // Looked up server-side from their auth session, never client-supplied.
+  // Anonymous/public sends have no signed-in sender, so this naturally no-ops.
+  const senderId = extractSenderId(req);
+  let senderEmail: string | null = null;
+  if (senderId && supabaseUrl && serviceKey) {
+    senderEmail = await lookupUserEmail(supabaseUrl, serviceKey, senderId);
+  }
   // Never BCC an address that's already the primary recipient (e.g. a test
-  // send straight to marketing) — that would double-deliver.
-  const bcc = BCC_RECIPIENTS.filter(a => a.toLowerCase() !== to.toLowerCase());
+  // send straight to marketing, or someone emailing their own recap) — that
+  // would double-deliver.
+  const bcc = [...BCC_RECIPIENTS, ...(senderEmail ? [senderEmail] : [])].filter(
+    (a, i, arr) => a.toLowerCase() !== to.toLowerCase() && arr.indexOf(a) === i,
+  );
   try {
     if (graph) await sendViaGraph(graph, to, subject, html, attachments, bcc);
     else await sendViaResend(resendKey!, to, subject, html, attachments, bcc);
@@ -355,14 +505,6 @@ Deno.serve(async (req: Request) => {
       const chart = await fingerprint(chartPng);
       const gifMeta = await fingerprint(gif);
       const docxMeta = await fingerprint(docx);
-      // sent_by from the caller's JWT payload (already verified by the platform).
-      let sentBy: string | null = null;
-      const auth = req.headers.get("authorization") ?? "";
-      const token = auth.replace(/^Bearer\s+/i, "");
-      const parts = token.split(".");
-      if (parts.length === 3) {
-        try { sentBy = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))).sub ?? null; } catch { /* best effort */ }
-      }
       const logResp = await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
         method: "POST",
         headers: {
@@ -378,7 +520,7 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify({
           proforma_id: UUID_RE.test(recap.proformaId ?? "") ? recap.proformaId : null,
           sent_to: to,
-          sent_by: sentBy,
+          sent_by: senderId,
           payload: { ...recap, chartPng: undefined, gif: undefined, docx: undefined, chart, gifMeta, docxMeta },
         }),
       });
@@ -386,6 +528,17 @@ Deno.serve(async (req: Request) => {
     }
   } catch (e) {
     console.error("recap_emails log failed (non-fatal)", e);
+  }
+
+  // HTL5 referral-sourcing: only for a signed-in team member sending to a
+  // real NMLS. Best-effort — a bookkeeping hiccup must never surface to the
+  // recipient or block the send that already succeeded above.
+  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+    try {
+      await recordSourcing(supabaseUrl, serviceKey, recap.nmls.trim(), senderId);
+    } catch (e) {
+      console.error("lo_sourcing recording failed (non-fatal)", e);
+    }
   }
 
   return json(200, { ok: true });
