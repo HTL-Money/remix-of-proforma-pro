@@ -5,8 +5,10 @@
 -- itself (supabase/functions/higgsfield-proxy) is deleted from the repo and
 -- undeployed separately.
 drop table if exists public.recap_videos;
-delete from storage.objects where bucket_id = 'recap-videos';
-delete from storage.buckets where id = 'recap-videos';
+-- NOTE: the empty 'recap-videos' storage bucket is NOT dropped here — Supabase
+-- forbids direct SQL deletion from storage tables (storage.protect_delete(),
+-- verified live 2026-07-24). It never held a real object (no generation ever
+-- ran) and is removed via the Storage API/dashboard instead; harmless if left.
 
 -- Gamma-generated presentation tracking, mirroring recap_videos' posture:
 -- service-role-only RLS, zero client policies. Keyed by the same recap-hash

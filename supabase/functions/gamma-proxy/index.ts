@@ -72,7 +72,8 @@ const buildInputText = (recap: RecapForPrompt): string => {
     gainLine,
     `Production: ${recap.files ?? 0} files, ${usd(recap.volume ?? 0)} in annual volume — same production, different split.`,
     `Close with a low-pressure invitation to a short, no-commitment call — never claim these figures are guaranteed; they are illustrative.`,
-    `Brand colors: deep navy (#13294B), muted sage green (#4F8F77). Clean, restrained, trustworthy — not flashy.`,
+    // Brand/palette guidance intentionally lives in brandInstructions() below,
+    // passed as Gamma's additionalInstructions, so it isn't duplicated here.
   ].join(" ");
 };
 
@@ -121,11 +122,48 @@ const upsertRow = async (
   }
 };
 
+// Workspace-level Gamma branding (workspace name, uploaded logo, saved custom
+// themes) is configured in Gamma's own UI and is NOT reachable from the public
+// generate API — so it cannot be set from here. What IS controllable per
+// generation is the theme to render with and the brand guidance in the prompt.
+//
+// Both are env-driven so the Gamma side can be set up (or changed) without a
+// redeploy of this function:
+//   GAMMA_THEME_NAME — name of a custom theme saved in the Hometown Lending
+//     Gamma workspace. Unset => Gamma picks its default theme.
+//   GAMMA_LOGO_URL  — PUBLIC, absolute URL to the HTL logo. Unset => no logo
+//     is referenced. Deliberately not defaulted to the in-repo asset pointer
+//     (src/assets/htl-logo.png.asset.json), which is a relative Lovable-CDN
+//     path that Gamma's servers cannot resolve.
+const brandInstructions = (logoUrl?: string): string =>
+  [
+    `This deck is from Hometown Lending, a mortgage lender. Refer to the company as "Hometown Lending" — never abbreviate it, and never invent a tagline, address, or NMLS ID for it.`,
+    `Brand palette: deep navy #13294B for headings and emphasis, muted sage green #4F8F77 as the single accent. Keep backgrounds light and uncluttered; no gradients, no stock-photo collages, no emoji.`,
+    `Typography and layout should read institutional and understated — a lender's numbers, not a startup pitch.`,
+    logoUrl ? `Place the Hometown Lending logo (${logoUrl}) on the title card only, small and top-aligned.` : "",
+    `Every figure shown is illustrative, based on the recipient's own stated production. Never present it as a guaranteed offer.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
 const submitGammaGeneration = async (apiKey: string, inputText: string): Promise<string> => {
+  const themeName = Deno.env.get("GAMMA_THEME_NAME")?.trim() || undefined;
+  const logoUrl = Deno.env.get("GAMMA_LOGO_URL")?.trim() || undefined;
+  const payload: Record<string, unknown> = {
+    inputText,
+    textMode: "generate",
+    format: "presentation",
+    numCards: 6,
+    additionalInstructions: brandInstructions(logoUrl),
+  };
+  // Only send themeName when configured — an empty/unknown theme name is a
+  // request error, and we'd rather render on Gamma's default than fail.
+  if (themeName) payload.themeName = themeName;
+
   const r = await fetch(`${GAMMA_BASE}/generations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
-    body: JSON.stringify({ inputText, textMode: "generate", format: "presentation", numCards: 6 }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const body = (await r.json().catch(() => null)) as
