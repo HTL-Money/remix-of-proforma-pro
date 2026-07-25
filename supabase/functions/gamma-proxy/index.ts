@@ -135,10 +135,14 @@ const upsertRow = async (
 //     is referenced. Deliberately not defaulted to the in-repo asset pointer
 //     (src/assets/htl-logo.png.asset.json), which is a relative Lovable-CDN
 //     path that Gamma's servers cannot resolve.
+// Palette note: navy #13294B and silver #BEBFC3 are both measured directly out
+// of the supplied logo artwork. The sage green that used to be the accent here
+// came from the app's --success UI token (src/index.css) and appears nowhere in
+// the brand marks, so it is deliberately not used for recipient-facing decks.
 const brandInstructions = (logoUrl?: string): string =>
   [
-    `This deck is from Hometown Lending, a mortgage lender. Refer to the company as "Hometown Lending" — never abbreviate it, and never invent a tagline, address, or NMLS ID for it.`,
-    `Brand palette: deep navy #13294B for headings and emphasis, muted sage green #4F8F77 as the single accent. Keep backgrounds light and uncluttered; no gradients, no stock-photo collages, no emoji.`,
+    `This deck is from Hometown Lending, a mortgage lender. Spell the company name "Hometown Lending"; the short form "HTL" is acceptable where space is tight (a narrow header, a footer, a chart label). Never invent a tagline, address, or NMLS ID for it.`,
+    `Brand palette: deep navy #13294B for headings and emphasis, silver-gray #BEBFC3 as the single supporting accent. Keep backgrounds light and uncluttered; no gradients, no stock-photo collages, no emoji.`,
     `Typography and layout should read institutional and understated — a lender's numbers, not a startup pitch.`,
     logoUrl ? `Place the Hometown Lending logo (${logoUrl}) on the title card only, small and top-aligned.` : "",
     `Every figure shown is illustrative, based on the recipient's own stated production. Never present it as a guaranteed offer.`,
