@@ -159,6 +159,10 @@ const submitGammaGeneration = async (apiKey: string, inputText: string): Promise
     format: "presentation",
     numCards: 6,
     additionalInstructions: brandInstructions(logoUrl),
+    // The recruit gets the deck as an email ATTACHMENT, not a link, so we ask
+    // Gamma to export a PDF alongside the hosted version. PDF because it opens
+    // on any phone with no software installed.
+    exportAs: "pdf",
   };
   // Only send themeName when configured — an empty/unknown theme name is a
   // request error, and we'd rather render on Gamma's default than fail.
@@ -183,20 +187,20 @@ const submitGammaGeneration = async (apiKey: string, inputText: string): Promise
 const checkGammaStatus = async (
   apiKey: string,
   generationId: string,
-): Promise<{ done: boolean; failed: boolean; url?: string }> => {
+): Promise<{ done: boolean; failed: boolean; url?: string; exportUrl?: string }> => {
   const r = await fetch(`${GAMMA_BASE}/generations/${encodeURIComponent(generationId)}`, {
     headers: { "X-API-KEY": apiKey },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const body = (await r.json().catch(() => null)) as
-    | { status?: string; state?: string; gammaUrl?: string; url?: string; previewUrl?: string }
+    | { status?: string; state?: string; gammaUrl?: string; url?: string; previewUrl?: string; exportUrl?: string }
     | null;
   const status = (body?.status ?? body?.state ?? "").toLowerCase();
   if (status === "failed" || status === "error") return { done: false, failed: true };
   if (status === "completed" || status === "success" || status === "done") {
     const url = body?.gammaUrl ?? body?.url ?? body?.previewUrl;
     if (!url) return { done: false, failed: true }; // completed with no URL = treat as failed
-    return { done: true, failed: false, url };
+    return { done: true, failed: false, url, exportUrl: body?.exportUrl };
   }
   return { done: false, failed: false }; // pending / processing / generating
 };
