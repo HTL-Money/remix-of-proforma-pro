@@ -59,11 +59,19 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
       // rendering hiccup never blocks the email. The presentation (Gamma) is
       // the single deliverable in the email body now — no separate graphic.
       const docx = await buildRecapDocxBase64(payload);
-      await sendRecap(to, payload, chartPng ?? undefined, { docx });
-      // Kick off the Gamma presentation (fire-and-forget — generation takes
-      // time, never blocks this send). The email's presentation link points
-      // at Gamma's own hosted URL once it's ready.
-      void enqueueRecapPresentation(hashRecap(payload), payload);
+      // Start the Gamma deck BEFORE sending: the recruit receives it as an
+      // attachment, so send-recap has to be able to wait for this exact
+      // generation. Awaited (not fire-and-forget) only so the row exists
+      // before the send begins; the generation itself still runs async and
+      // is polled server-side. A failure here is non-fatal — the email then
+      // goes out without the attachment rather than not at all.
+      const presentationHash = hashRecap(payload);
+      try {
+        await enqueueRecapPresentation(presentationHash, payload);
+      } catch (e) {
+        console.warn("Presentation could not be queued; sending without it:", e);
+      }
+      await sendRecap(to, payload, chartPng ?? undefined, { docx, presentationHash });
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       setStep("sent");
     } catch (e) {

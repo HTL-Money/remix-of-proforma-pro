@@ -82,12 +82,13 @@ interface PresentationRow {
   status: "processing" | "completed" | "failed";
   gamma_generation_id: string | null;
   presentation_url: string | null;
+  export_url: string | null;
 }
 
 const getRow = async (url: string, key: string, hash: string): Promise<PresentationRow | null> => {
   try {
     const r = await fetch(
-      `${url}/rest/v1/recap_presentations?recap_hash=eq.${hash}&select=recap_hash,status,gamma_generation_id,presentation_url`,
+      `${url}/rest/v1/recap_presentations?recap_hash=eq.${hash}&select=recap_hash,status,gamma_generation_id,presentation_url,export_url`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
     );
     if (!r.ok) return null;
@@ -103,7 +104,13 @@ const getRow = async (url: string, key: string, hash: string): Promise<Presentat
 const upsertRow = async (
   url: string,
   key: string,
-  row: { recap_hash: string; status: string; gamma_generation_id?: string | null; presentation_url?: string | null },
+  row: {
+    recap_hash: string;
+    status: string;
+    gamma_generation_id?: string | null;
+    presentation_url?: string | null;
+    export_url?: string | null;
+  },
 ): Promise<void> => {
   try {
     await fetch(`${url}/rest/v1/recap_presentations?on_conflict=recap_hash`, {
@@ -236,7 +243,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         return json(200, { status: "failed" });
       }
       if (check.done && check.url) {
-        await upsertRow(supabaseUrl, serviceKey, { recap_hash: hash, status: "completed", presentation_url: check.url });
+        await upsertRow(supabaseUrl, serviceKey, {
+          recap_hash: hash,
+          status: "completed",
+          presentation_url: check.url,
+          // The PDF the recruit actually receives — send-recap fetches this.
+          export_url: check.exportUrl ?? null,
+        });
         return json(200, { status: "completed", url: check.url });
       }
       return json(200, { status: "processing" });

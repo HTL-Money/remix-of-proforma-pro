@@ -56,6 +56,20 @@ const MAX_GIF_B64_CHARS = 2_800_000;
 const DOCX_B64_PREFIX = "UEsDB";
 const MAX_DOCX_B64_CHARS = 1_400_000;
 
+// The Gamma presentation, fetched SERVER-SIDE (never client-supplied) and
+// attached as the deliverable the recruit actually opens. A real export measured
+// 742 KB; 3 MB is generous headroom while still refusing anything absurd.
+const PDF_MAGIC = "%PDF-";
+const MAX_PDF_BYTES = 3_000_000;
+const DOCUMENTED_PROFORMA_FILENAME = "Documented-Pro-Forma.pdf";
+// Total budget for waiting on Gamma. The deck typically completes in ~35-45s.
+// Capped well under the Edge Function wall clock so the send itself still has
+// room to run; on expiry the email goes out WITHOUT the attachment rather than
+// not going out at all.
+const PDF_WAIT_MS = 75_000;
+const PDF_POLL_INTERVAL_MS = 5_000;
+const PRESENTATION_HASH_RE = /^[0-9a-f]{16}$/;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // HTL5 referral-sourcing attribution — backend bookkeeping ONLY. Never read
@@ -145,6 +159,8 @@ interface RecapAttachments {
   chartPng?: string;
   gif?: string;
   docx?: string;
+  /** Base64 Gamma PDF — the "Documented Pro Forma" the recruit receives. */
+  pdf?: string;
 }
 
 const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, att: RecapAttachments, bcc: string[]): Promise<void> => {
@@ -184,6 +200,15 @@ const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html:
       name: "proforma-recap.docx",
       contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       contentBytes: att.docx,
+    });
+  }
+  if (att.pdf) {
+    // The deliverable: the recruit opens this, not a link.
+    attachments.push({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: DOCUMENTED_PROFORMA_FILENAME,
+      contentType: "application/pdf",
+      contentBytes: att.pdf,
     });
   }
   if (attachments.length > 0) message.attachments = attachments;
@@ -231,6 +256,9 @@ const sendViaResend = async (apiKey: string, to: string, subject: string, html: 
       content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
   }
+  if (att.pdf) {
+    attachments.push({ content: att.pdf, filename: DOCUMENTED_PROFORMA_FILENAME, content_type: "application/pdf" });
+  }
   if (attachments.length > 0) emailBody.attachments = attachments;
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -238,6 +266,98 @@ const sendViaResend = async (apiKey: string, to: string, subject: string, html: 
     body: JSON.stringify(emailBody),
   });
   if (!resp.ok) throw new ProviderError("Resend", resp.status, await resp.text().catch(() => ""));
+};
+
+
+/** Chunked base64 — String.fromCharCode(...bytes) blows the call stack on a
+ *  700 KB+ buffer, so encode in slices. */
+const toBase64 = (bytes: Uint8Array): string => {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+};
+
+/**
+ * Resolves the recruit's Gamma presentation into an attachable base64 PDF.
+ *
+ * Why this polls gamma-proxy instead of reading the table directly: there is no
+ * background worker anywhere in this system. A recap_presentations row only
+ * advances from "processing" to "completed" when gamma-proxy's `status` action
+ * runs, so waiting on the table alone would wait forever. gamma-proxy stays the
+ * single owner of all Gamma logic; this just drives it and then reads the
+ * export URL it stored.
+ *
+ * Returns null on ANY problem (not ready in time, generation failed, export
+ * missing, download failed, not really a PDF, too large). Callers must treat
+ * null as "send the email without the attachment" — a recap email going out
+ * plain is always better than no email at all.
+ */
+const fetchDocumentedProforma = async (
+  supabaseUrl: string,
+  serviceKey: string,
+  hash: string,
+): Promise<string | null> => {
+  const deadline = Date.now() + PDF_WAIT_MS;
+  let exportUrl: string | null = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(`${supabaseUrl}/functions/v1/gamma-proxy`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "status", hash }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const body = (await r.json().catch(() => null)) as { status?: string } | null;
+      const status = body?.status ?? "";
+      if (status === "failed" || status === "unknown") {
+        console.error("documented proforma unavailable: generation", status);
+        return null;
+      }
+      if (status === "completed") {
+        const rows = await fetch(
+          `${supabaseUrl}/rest/v1/recap_presentations?recap_hash=eq.${hash}&select=export_url`,
+          { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(15_000) },
+        ).then(res => (res.ok ? res.json() : null)).catch(() => null);
+        exportUrl = Array.isArray(rows) && rows[0]?.export_url ? String(rows[0].export_url) : null;
+        break;
+      }
+    } catch (e) {
+      console.error("documented proforma poll failed (will retry until deadline)", e);
+    }
+    await new Promise(res => setTimeout(res, PDF_POLL_INTERVAL_MS));
+  }
+
+  if (!exportUrl) {
+    console.error("documented proforma not ready within budget; sending without attachment");
+    return null;
+  }
+
+  try {
+    const r = await fetch(exportUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!r.ok) {
+      console.error("documented proforma download failed:", r.status);
+      return null;
+    }
+    const buf = new Uint8Array(await r.arrayBuffer());
+    // Trust nothing from an external host: verify it really is a PDF and that
+    // it fits, rather than attaching whatever bytes came back.
+    if (buf.length === 0 || buf.length > MAX_PDF_BYTES) {
+      console.error("documented proforma rejected on size:", buf.length);
+      return null;
+    }
+    if (new TextDecoder().decode(buf.subarray(0, PDF_MAGIC.length)) !== PDF_MAGIC) {
+      console.error("documented proforma rejected: not a PDF");
+      return null;
+    }
+    return toBase64(buf);
+  } catch (e) {
+    console.error("documented proforma download threw", e);
+    return null;
+  }
 };
 
 /** Best-effort: extracts the caller's user ID from their bearer JWT's `sub`
@@ -383,6 +503,11 @@ Deno.serve(async (req: Request) => {
   let chartPng: string | undefined;
   let gif: string | undefined;
   let docx: string | undefined;
+  // Identifies which recap_presentations row holds this recruit's deck. Just an
+  // opaque content hash (same hashRecap the client already uses for dedupe), so
+  // it is validated by shape only and interpolated into a PostgREST filter --
+  // hence the strict 16-hex check rather than trusting the string.
+  let presentationHash: string | undefined;
   try {
     const body = await req.json();
     to = String(body.to ?? "").trim();
@@ -436,6 +561,11 @@ Deno.serve(async (req: Request) => {
       if (!validB64(body.docx, MAX_DOCX_B64_CHARS, DOCX_B64_PREFIX)) return json(400, { error: "Invalid report attachment data." });
       docx = body.docx;
     }
+    if (body.presentationHash != null) {
+      const h = String(body.presentationHash);
+      if (!PRESENTATION_HASH_RE.test(h)) return json(400, { error: "Invalid presentation reference." });
+      presentationHash = h;
+    }
   } catch {
     return json(400, { error: "Invalid JSON body." });
   }
@@ -450,16 +580,26 @@ Deno.serve(async (req: Request) => {
   // BOOKING_URL secret (Microsoft Bookings page) turns on the "Book a
   // recruiting call" button in the email; unset = button omitted.
   const bookingUrl = Deno.env.get("BOOKING_URL") || undefined;
-  // APP_ORIGIN (e.g. https://app.hometownlend.com or the Vercel preview URL)
-  // turns on the "Your Personalized Presentation" hero linking to /r.
   const appOrigin = Deno.env.get("APP_ORIGIN") || undefined;
+
+  // The Gamma deck rides along as a PDF attachment. Resolved BEFORE rendering
+  // so the closing "Documented Pro Forma" block is only written into the HTML
+  // when a file is genuinely attached — the email must never name an
+  // attachment the recipient can't find. A null here degrades to a plain
+  // recap email; it never blocks the send.
+  let pdf: string | undefined;
+  if (presentationHash && supabaseUrl && serviceKey) {
+    pdf = (await fetchDocumentedProforma(supabaseUrl, serviceKey, presentationHash)) ?? undefined;
+  }
+
   const html = renderRecapHtml(recap, {
     ...(chartPng ? { chartCid: CHART_CID } : {}),
     bookingUrl,
     appOrigin,
+    ...(pdf ? { documentedProformaName: DOCUMENTED_PROFORMA_FILENAME } : {}),
   });
 
-  const attachments = { chartPng, gif, docx };
+  const attachments = { chartPng, gif, docx, pdf };
   // Sender-copy-back: a signed-in team member automatically gets a BCC copy
   // of what they just sent — an automatic record with no manual CC needed.
   // Looked up server-side from their auth session, never client-supplied.

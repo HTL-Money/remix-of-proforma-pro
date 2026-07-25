@@ -47,6 +47,10 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
 export interface RecapExtras {
   gif?: string | null;
   docx?: string | null;
+  /** Content hash of the Gamma presentation for this recap. When set, the
+   *  function waits for that deck's PDF export and attaches it as the
+   *  "Documented Pro Forma" — the recruit opens a file, not a link. */
+  presentationHash?: string | null;
 }
 
 export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: string, extras?: RecapExtras): Promise<void> => {
@@ -60,6 +64,7 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
       ...(chartPng ? { chartPng } : {}),
       ...(extras?.gif ? { gif: extras.gif } : {}),
       ...(extras?.docx ? { docx: extras.docx } : {}),
+      ...(extras?.presentationHash ? { presentationHash: extras.presentationHash } : {}),
     },
   });
   if (error) {

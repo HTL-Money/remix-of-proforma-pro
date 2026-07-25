@@ -192,35 +192,49 @@ describe("renderRecapHtml — signature, CAN-SPAM footer, period-aware labels", 
   });
 });
 
-describe("renderRecapHtml — presentation hero (Part O: replaces the vault-GIF hero)", () => {
+describe("renderRecapHtml — Documented Pro Forma (delivered as an attachment, never a link)", () => {
   const s = goldenState();
   const p = buildRecapPayload("Jordan — 90%", s, calculate(s));
+  const FILE = "Documented-Pro-Forma.pdf";
 
-  it("omits the hero entirely when no appOrigin is set — no dead link", () => {
-    const out = renderRecapHtml(p, {});
-    expect(out).not.toContain("Your Personalized Presentation");
+  it("never emits a /r presentation link, even when appOrigin is set — the deck is attached, not linked", () => {
+    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
+    expect(out).not.toContain("/r?d=");
     expect(out).not.toContain("View Your Presentation");
   });
 
-  it("renders the presentation hero with a /r link pointing at the given origin when appOrigin is set", () => {
+  it("omits the Documented Pro Forma block when no PDF is attached — the email must not name a file that isn't there", () => {
     const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
-    expect(out).toContain("Your Personalized Presentation");
-    expect(out).toContain("View Your Presentation");
-    expect(out).toMatch(/href="https:\/\/app\.example\.com\/r\?d=[^"]+"/);
+    expect(out).not.toContain("Documented Pro Forma");
+    expect(out).not.toContain(FILE);
   });
 
-  it("strips a trailing slash on the origin, matching src/lib/recapLink.ts's buildRecapPageUrl", () => {
-    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com/" });
-    expect(out).toContain('href="https://app.example.com/r?d=');
-    expect(out).not.toContain("app.example.com//r");
+  it("names the attached file in a closing block when a PDF rode along", () => {
+    const out = renderRecapHtml(p, { documentedProformaName: FILE });
+    expect(out).toContain("Documented Pro Forma");
+    expect(out).toContain(FILE);
   });
 
-  it("cross-implementation: the token this Deno-side template builds decodes correctly with the client's recapLink.ts decodeRecap", () => {
-    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
-    const token = /\/r\?d=([^"]+)"/.exec(out)?.[1] ?? "";
-    expect(token.length).toBeGreaterThan(0);
-    const decoded = decodeRecap(token);
-    expect(decoded).toEqual(p);
+  it("places the Documented Pro Forma block at the end of the body — after the numbers, before the footer", () => {
+    const out = renderRecapHtml(p, { documentedProformaName: FILE, bookingUrl: "https://book.example.com" });
+    const economics = out.indexOf("LO Economics");
+    const block = out.indexOf("Documented Pro Forma");
+    const footer = out.indexOf("All figures are illustrative");
+    expect(economics).toBeGreaterThan(-1);
+    expect(block).toBeGreaterThan(economics);
+    expect(block).toBeLessThan(footer);
+  });
+
+  it("escapes the filename rather than trusting it as markup", () => {
+    const out = renderRecapHtml(p, { documentedProformaName: '<script>x</script>.pdf' });
+    expect(out).not.toContain("<script>x</script>");
+    expect(out).toContain("&lt;script&gt;");
+  });
+
+  it("still renders the framing headline, which no longer depends on appOrigin", () => {
+    const out = renderRecapHtml(p, {});
+    expect(out).toContain("Your Personalized Pro Forma");
+    expect(out).toContain("leaving money on the table");
   });
 });
 

@@ -139,14 +139,17 @@ export interface RenderOptions {
    */
   bookingUrl?: string;
   /**
-   * When set (the app's public origin, e.g. https://app.hometownlend.com), a
-   * "Your Personalized Presentation" hero card renders at the very top of
-   * the email — the single deliverable in the email body — linking to the
-   * hosted /r page, which shows the Gamma-generated presentation once ready
-   * (or a "still preparing" state). Unset = the whole hero is omitted; no
-   * dead/placeholder link in real emails.
+   * The app's public origin (e.g. https://app.hometownlend.com). Retained for
+   * absolute URLs elsewhere in the email; it no longer renders a presentation
+   * link — the deck ships as an attachment instead.
    */
   appOrigin?: string;
+  /**
+   * Filename of the attached Gamma PDF (e.g. "Documented-Pro-Forma.pdf"). When
+   * set, the closing "Documented Pro Forma" block renders and names this file.
+   * Unset = block omitted, so the email never claims an attachment it lacks.
+   */
+  documentedProformaName?: string;
 }
 
 const detailRow = (label: string, value: string) => `
@@ -226,23 +229,31 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
           </table>
         </td></tr>`;
 
-  // Presentation hero — the single deliverable in the email body. Always
-  // rendered (when appOrigin is set) regardless of whether Gamma has
-  // finished — the /r page itself carries the "still preparing" state, same
-  // "send now, page auto-fills" pattern used throughout this app.
-  const presentationHero = opts.appOrigin
-    ? `
+  // Presentation intro. The deck is DELIVERED AS AN ATTACHMENT, never as a
+  // link — a recruit should not have to click through to a hosted page to see
+  // it. So this is a plain framing headline with no button; the file itself is
+  // announced by documentedProforma at the end of the body.
+  const presentationHero = `
     <tr><td style="background:${NAVY};padding:32px 24px;text-align:center;">
-      <div style="color:${MINT};font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Your Personalized Presentation</div>
+      <div style="color:${MINT};font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Your Personalized Pro Forma</div>
       <div style="color:#ffffff;font-size:17px;font-weight:700;margin-top:10px;line-height:1.4;">
         You already know you're leaving money on the table.<br />Here's exactly how much.
       </div>
-      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px auto 0 auto;">
-        <tr><td align="center" style="background:${GREEN};border-radius:8px;">
-          <a href="${esc(`${opts.appOrigin.replace(/\/$/, "")}/r?d=${encodeRecapToken(r)}`)}" target="_blank"
-             style="display:inline-block;padding:13px 30px;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
-            View Your Presentation →
-          </a>
+    </td></tr>`;
+
+  // Closing block: names the attached PDF so the recruit knows the file in
+  // their client IS the deliverable. Rendered only when a PDF actually rode
+  // along, so the email can never promise an attachment that isn't there.
+  const documentedProforma = opts.documentedProformaName
+    ? `
+    <tr><td style="padding:24px 24px 4px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${GREEN};border-radius:8px;">
+        <tr><td style="padding:18px 20px;">
+          <div style="color:${NAVY};font-size:15px;font-weight:800;">Documented Pro Forma</div>
+          <div style="color:${GRAY_MID};font-size:13px;margin-top:6px;line-height:1.6;">
+            Attached to this email as <strong style="color:${NAVY};">${esc(opts.documentedProformaName)}</strong> — the full
+            breakdown of the numbers above, yours to keep and review on your own time.
+          </div>
         </td></tr>
       </table>
     </td></tr>`
@@ -360,6 +371,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             </tr>
           </table>
         </td></tr>
+
+        ${documentedProforma}
 
         ${bookingCta}
 

@@ -68,9 +68,15 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
       // the Word report: null = email without it.
       const chartPng = renderRecapChartPng(pendingRecap.payload);
       const docx = await buildRecapDocxBase64(pendingRecap.payload);
-      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined, { docx });
-      // Fire-and-forget Gamma presentation generation, same as the public flow.
-      void enqueueRecapPresentation(hashRecap(pendingRecap.payload), pendingRecap.payload);
+      // Queue the deck before sending so it can be attached — same ordering
+      // and same non-fatal posture as the public flow.
+      const presentationHash = hashRecap(pendingRecap.payload);
+      try {
+        await enqueueRecapPresentation(presentationHash, pendingRecap.payload);
+      } catch (e) {
+        console.warn("Presentation could not be queued; sending without it:", e);
+      }
+      await sendRecap(to, pendingRecap.payload, chartPng ?? undefined, { docx, presentationHash });
       // Light pipeline automation: a sent recap advances the matching target
       // LO to "Pro Forma Sent" (forward only; never throws).
       autoAdvanceOnRecap(pendingRecap.payload.nmls);
