@@ -1,8 +1,11 @@
-// Unit tests for the pure RETR text-parsing logic.
+// Unit tests for the pure RETR text-parsing logic. The PDF-upload UI that
+// used to call this (src/lib/retrParser.ts, src/components/RetrImport.tsx)
+// was removed once the live RETR API superseded it (Part J) — this pure
+// regex/reconciliation function is kept, tested, and unused in production
+// UI, in case a PDF-import path is ever wanted again.
 //
-// IMPORTANT: import ONLY from "@/lib/retrText" (or a relative path to it).
-// NEVER import "@/lib/retrParser" here — it pulls in a Vite `?worker` import
-// for pdfjs that cannot load under vitest/jsdom and will crash the suite.
+// IMPORTANT: import ONLY from "@/lib/retrText" (or a relative path to it) —
+// never a pdfjs-backed module — so this suite stays runnable under jsdom.
 
 import { describe, it, expect } from "vitest";
 import { parseRetrText } from "../lib/retrText";

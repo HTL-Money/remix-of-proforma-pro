@@ -5,6 +5,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Calculator, LayoutDashboard, ListChecks, LogIn, LogOut, Mail, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -64,8 +65,9 @@ const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
         })}
       </nav>
       {authRequired && user && (
-        <div className="px-3 pb-5 pt-3 border-t border-white/10 space-y-2">
-          <p className="px-3 text-xs text-white/60 truncate" title={user.email ?? undefined}>{user.email}</p>
+        <div className="px-3 pb-5 pt-3 border-t border-white/10 space-y-1">
+          <p className="px-3 pb-1 text-xs text-white/60 truncate" title={user.email ?? undefined}>{user.email}</p>
+          <ChangePasswordDialog />
           <Button
             variant="ghost"
             size="sm"

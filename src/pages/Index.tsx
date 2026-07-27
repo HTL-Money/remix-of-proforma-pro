@@ -23,29 +23,25 @@ import { toast } from "@/hooks/use-toast";
 import {
   ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
-  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource, MIX_PRESETS,
+  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import { Chips } from "@/components/Chips";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 import { CurrencyInput } from "@/components/CurrencyInput";
-import { RetrImport } from "@/components/RetrImport";
 import { CloudSave } from "@/components/CloudSave";
 import { PublicRecapCta } from "@/components/PublicRecapCta";
 import { NmlsGate } from "@/components/NmlsGate";
-import { RetrParseResult } from "@/lib/retrParser";
+import { RetrParseResult } from "@/lib/retrText";
 import {
-  StoredRetrReport, lookupRetrReport, saveRetrReport, normalizeNmls, isCloudConfigured,
+  StoredRetrReport, lookupRetrReport, normalizeNmls, isCloudConfigured,
 } from "@/lib/retrReportStore";
+import { RetrDateRange, RETR_DEFAULT_RANGE, RETR_RANGE_OPTIONS, periodLabel, periodLabelTitle } from "@/lib/retrApi";
 import { useAuth } from "@/lib/auth";
 
 const STORAGE_KEY = "htl_lo_proforma_v7"; // v7: zeroed-out defaults (drop pre-filled v6 drafts)
 const GATE_KEY = "htl_nmls_gate_v1";
 
-// One-tap quick picks — recruiting targets are $10M+ producers.
-const VOLUME_CHIPS = [12, 18, 24, 36, 48, 75].map(m => ({ label: `$${m}M`, value: m * 1_000_000 }));
-const BPS_CHIPS = [100, 125, 150, 200, 250, 275].map(b => ({ label: String(b), value: b }));
-const MIX_KEYS = ["fha", "va", "conv", "nonqm"] as const;
 // Stop scroll-wheel / trackpad from silently changing focused number inputs.
 const blurOnWheel = (e: React.WheelEvent<HTMLInputElement>) => e.currentTarget.blur();
 
@@ -68,6 +64,7 @@ const applyRetrResult = (s: ModelState, r: RetrParseResult): ModelState => {
       conv: pct(r.byLoanType.conv),
       nonqm: pct(r.byLoanType.nonqm),
     },
+    productionPeriodMonths: r.periodMonths ?? 12,
   };
 };
 
@@ -292,6 +289,14 @@ const Index = () => {
   const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY) && !deepLinkNmls);
   const [retrPdfUrl, setRetrPdfUrl] = useState<string | null>(null);
   const [pullingRetr, setPullingRetr] = useState(false);
+  // Live-pull window. Defaults to 12 months (a true annual view); shorter
+  // windows show their own actual totals, never annualized (see retrApi.ts).
+  const [retrRange, setRetrRange] = useState<RetrDateRange>(RETR_DEFAULT_RANGE);
+  // Temporary "+10%" opportunity preview — never mutates real state, never
+  // reaches a sent recap/animation/docx (those always use calcReal below).
+  const [previewGrowth, setPreviewGrowth] = useState(false);
+  // Brief highlight flash on the production fields right after a live pull.
+  const [pullFlourish, setPullFlourish] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -305,19 +310,23 @@ const Index = () => {
     sessionStorage.setItem(GATE_KEY, "1");
     setGated(false);
     (async () => {
-      if (isCloudConfigured() && isTeamMember) {
+      if (isCloudConfigured()) {
+        // Everyone gets the live RETR API; the shared report store fallback is
+        // team-only (its RLS is authenticated-only and would just fail).
         try {
-          const report = await lookupRetrReport(deepLinkNmls);
+          const report = await lookupRetrReport(deepLinkNmls, { sharedStore: isTeamMember });
           if (report) applyStoredReport(deepLinkNmls, report);
-          else { setState({ ...defaultState(), nmls: deepLinkNmls }); toast({ title: "No RETR report on file", description: `Nothing stored yet for NMLS ${deepLinkNmls}. Drop the PDF to import and share it.` }); }
+          else {
+            setState({ ...defaultState(), nmls: deepLinkNmls });
+            toast(isTeamMember
+              ? { title: "No RETR report on file", description: `No production on file yet for NMLS ${deepLinkNmls}.` }
+              : { title: "No RETR data found", description: `No live RETR data for NMLS ${deepLinkNmls} yet.` });
+          }
         } catch (e) {
           setState({ ...defaultState(), nmls: deepLinkNmls });
           toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
         }
       } else {
-        if (isCloudConfigured() && !isTeamMember) {
-          toast({ title: "Sign in to pull RETR data", description: "Stored RETR reports are shared with your team once you're signed in." });
-        }
         setState({ ...defaultState(), nmls: deepLinkNmls });
       }
       setSearchParams({}, { replace: true });
@@ -334,22 +343,31 @@ const Index = () => {
     }
   }, [state.annualVolume, state.annualFiles, state.avgLoanOverride]); // eslint-disable-line
 
-  const calc = useMemo(() => calculate(state), [state]);
-  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(state), [state]);
-  const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
-  const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
-
-  // Volume edits keep the average loan steady and rescale the file count,
-  // so one number (volume) is usually all a user has to touch.
-  const setVolume = (v: number) => setState(s => {
+  // Volume math shared by the (removed) manual entry path and the +10%
+  // preview below: keeps the average loan steady and rescales the file count.
+  const scaleVolume = (s: ModelState, v: number): ModelState => {
     const avg = s.avgLoanAmount > 0 ? s.avgLoanAmount : 400_000;
     const files = v > 0 ? Math.max(1, Math.round(v / avg)) : 0;
     return { ...s, annualVolume: v, annualFiles: files };
-  });
+  };
 
-  const activeMixPreset = MIX_PRESETS.find(p =>
-    MIX_KEYS.every(k => Math.abs(p.mix[k] - state.loanTypeMix[k]) < 0.51)
-  )?.key ?? null;
+  // The +10% toggle is a TEMPORARY, view-only overlay — it recomputes the
+  // on-screen comparison at 110% of the real pulled volume without ever
+  // touching `state`. Turning it off instantly reverts everything below,
+  // since effectiveState falls straight back to the real state.
+  const effectiveState = useMemo(
+    () => (previewGrowth && state.annualVolume > 0 ? scaleVolume(state, state.annualVolume * 1.1) : state),
+    [state, previewGrowth],
+  );
+  const calc = useMemo(() => calculate(effectiveState), [effectiveState]); // on-screen comparison only
+  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(effectiveState), [effectiveState]);
+  // The real numbers — ALWAYS used for anything that leaves the page (recap
+  // email, Word report, vault animation). The +10% preview must never leak
+  // into a saved/sent artifact.
+  const calcReal = useMemo(() => calculate(state), [state]);
+  const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
+  const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
+
   const setCorrEnabled = (on: boolean) => setState(s => ({
     ...s,
     buckets: s.buckets.map(b => b.channel === "Correspondent" ? { ...b, active: on } : b),
@@ -395,9 +413,14 @@ const Index = () => {
   const applyStoredReport = (nmls: string, report: StoredRetrReport) => {
     setState(applyRetrResult({ ...defaultState(), nmls }, report.parsed));
     setRetrPdfUrl(report.pdfUrl);
+    // Brief highlight flash on the now-populated production fields — the
+    // "catches their eye" flourish requested alongside the 12-month default.
+    setPullFlourish(true);
+    setTimeout(() => setPullFlourish(false), 1400);
+    const period = periodLabel(report.parsed.periodMonths ?? 12);
     toast({
       title: "RETR data pulled",
-      description: `${report.loName ?? "Loan Officer"} (NMLS ${nmls}) — ${report.parsed.annualFiles} files, ${fmtUSD(report.parsed.annualVolume, { compact: true })}`,
+      description: `${report.loName ?? "Loan Officer"} (NMLS ${nmls}) — ${period}: ${report.parsed.annualFiles} files, ${fmtUSD(report.parsed.annualVolume, { compact: true })}`,
     });
   };
 
@@ -415,7 +438,9 @@ const Index = () => {
       setState({ ...defaultState(), nmls });
       // When unconfigured, the gate already toasted "Working locally" — don't replace it (TOAST_LIMIT is 1).
       if (isCloudConfigured()) {
-        toast({ title: "No RETR report on file", description: `Drop the RETR PDF for NMLS ${nmls} in the Production section to import and share it.` });
+        toast(isTeamMember
+          ? { title: "No RETR report on file", description: `No production on file yet for NMLS ${nmls}.` }
+          : { title: "No RETR data found", description: `No live RETR data for NMLS ${nmls} yet.` });
       }
     }
   };
@@ -435,17 +460,15 @@ const Index = () => {
       toast({ title: "Supabase not configured", description: "Add credentials to .env to pull shared RETR data." });
       return;
     }
-    if (!isTeamMember) {
-      // The lookup would otherwise reach the database and fail on RLS —
-      // tell a public visitor why up front instead of showing an error.
-      toast({ title: "Sign in to pull RETR data", description: "Stored RETR reports are shared with your team once you're signed in." });
-      return;
-    }
     setPullingRetr(true);
     try {
-      const report = await lookupRetrReport(nmls);
+      // Live RETR API for everyone; team members also fall back to the
+      // shared report store (its RLS is authenticated-only).
+      const report = await lookupRetrReport(nmls, { sharedStore: isTeamMember, dateRange: retrRange });
       if (report) applyStoredReport(nmls, report);
-      else toast({ title: "No RETR report on file", description: `Nothing stored yet for NMLS ${nmls}. Drop the PDF below to import and share it.` });
+      else toast(isTeamMember
+        ? { title: "No RETR report on file", description: `Nothing stored yet for NMLS ${nmls}.` }
+        : { title: "No RETR data found", description: `No live RETR data for NMLS ${nmls} yet — try again once a report is on file.` });
     } catch (e) {
       toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
@@ -500,7 +523,7 @@ const Index = () => {
                 />
               )}
               {isCloudConfigured() && !isTeamMember && (
-                <PublicRecapCta state={state} calc={calc} />
+                <PublicRecapCta state={state} calc={calcReal} />
               )}
               {authRequired && user && (
                 <Button
@@ -576,49 +599,52 @@ const Index = () => {
 
         {/* Production */}
         <Section icon={<Calculator className="h-5 w-5" />} title="Production" compact>
-          <div className="mb-4 space-y-1">
-            <RetrImport
-              hint={normalizeNmls(state.nmls) && !retrPdfUrl ? `to import & share for NMLS ${normalizeNmls(state.nmls)}` : undefined}
-              onImport={(r, file) => {
-                const enteredNmls = normalizeNmls(state.nmls);
-                if (r.nmls && enteredNmls && r.nmls !== enteredNmls) {
-                  toast({ title: "NMLS mismatch", description: `This PDF is for NMLS ${r.nmls}, not ${enteredNmls}. Using ${r.nmls}.`, variant: "destructive" });
-                }
-                setState(s => applyRetrResult(s, r));
-                toast({ title: "RETR imported", description: `${r.recruitName ?? "Loan Officer"} — ${r.annualFiles} files, ${fmtUSD(r.annualVolume, { compact: true })}` });
-                const shareNmls = r.nmls ?? enteredNmls;
-                // Parsing and applying the PDF is a local action, fine for
-                // anyone. Sharing it to the team's database is a team action —
-                // skip it quietly for a public visitor rather than error.
-                if (shareNmls && isCloudConfigured() && isTeamMember) {
-                  saveRetrReport(shareNmls, r, file)
-                    .then(url => {
-                      setRetrPdfUrl(url);
-                      toast({ title: "Report shared", description: `RETR report for NMLS ${shareNmls} is now on file for the whole team.` });
-                    })
-                    .catch(e => toast({ title: "Couldn't share report", description: e instanceof Error ? e.message : String(e), variant: "destructive" }));
-                }
-              }}
+          {/* Name leads the section — larger, first thing seen, still freely
+              editable (it's just what to call this pro forma, not RETR data). */}
+          <div className="mb-4 space-y-2">
+            <Label htmlFor="recruit-name" className="text-sm">Loan Officer</Label>
+            <Input
+              id="recruit-name"
+              className="max-w-md text-lg md:text-xl font-semibold h-12"
+              value={state.recruitName}
+              onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))}
+              placeholder="Loan officer's name"
             />
-            {retrPdfUrl && (
+          </div>
+          {retrPdfUrl && (
+            <div className="mb-4">
               <a href={retrPdfUrl} target="_blank" rel="noreferrer" className="inline-block text-xs text-accent underline underline-offset-2 hover:opacity-80">
                 Download the RETR PDF on file{normalizeNmls(state.nmls) ? ` for NMLS ${normalizeNmls(state.nmls)}` : ""}
               </a>
-            )}
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* The two numbers that drive the answer come first. */}
+            </div>
+          )}
+          <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 rounded-lg ${pullFlourish ? "ring-2 ring-accent bg-accent/10" : ""} transition-all duration-700`}>
+            {/* Volume, Files, Avg Loan, and Mix all come from the live RETR
+                pull below — locked, read-only, and blank until a pull lands. */}
             <div className="space-y-2 md:col-span-1 lg:col-span-2">
-              <Label htmlFor="annual-volume">Annual Funded Volume</Label>
-              <CurrencyInput
-                id="annual-volume"
-                className="max-w-[240px]"
-                value={state.annualVolume}
-                placeholder="48,000,000"
-                onChange={setVolume}
-              />
-              <Chips aria-label="Volume quick picks" options={VOLUME_CHIPS} value={state.annualVolume} onChange={setVolume} />
-              <p className="text-xs text-muted-foreground">Tap a preset or type shorthand like <span className="font-medium text-foreground">48m</span>.</p>
+              <div className="flex items-center gap-2">
+                <Label>{periodLabelTitle(state.productionPeriodMonths)} Funded Volume</Label>
+                {state.annualVolume > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewGrowth(p => !p)}
+                    title="Preview what +10% more volume could look like — temporary, never saved or sent"
+                    className={`text-xs font-semibold rounded-full px-2 py-0.5 border transition-colors ${
+                      previewGrowth
+                        ? "bg-accent text-accent-foreground border-accent"
+                        : "border-accent/40 text-accent hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    +10%
+                  </button>
+                )}
+              </div>
+              <div className="max-w-[240px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 text-lg font-semibold tabular-nums">
+                {state.annualVolume > 0 ? fmtUSD(state.annualVolume) : <span className="text-muted-foreground font-normal text-base">Pull RETR to populate</span>}
+              </div>
+              {previewGrowth && (
+                <p className="text-xs font-medium text-accent">Previewing +10% growth — tap +10% again to turn off.</p>
+              )}
             </div>
             <div className="space-y-2 md:col-span-1 lg:col-span-2">
               <Label htmlFor="current-bps">Current Platform LO Comp (BPS)</Label>
@@ -635,58 +661,46 @@ const Index = () => {
                 placeholder="e.g. 200"
                 onChange={e => setState(s => ({ ...s, currentSplit: e.target.value === "" ? null : (+e.target.value || 0) / 100 }))}
               />
-              <Chips
-                aria-label="BPS quick picks"
-                options={BPS_CHIPS}
-                value={state.currentSplit == null ? null : Math.round(state.currentSplit * 100)}
-                onChange={b => setState(s => ({ ...s, currentSplit: b / 100 }))}
-              />
               <p className="text-xs text-muted-foreground">
                 3-digit BPS (200 = 2.00%). {state.currentSplit != null && <span className="font-semibold text-accent">= {fmtPct(state.currentSplit, 2)}</span>}
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Loan Officer</Label>
-              <Input className="max-w-[200px]" value={state.recruitName} onChange={e => setState(s => ({ ...s, recruitName: e.target.value }))} placeholder="Optional" />
-            </div>
-            <div className="space-y-2">
               <Label>NMLS #</Label>
-              <div className="flex gap-2 max-w-[240px]">
-                <Input
-                  inputMode="numeric"
-                  className="tabular-nums"
-                  value={state.nmls}
-                  onChange={e => setState(s => ({ ...s, nmls: e.target.value }))}
-                  placeholder="123456"
-                />
-                <Button variant="outline" size="sm" className="h-10 shrink-0" onClick={pullRetr} disabled={pullingRetr} title="Pull stored RETR data for this NMLS">
+              <Input
+                inputMode="numeric"
+                className="tabular-nums max-w-[200px]"
+                value={state.nmls}
+                onChange={e => setState(s => ({ ...s, nmls: e.target.value }))}
+                placeholder="123456"
+              />
+              <div className="flex gap-2 max-w-[200px]">
+                <Select value={String(retrRange)} onValueChange={v => setRetrRange(Number(v) as RetrDateRange)}>
+                  <SelectTrigger className="h-10 w-[96px] shrink-0" aria-label="RETR window">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RETR_RANGE_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" className="h-10 flex-1" onClick={pullRetr} disabled={pullingRetr} title="Pull RETR production for this NMLS">
                   {pullingRetr ? "Pulling…" : "Pull RETR"}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">Live pull window — numbers reflect the actual period pulled.</p>
             </div>
             <div className="space-y-2">
-              <Label>Annual Funded File Count</Label>
-              <Input
-                className="max-w-[200px]"
-                type="number"
-                inputMode="numeric"
-                onWheel={blurOnWheel}
-                value={state.annualFiles || ""}
-                placeholder="0"
-                onChange={e => setState(s => ({ ...s, annualFiles: +e.target.value || 0, avgLoanOverride: false }))}
-              />
-              <p className="text-xs text-muted-foreground">Auto-syncs when volume changes.</p>
+              <Label>{periodLabelTitle(state.productionPeriodMonths)} Funded File Count</Label>
+              <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums">
+                {state.annualFiles > 0 ? state.annualFiles : <span className="text-muted-foreground text-sm">—</span>}
+              </div>
             </div>
             <div className="space-y-2">
-              <Label>Average Loan Amount {state.avgLoanOverride && <span className="text-xs text-warning">(manual)</span>}</Label>
-              <div className="flex gap-2 max-w-[200px]">
-                <CurrencyInput
-                  value={Math.round(state.avgLoanAmount)}
-                  onChange={v => setState(s => ({ ...s, avgLoanAmount: v, avgLoanOverride: true }))}
-                />
-                {state.avgLoanOverride && (
-                  <Button variant="outline" size="sm" onClick={() => setState(s => ({ ...s, avgLoanOverride: false }))}>Auto</Button>
-                )}
+              <Label>Average Loan Amount</Label>
+              <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums">
+                {state.avgLoanAmount > 0 ? fmtUSD(Math.round(state.avgLoanAmount)) : <span className="text-muted-foreground text-sm">—</span>}
               </div>
             </div>
             <div className="space-y-2">
@@ -708,22 +722,13 @@ const Index = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
-              <Label>Loan Type Mix (Files)</Label>
-              <Chips
-                aria-label="Loan mix presets"
-                options={MIX_PRESETS.map(p => ({ label: p.label, value: p.key }))}
-                value={activeMixPreset}
-                onChange={key => {
-                  const preset = MIX_PRESETS.find(p => p.key === key);
-                  if (preset) setState(s => ({ ...s, loanTypeMix: { ...preset.mix } }));
-                }}
-              />
+              <Label>Loan Type Mix</Label>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl pt-1">
-                {(["fha","va","conv","nonqm"] as const).map(k => {
+                {(["fha", "va", "conv", "nonqm"] as const).map(k => {
                   const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
-                  const order: Array<"fha"|"va"|"conv"|"nonqm"> = ["fha","va","conv","nonqm"];
+                  const order: Array<"fha" | "va" | "conv" | "nonqm"> = ["fha", "va", "conv", "nonqm"];
                   const total = Math.max(0, Math.round(state.annualFiles || 0));
-                  const counts: Record<"fha"|"va"|"conv"|"nonqm", number> = (() => {
+                  const counts: Record<"fha" | "va" | "conv" | "nonqm", number> = (() => {
                     const c: any = {};
                     let used = 0;
                     order.forEach((key, i) => {
@@ -736,77 +741,19 @@ const Index = () => {
                   return (
                     <div key={k} className="space-y-1">
                       <Label className="text-xs">{labels[k]}</Label>
-                      <Input
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        step="1"
-                        onWheel={blurOnWheel}
-                        value={counts[k]}
-                        onChange={e => setState(s => {
-                          const tot = Math.max(0, Math.round(s.annualFiles || 0));
-                          if (tot <= 0) return s;
-                          const raw = Math.min(tot, Math.max(0, Math.round(+e.target.value || 0)));
-                          const idx = order.indexOf(k);
-                          const cur: any = {};
-                          let used0 = 0;
-                          order.forEach((key, i) => {
-                            if (i === order.length - 1) cur[key] = Math.max(0, tot - used0);
-                            else { cur[key] = Math.round(tot * (s.loanTypeMix[key] / 100)); used0 += cur[key]; }
-                          });
-                          const nextCounts: any = { ...cur, [k]: raw };
-                          const headSum = order.slice(0, idx).reduce((a, key) => a + nextCounts[key], 0);
-                          const trailing = order.slice(idx + 1);
-                          const remaining = Math.max(0, tot - headSum - raw);
-                          if (trailing.length === 0) {
-                            if (headSum + raw > tot && headSum > 0) {
-                              const scale = (tot - raw) / headSum;
-                              order.slice(0, idx).forEach(key => { nextCounts[key] = Math.max(0, Math.round(nextCounts[key] * scale)); });
-                            }
-                          } else {
-                            const trailSum = trailing.reduce((a, key) => a + cur[key], 0);
-                            if (trailSum > 0) {
-                              let allocated = 0;
-                              trailing.forEach((key, i) => {
-                                if (i === trailing.length - 1) nextCounts[key] = Math.max(0, remaining - allocated);
-                                else { nextCounts[key] = Math.max(0, Math.round((cur[key] / trailSum) * remaining)); allocated += nextCounts[key]; }
-                              });
-                            } else {
-                              const base = Math.floor(remaining / trailing.length);
-                              const rem = remaining - base * trailing.length;
-                              trailing.forEach((key, i) => { nextCounts[key] = base + (i === trailing.length - 1 ? rem : 0); });
-                            }
-                          }
-                          const nextMix = {
-                            fha: (nextCounts.fha / tot) * 100,
-                            va: (nextCounts.va / tot) * 100,
-                            conv: (nextCounts.conv / tot) * 100,
-                            nonqm: (nextCounts.nonqm / tot) * 100,
-                          };
-                          return { ...s, loanTypeMix: nextMix };
-                        })}
-                      />
+                      {/* Read-only — these percentages come straight from the
+                          RETR pull, same as Volume/Files/Avg Loan above. */}
+                      <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums text-sm">
+                        {total > 0 ? counts[k] : "—"}
+                      </div>
                       <p className="text-[10px] text-muted-foreground">{pct.toFixed(1)}%</p>
                     </div>
                   );
                 })}
               </div>
-              {(() => {
-                const total = Math.max(0, Math.round(state.annualFiles || 0));
-                const order: Array<"fha"|"va"|"conv"|"nonqm"> = ["fha","va","conv","nonqm"];
-                let used = 0;
-                const counts: any = {};
-                order.forEach((key, i) => {
-                  if (i === order.length - 1) counts[key] = Math.max(0, total - used);
-                  else { counts[key] = Math.round(total * (state.loanTypeMix[key] / 100)); used += counts[key]; }
-                });
-                const sum = counts.fha + counts.va + counts.conv + counts.nonqm;
-                return (
-                  <p className={`text-xs ${sum === total ? "text-muted-foreground" : "text-warning"}`}>
-                    Files total {sum} of {total} (auto-balances to match Annual Funded File Count). FHA stays Broker (2.75% cap). VA & Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
-                  </p>
-                );
-              })()}
+              <p className="text-xs text-muted-foreground">
+                FHA stays Broker (2.75% cap). VA &amp; Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
+              </p>
             </div>
           </div>
         </Section>
@@ -1006,7 +953,7 @@ const Index = () => {
                     {loCompDelta >= 0 ? "+" : ""}{fmtUSD(loCompDelta)}
                   </p>
                   <p className="text-sm md:text-base text-accent-foreground/90 mt-2 tabular-nums">
-                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month more in your pocket
+                    {monthlyDelta >= 0 ? "+" : ""}{fmtUSD(monthlyDelta)} / month in modeled net comp
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6 max-w-2xl mx-auto">
                     <div className="rounded-lg bg-primary/10 border border-accent-foreground/15 p-3 text-left">

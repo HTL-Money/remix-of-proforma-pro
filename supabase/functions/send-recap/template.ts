@@ -32,6 +32,9 @@ export interface RecapPayload {
     finalLoNetComp: number;
   };
   proformaId?: string;
+  /** Months the production figures cover (the RETR pull window). 12 = a true
+   *  year. Optional for backward-compat with older payloads → defaults to 12. */
+  periodMonths?: number;
 }
 
 const usd = (n: number) =>
@@ -54,9 +57,65 @@ const GRAY_MID = "#7a7a7a";
 
 export const BRANDING_LINE = "Hometown Lending: Your True Value Awaits.";
 
+// Public business identity — printed in the signature + CAN-SPAM footer, so
+// these are shown to recipients and are NOT secrets: baked in, not env vars.
+export const COMPANY = {
+  name: "HomeTown Lending",
+  nmls: "2712965",
+  address: "5050 Quorum Drive, Ste. 600, Dallas, TX 75254",
+} as const;
+export const RECRUITER = {
+  name: "Aryan Jafarzadeh",
+  title: "Founder / CEO",
+  nmls: "1989264",
+  phone: "(972) 322-4472",
+  email: "aryanj@hometownlend.com",
+} as const;
+// CAN-SPAM unsubscribe target (a monitored inbox).
+export const UNSUBSCRIBE_EMAIL = "marketing@hometownlend.com";
+
+// Period labels, inlined so this module keeps zero app imports (it runs under
+// both Deno and vitest). Mirrors src/lib/retrApi.ts periodLabel/periodLabelTitle.
+const NUMBER_WORDS: Record<number, string> = {
+  1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
+  7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven",
+};
+const periodLabel = (months: number): string => {
+  if (months === 12) return "annual";
+  if (months < 12) {
+    const w = NUMBER_WORDS[months] ?? String(months);
+    return `previous ${w} month${months === 1 ? "" : "s"}`;
+  }
+  if (months % 12 === 0) {
+    const y = months / 12;
+    const w = NUMBER_WORDS[y] ?? String(y);
+    return `${w} year${y === 1 ? "" : "s"}`;
+  }
+  return `${months} months`;
+};
+const periodTitle = (months: number): string =>
+  periodLabel(months).replace(/\b\w/g, c => c.toUpperCase());
+const tel = (phone: string) => phone.replace(/[^\d+]/g, "");
+
+// Duplicated (intentionally) from src/lib/recapLink.ts's encodeRecap — this
+// file has zero app imports by design (portable across Deno and vitest), so
+// the encoder is small enough to keep here rather than reach across runtimes.
+// Must stay byte-for-byte identical to recapLink.ts's algorithm so a link
+// built here decodes correctly on the client (see recap.test.ts's
+// cross-implementation round-trip test).
+const toB64Url = (s: string): string => {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+const encodeRecapToken = (r: RecapPayload): string => toB64Url(JSON.stringify(r));
+
 // Content-ID shared by the Resend attachment and the <img src="cid:..."> in
 // the HTML, so the two can never drift apart (index.ts imports it too).
 export const CHART_CID = "earnings-chart";
+// Same contract for the animated vault-hero GIF at the top of the email.
+export const GIF_CID = "vault-hero";
 
 /** Palette exported so the client-side chart renderer (src/lib/recapChart.ts)
  *  paints the exact colors this template uses. */
@@ -72,6 +131,25 @@ export const BRAND = {
 export interface RenderOptions {
   /** When set, the earnings comparison renders as an inline CID image instead of HTML cells. */
   chartCid?: string;
+  /**
+   * When set, a "Book a recruiting call" button renders above the footer,
+   * linking here (Microsoft Bookings / Calendly — the page shows live
+   * availability when clicked, so the email itself never goes stale).
+   * Unset = section omitted entirely; no dead links in real emails.
+   */
+  bookingUrl?: string;
+  /**
+   * The app's public origin (e.g. https://app.hometownlend.com). Retained for
+   * absolute URLs elsewhere in the email; it no longer renders a presentation
+   * link — the deck ships as an attachment instead.
+   */
+  appOrigin?: string;
+  /**
+   * Filename of the attached Gamma PDF (e.g. "Documented-Pro-Forma.pdf"). When
+   * set, the closing "Documented Pro Forma" block renders and names this file.
+   * Unset = block omitted, so the email never claims an attachment it lacks.
+   */
+  documentedProformaName?: string;
 }
 
 const detailRow = (label: string, value: string) => `
@@ -84,12 +162,15 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   const hasComparison = r.current.annual != null && r.gain.annual != null;
   const gainAnnual = r.gain.annual ?? 0;
   const gainSign = gainAnnual >= 0 ? "+" : "";
+  const months = r.periodMonths ?? 12;
+  // For 12mo this is literally "per year" — byte-identical to the old copy.
+  const periodPhrase = months === 12 ? "per year" : `over the ${periodLabel(months)}`;
 
   // Alt text carries the dollar amounts so clients that block CID images
   // (plus the gain banner below) still tell the whole story.
   const chartAlt = hasComparison
-    ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} per year (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} per year (${usd(r.htl.monthly)} per month)`
-    : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} per year (${usd(r.htl.monthly)} per month)`;
+    ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} ${periodPhrase} (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month)`
+    : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month)`;
 
   const bucketRows = r.buckets
     .map(
@@ -109,7 +190,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
     ? `
     <td width="46%" valign="middle" style="background:${GRAY_BG};border-radius:8px;padding:20px 16px;text-align:center;">
       <div style="color:${GRAY_MID};font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Current Platform</div>
-      <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">${r.currentBps ?? 0} BPS</div>
+      <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">${Number(r.currentBps ?? 0)} BPS</div>
       <div style="color:${GRAY_DARK};font-size:26px;font-weight:700;margin-top:10px;">${usd(r.current.annual ?? 0)}</div>
       <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">${usd(r.current.monthly ?? 0)} / month</div>
     </td>`
@@ -122,7 +203,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   const htlCell = `
     <td width="50%" valign="middle" style="background:${NAVY};border-radius:8px;padding:26px 16px;text-align:center;">
       <div style="color:${MINT};font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Hometown Lending</div>
-      <div style="color:#ffffff;font-size:12px;margin-top:4px;">${r.corrActive ? "Broker + Correspondent" : "Broker Only"} · ${r.loSplit}% split</div>
+      <div style="color:#ffffff;font-size:12px;margin-top:4px;">${r.corrActive ? "Broker + Correspondent" : "Broker Only"} · ${Number(r.loSplit)}% split</div>
       <div style="color:${MINT};font-size:40px;font-weight:800;margin-top:10px;line-height:1;">${usd(r.htl.annual)}</div>
       <div style="color:#d5ece2;font-size:13px;margin-top:6px;">${usd(r.htl.monthly)} / month</div>
     </td>`;
@@ -148,6 +229,36 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
           </table>
         </td></tr>`;
 
+  // Presentation intro. The deck is DELIVERED AS AN ATTACHMENT, never as a
+  // link — a recruit should not have to click through to a hosted page to see
+  // it. So this is a plain framing headline with no button; the file itself is
+  // announced by documentedProforma at the end of the body.
+  const presentationHero = `
+    <tr><td style="background:${NAVY};padding:32px 24px;text-align:center;">
+      <div style="color:${MINT};font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Your Personalized Pro Forma</div>
+      <div style="color:#ffffff;font-size:17px;font-weight:700;margin-top:10px;line-height:1.4;">
+        You already know you're leaving money on the table.<br />Here's exactly how much.
+      </div>
+    </td></tr>`;
+
+  // Closing block: names the attached PDF so the recruit knows the file in
+  // their client IS the deliverable. Rendered only when a PDF actually rode
+  // along, so the email can never promise an attachment that isn't there.
+  const documentedProforma = opts.documentedProformaName
+    ? `
+    <tr><td style="padding:24px 24px 4px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${GREEN};border-radius:8px;">
+        <tr><td style="padding:18px 20px;">
+          <div style="color:${NAVY};font-size:15px;font-weight:800;">Documented Pro Forma</div>
+          <div style="color:${GRAY_MID};font-size:13px;margin-top:6px;line-height:1.6;">
+            Attached to this email as <strong style="color:${NAVY};">${esc(opts.documentedProformaName)}</strong> — the full
+            breakdown of the numbers above, yours to keep and review on your own time.
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>`
+    : "";
+
   const gainBanner = hasComparison
     ? `
     <tr><td style="padding:18px 24px 0 24px;">
@@ -155,11 +266,45 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         <tr><td align="center" style="padding:18px 16px;">
           <div style="color:#eaf5f0;font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700;">Your Gain at Hometown Lending</div>
           <div style="color:#ffffff;font-size:30px;font-weight:800;margin-top:6px;">${gainSign}${usd(gainAnnual)}</div>
-          <div style="color:#eaf5f0;font-size:13px;margin-top:4px;">${(r.gain.monthly ?? 0) >= 0 ? "+" : ""}${usd(r.gain.monthly ?? 0)} / month more in your pocket</div>
+          <div style="color:#eaf5f0;font-size:13px;margin-top:4px;">${(r.gain.monthly ?? 0) >= 0 ? "+" : ""}${usd(r.gain.monthly ?? 0)} / month in modeled net comp</div>
         </td></tr>
       </table>
     </td></tr>`
     : "";
+
+  // Bulletproof table-based button (no CSS-only tricks — Outlook-safe).
+  const bookingCta = opts.bookingUrl
+    ? `
+    <tr><td style="padding:26px 24px 6px 24px;" align="center">
+      <div style="color:${NAVY};font-size:16px;font-weight:700;">Want to pressure-test these assumptions?</div>
+      <div style="color:${GRAY_MID};font-size:13px;margin-top:4px;">No pitch, no commitment — and nothing shared with anyone. Bring your numbers and poke holes in our math.</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:14px auto 0 auto;">
+        <tr><td align="center" style="background:${GREEN};border-radius:8px;">
+          <a href="${esc(opts.bookingUrl)}" target="_blank"
+             style="display:inline-block;padding:14px 34px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;font-family:Arial,Helvetica,sans-serif;">
+            Book a confidential 15-min walkthrough
+          </a>
+        </td></tr>
+      </table>
+    </td></tr>`
+    : "";
+
+  // Recruiter signature — a real person to reply to. Reply-To is also set to
+  // this address server-side, so a plain reply reaches Aryan directly.
+  const signature = `
+    <tr><td style="padding:22px 24px 0 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="border-top:1px solid #e6e6e6;padding-top:16px;">
+          <div style="color:${NAVY};font-size:14px;font-weight:700;">${RECRUITER.name}</div>
+          <div style="color:${GRAY_MID};font-size:12px;margin-top:2px;">${RECRUITER.title}, ${COMPANY.name} · NMLS #${RECRUITER.nmls}</div>
+          <div style="color:${GRAY_MID};font-size:12px;margin-top:4px;">
+            <a href="tel:${tel(RECRUITER.phone)}" style="color:${GREEN};text-decoration:none;">${RECRUITER.phone}</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:${RECRUITER.email}" style="color:${GREEN};text-decoration:none;">${RECRUITER.email}</a>
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>`;
 
   return `<!doctype html>
 <html>
@@ -167,12 +312,13 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5;padding:24px 8px;">
     <tr><td align="center">
       <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;">
-
         <!-- Header -->
         <tr><td style="background:${NAVY};padding:26px 24px;text-align:center;">
           <div style="color:${MINT};font-size:26px;font-weight:800;font-family:Georgia,'Times New Roman',serif;">Hometown Lending</div>
           <div style="color:#ffffff;font-size:14px;margin-top:4px;">LO Pro Forma Recap${r.loName ? ` — ${esc(r.loName)}` : ""}${r.nmls ? ` (NMLS ${esc(r.nmls)})` : ""}</div>
         </td></tr>
+
+        ${presentationHero}
 
         ${comparisonSection}
 
@@ -182,13 +328,13 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         <tr><td style="padding:22px 24px 0 24px;">
           <div style="color:${NAVY};font-size:15px;font-weight:700;border-bottom:2px solid ${GREEN};padding-bottom:6px;">Production</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">
-            ${detailRow("Annual funded volume", usd(r.volume))}
-            ${detailRow("Annual funded files", num(r.files))}
+            ${detailRow(`${periodTitle(months)} funded volume`, usd(r.volume))}
+            ${detailRow(`${periodTitle(months)} funded files`, num(r.files))}
             ${detailRow("Average loan amount", usd(r.avgLoan))}
-            ${detailRow("HTL LO split", `${r.loSplit}%`)}
-            ${detailRow("Team-support holdback", `${r.holdbackPct}%`)}
+            ${detailRow("HTL LO split", `${Number(r.loSplit)}%`)}
+            ${detailRow("Team-support holdback", `${Number(r.holdbackPct)}%`)}
             ${detailRow("Channel strategy", r.corrActive ? "Broker + Correspondent" : "Broker Only")}
-            ${r.currentBps != null ? detailRow("Current platform comp", `${r.currentBps} BPS`) : ""}
+            ${r.currentBps != null ? detailRow("Current platform comp", `${Number(r.currentBps)} BPS`) : ""}
           </table>
         </td></tr>
 
@@ -220,16 +366,28 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${detailRow("Team-support holdback", usd(r.totals.teamHoldback))}
             ${detailRow("Broker-paid team costs", usd(r.totals.brokerPaidTotal))}
             <tr>
-              <td style="padding:10px 0 4px 0;color:${NAVY};font-size:14px;font-weight:800;">Final LO net annual comp</td>
+              <td style="padding:10px 0 4px 0;color:${NAVY};font-size:14px;font-weight:800;">${months === 12 ? "Final LO net annual comp" : `Final LO net comp — ${periodTitle(months)}`}</td>
               <td align="right" style="padding:10px 0 4px 0;color:${GREEN};font-size:18px;font-weight:800;">${usd(r.totals.finalLoNetComp)}</td>
             </tr>
           </table>
         </td></tr>
 
-        <!-- Branding line -->
+        ${documentedProforma}
+
+        ${bookingCta}
+
+        ${signature}
+
+        <!-- Branding line + CAN-SPAM footer -->
         <tr><td style="background:${NAVY};padding:20px 24px;text-align:center;margin-top:16px;">
           <div style="color:${MINT};font-size:16px;font-weight:700;font-family:Georgia,'Times New Roman',serif;font-style:italic;">${BRANDING_LINE}</div>
-          <div style="color:#9fb1c8;font-size:11px;margin-top:8px;">Saved as “${esc(r.savedName)}” · All figures are illustrative.</div>
+          <div style="color:#9fb1c8;font-size:11px;margin-top:12px;line-height:1.6;">
+            ${COMPANY.name} · NMLS #${COMPANY.nmls}<br />
+            ${COMPANY.address}<br />
+            Saved as “${esc(r.savedName)}” · All figures are illustrative and not a guarantee of income.<br />
+            You’re receiving this because a Pro Forma recap was requested for you.
+            <a href="mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe" style="color:#9fb1c8;text-decoration:underline;">Unsubscribe</a>
+          </div>
         </td></tr>
 
       </table>

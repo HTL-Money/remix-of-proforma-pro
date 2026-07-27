@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildRecapPayload, isValidEmail } from "@/lib/recapEmail";
 import { calculate, defaultState } from "@/lib/proforma";
-import { renderRecapHtml, BRANDING_LINE, CHART_CID } from "../../supabase/functions/send-recap/template";
+import { renderRecapHtml, BRANDING_LINE, CHART_CID, RECRUITER, COMPANY, UNSUBSCRIBE_EMAIL } from "../../supabase/functions/send-recap/template";
+import { decodeRecap } from "@/lib/recapLink";
 
 const goldenState = () => ({
   ...defaultState(),
@@ -118,6 +119,122 @@ describe("renderRecapHtml with an inline chart image", () => {
     expect(plain).not.toContain("cid:");
     expect(plain).toContain("font-size:40px");
     expect(plain).toContain("Current Platform");
+  });
+});
+
+describe("renderRecapHtml booking CTA", () => {
+  const s = goldenState();
+  const p = buildRecapPayload("x", s, calculate(s));
+
+  it("renders the booking button when a bookingUrl is provided", () => {
+    const out = renderRecapHtml(p, { bookingUrl: "https://outlook.office365.com/book/HTL@hometownlend.com/" });
+    expect(out).toContain("Book a confidential 15-min walkthrough");
+    expect(out).toContain('href="https://outlook.office365.com/book/HTL@hometownlend.com/"');
+    expect(out).toContain("No pitch, no commitment");
+  });
+
+  it("omits the section entirely when no bookingUrl is set — no dead links", () => {
+    const out = renderRecapHtml(p, {});
+    expect(out).not.toContain("Book a confidential 15-min walkthrough");
+    expect(out).not.toContain("live availability");
+  });
+
+  it("escapes a hostile bookingUrl so it can't break out of the href", () => {
+    const out = renderRecapHtml(p, { bookingUrl: 'https://x.test/"><script>alert(1)</script>' });
+    expect(out).not.toContain("<script>alert(1)</script>");
+    expect(out).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
+  it("composes with the inline chart option", () => {
+    const out = renderRecapHtml(p, { chartCid: CHART_CID, bookingUrl: "https://x.test/book" });
+    expect(out).toContain(`cid:${CHART_CID}`);
+    expect(out).toContain("Book a confidential 15-min walkthrough");
+  });
+});
+
+describe("renderRecapHtml — signature, CAN-SPAM footer, period-aware labels", () => {
+  const s = goldenState();
+  const html = renderRecapHtml(buildRecapPayload("Jane — 90%", s, calculate(s)));
+
+  it("renders the recruiter signature with reply-worthy contact details", () => {
+    expect(html).toContain(RECRUITER.name); // Aryan Jafarzadeh
+    expect(html).toContain(RECRUITER.title); // Founder / CEO
+    expect(html).toContain(`NMLS #${RECRUITER.nmls}`); // 1989264
+    expect(html).toContain(`mailto:${RECRUITER.email}`);
+    expect(html).toContain(RECRUITER.phone);
+  });
+
+  it("includes a compliant CAN-SPAM footer: company identity, address, unsubscribe", () => {
+    expect(html).toContain(`NMLS #${COMPANY.nmls}`); // 2712965
+    expect(html).toContain(COMPANY.address);
+    expect(html).toContain(`mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe`);
+    expect(html).toContain("not a guarantee of income");
+  });
+
+  it("labels production as Annual for a full-year (default) period", () => {
+    expect(html).toContain("Annual funded volume");
+    expect(html).toContain("Final LO net annual comp");
+  });
+
+  it("labels a non-annual pull window honestly — never a false 'Annual'", () => {
+    const six = { ...goldenState(), productionPeriodMonths: 6 };
+    const out = renderRecapHtml(buildRecapPayload("x", six, calculate(six)));
+    expect(out).toContain("Previous Six Months funded volume");
+    expect(out).toContain("Previous Six Months funded files");
+    expect(out).not.toContain("Annual funded volume");
+    expect(out).toContain("Final LO net comp — Previous Six Months");
+  });
+
+  it("threads periodMonths into the payload from the calc", () => {
+    const six = { ...goldenState(), productionPeriodMonths: 6 };
+    expect(buildRecapPayload("x", six, calculate(six)).periodMonths).toBe(6);
+    expect(buildRecapPayload("x", goldenState(), calculate(goldenState())).periodMonths).toBe(12);
+  });
+});
+
+describe("renderRecapHtml — Documented Pro Forma (delivered as an attachment, never a link)", () => {
+  const s = goldenState();
+  const p = buildRecapPayload("Jordan — 90%", s, calculate(s));
+  const FILE = "Documented-Pro-Forma.pdf";
+
+  it("never emits a /r presentation link, even when appOrigin is set — the deck is attached, not linked", () => {
+    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
+    expect(out).not.toContain("/r?d=");
+    expect(out).not.toContain("View Your Presentation");
+  });
+
+  it("omits the Documented Pro Forma block when no PDF is attached — the email must not name a file that isn't there", () => {
+    const out = renderRecapHtml(p, { appOrigin: "https://app.example.com" });
+    expect(out).not.toContain("Documented Pro Forma");
+    expect(out).not.toContain(FILE);
+  });
+
+  it("names the attached file in a closing block when a PDF rode along", () => {
+    const out = renderRecapHtml(p, { documentedProformaName: FILE });
+    expect(out).toContain("Documented Pro Forma");
+    expect(out).toContain(FILE);
+  });
+
+  it("places the Documented Pro Forma block at the end of the body — after the numbers, before the footer", () => {
+    const out = renderRecapHtml(p, { documentedProformaName: FILE, bookingUrl: "https://book.example.com" });
+    const economics = out.indexOf("LO Economics");
+    const block = out.indexOf("Documented Pro Forma");
+    const footer = out.indexOf("All figures are illustrative");
+    expect(economics).toBeGreaterThan(-1);
+    expect(block).toBeGreaterThan(economics);
+    expect(block).toBeLessThan(footer);
+  });
+
+  it("escapes the filename rather than trusting it as markup", () => {
+    const out = renderRecapHtml(p, { documentedProformaName: '<script>x</script>.pdf' });
+    expect(out).not.toContain("<script>x</script>");
+    expect(out).toContain("&lt;script&gt;");
+  });
+
+  it("still renders the framing headline, which no longer depends on appOrigin", () => {
+    const out = renderRecapHtml(p, {});
+    expect(out).toContain("Your Personalized Pro Forma");
+    expect(out).toContain("leaving money on the table");
   });
 });
 

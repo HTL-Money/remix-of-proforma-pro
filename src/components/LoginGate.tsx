@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { signInErrorMessage } from "@/lib/password";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
 
 export const LoginGate = () => {
@@ -22,7 +23,7 @@ export const LoginGate = () => {
     try {
       await signIn(email.trim(), password);
     } catch (e) {
-      toast({ title: "Sign-in failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+      toast({ title: "Sign-in failed", description: signInErrorMessage(e), variant: "destructive" });
     } finally {
       setBusy(false);
     }

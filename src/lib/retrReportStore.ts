@@ -1,4 +1,5 @@
-import { RetrParseResult } from "@/lib/retrParser";
+import { RetrParseResult } from "@/lib/retrText";
+import { annualizeLoStats, fetchLoStats, RetrDateRange, RETR_DEFAULT_RANGE } from "@/lib/retrApi";
 import { requireSupabase, supabase } from "@/lib/supabaseClient";
 
 const TABLE = "retr_reports";
@@ -15,14 +16,25 @@ export interface StoredRetrReport {
 export const normalizeNmls = (raw: string): string => raw.replace(/\D/g, "");
 
 /**
- * Future RETR API integration point. Once API access is available this becomes
- * a call to a Supabase Edge Function that holds the RETR credentials, fetches
- * the LO's report by NMLS, stores it (same shape as saveRetrReport), and
- * returns it. Until then it always reports "nothing found" so the UI falls
+ * Live RETR pull via the retr-proxy Edge Function (which holds the RETR
+ * credentials server-side). Returns null for every "no live data" case —
+ * credentials not yet set, NMLS unknown, network trouble — so the UI falls
  * back to the shared report store / manual PDF upload.
  */
-export const fetchRetrFromApi = async (_nmls: string): Promise<StoredRetrReport | null> => {
-  return null;
+export const fetchRetrFromApi = async (
+  nmls: string,
+  dateRange: RetrDateRange = RETR_DEFAULT_RANGE,
+): Promise<StoredRetrReport | null> => {
+  const live = await fetchLoStats(nmls, dateRange);
+  if (!live) return null;
+  const parsed = annualizeLoStats(live.dto, dateRange);
+  return {
+    nmls,
+    loName: parsed.recruitName,
+    parsed,
+    pdfUrl: null,
+    updatedAt: live.fetchedAt ?? new Date().toISOString(),
+  };
 };
 
 export const getRetrReport = async (nmls: string): Promise<StoredRetrReport | null> => {
@@ -46,9 +58,19 @@ export const getRetrReport = async (nmls: string): Promise<StoredRetrReport | nu
   };
 };
 
-/** API first (once it exists), then the shared report store. */
-export const lookupRetrReport = async (nmls: string): Promise<StoredRetrReport | null> => {
-  return (await fetchRetrFromApi(nmls)) ?? (await getRetrReport(nmls));
+/**
+ * Live API first, then the shared report store. `sharedStore: false` skips
+ * the store — anonymous visitors must, since retr_reports RLS is
+ * authenticated-only and the query would just fail.
+ */
+export const lookupRetrReport = async (
+  nmls: string,
+  opts?: { sharedStore?: boolean; dateRange?: RetrDateRange },
+): Promise<StoredRetrReport | null> => {
+  const live = await fetchRetrFromApi(nmls, opts?.dateRange ?? RETR_DEFAULT_RANGE);
+  if (live) return live;
+  if (opts?.sharedStore === false) return null;
+  return getRetrReport(nmls);
 };
 
 export const saveRetrReport = async (nmls: string, parsed: RetrParseResult, pdf: File): Promise<string | null> => {

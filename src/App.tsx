@@ -12,6 +12,7 @@ import Index from "./pages/Index.tsx";
 import Targets from "./pages/Targets.tsx";
 import SentEmails from "./pages/SentEmails.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import RecapView from "./pages/RecapView.tsx";
 
 const queryClient = new QueryClient();
 
@@ -47,16 +48,27 @@ const App = () => (
         <Sonner />
         <AuthProvider>
           <BrowserRouter>
-            <AppShell>
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/calculator" element={<Index />} />
-                <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
-                <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
-                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </AppShell>
+            <Routes>
+              {/* Public hosted recap page for external recruits — rendered
+                  OUTSIDE the team AppShell (no sidebar/chrome). Self-contained:
+                  reads its data from the link, no auth, no DB. */}
+              <Route path="/r" element={<RecapView />} />
+              <Route
+                path="*"
+                element={
+                  <AppShell>
+                    <Routes>
+                      <Route path="/" element={<Home />} />
+                      <Route path="/calculator" element={<Index />} />
+                      <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
+                      <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
+                      {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </AppShell>
+                }
+              />
+            </Routes>
           </BrowserRouter>
         </AuthProvider>
       </TooltipProvider>

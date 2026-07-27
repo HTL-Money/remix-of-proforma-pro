@@ -9,6 +9,7 @@ interface AuthValue {
   user: User | null;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthValue>({
@@ -17,6 +18,7 @@ const AuthContext = createContext<AuthValue>({
   user: null,
   signIn: async () => {},
   signOut: async () => {},
+  updatePassword: async () => {},
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -46,8 +48,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await supabase.auth.signOut();
   };
 
+  // Throws the raw AuthError (not a re-wrapped Error) so callers can inspect
+  // its code/message — weak-password and leaked-password rejections included.
+  const updatePassword = async (newPassword: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+  };
+
   return (
-    <AuthContext.Provider value={{ authRequired: supabase !== null, loading, user, signIn, signOut }}>
+    <AuthContext.Provider value={{ authRequired: supabase !== null, loading, user, signIn, signOut, updatePassword }}>
       {children}
     </AuthContext.Provider>
   );

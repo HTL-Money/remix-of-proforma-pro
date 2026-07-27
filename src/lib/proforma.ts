@@ -49,6 +49,12 @@ export interface ModelState {
   loanTypeMix: LoanTypeMix; // sums to 100
   buckets: Bucket[];
   employees: Employee[];
+  // Months the production figures above actually cover (RETR pull window).
+  // 12 = a true year (the historical assumption everywhere in this file);
+  // anything else means annualVolume/annualFiles are a RAW, non-annualized
+  // total for that shorter/longer window — calculate() reads this to keep
+  // "monthly" and employee-salary proration honest for any period.
+  productionPeriodMonths: number;
 }
 
 export const BROKER_CAP = 2.75;
@@ -111,6 +117,7 @@ export const defaultState = (): ModelState => ({
   loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
   buckets: defaultBuckets(),
   employees: defaultEmployees(),
+  productionPeriodMonths: 12,
 });
 
 export interface BucketCalc {
@@ -158,6 +165,9 @@ export interface Calc {
   htlMonthly: number;
   diffAnnual: number | null;
   diffMonthly: number | null;
+  // Echoes ModelState.productionPeriodMonths so consumers (recap/template)
+  // don't need the source state just to know what period these totals cover.
+  periodMonths: number;
 }
 
 // Allocate files by loan type, routing to Correspondent when that channel is active.
@@ -187,6 +197,14 @@ const allocateFiles = (s: ModelState): Record<ChannelKey, number> => {
 };
 
 export const calculate = (s: ModelState): Calc => {
+  // Everything below assumes annualVolume/annualFiles cover a full year
+  // (hence the /12 divisors and flat-annual employee salaries). When the
+  // production figures instead cover the RETR pull's actual window (no
+  // annualization — see retrApi.ts), periodMonths/periodFrac keep "monthly"
+  // and salary costs honest for that window instead of silently mismatching
+  // a partial-year revenue total against a full year of fixed cost.
+  const periodMonths = s.productionPeriodMonths > 0 ? s.productionPeriodMonths : 12;
+  const periodFrac = periodMonths / 12;
   const allocation = allocateFiles(s);
   // Force broker buckets always active (FHA + default Non-QM live there). Apply correct per-channel fee.
   const bucketsResolved: Bucket[] = s.buckets.map(b => ({
@@ -230,8 +248,13 @@ export const calculate = (s: ModelState): Calc => {
 
   let brokerPaidSalaries = 0, htlPaidSalaries = 0, brokerPaidBonuses = 0, htlPaidBonuses = 0;
   s.employees.forEach(e => {
-    if (e.salarySource === "Broker") brokerPaidSalaries += e.salary;
-    else htlPaidSalaries += e.salary;
+    // e.salary is a flat ANNUAL figure — prorate to the period so a 6-month
+    // pull deducts 6 months of salary, not a full year's, against 6 months of
+    // revenue. Per-file bonuses need no proration: they already scale with
+    // file count, which is already the actual period's count.
+    const proratedSalary = e.salary * periodFrac;
+    if (e.salarySource === "Broker") brokerPaidSalaries += proratedSalary;
+    else htlPaidSalaries += proratedSalary;
     if (e.role === "Processor") {
       const bonusCost = totals.qmFiles * e.qmBonus + totals.nonQmFiles * e.nonQmBonus;
       if (e.bonusSource === "Broker") brokerPaidBonuses += bonusCost;
@@ -245,13 +268,13 @@ export const calculate = (s: ModelState): Calc => {
   const salaryObligations = brokerPaidSalaries + brokerPaidBonuses;
   const holdbackSurplus = totals.teamHoldback - salaryObligations;
   const finalLoNetComp = totals.loNetBeforeHoldback - salaryObligations;
-  const monthlyLoNet = finalLoNetComp / 12;
+  const monthlyLoNet = finalLoNetComp / periodMonths;
   const requiredHoldbackPct = totals.loNetBeforeHoldback > 0 ? (salaryObligations / totals.loNetBeforeHoldback) * 100 : 0;
 
   const currentPlatformAnnual = s.currentSplit != null
     ? s.annualVolume * (s.currentSplit / 100) - brokerPaidTotal
     : null;
-  const currentPlatformMonthly = currentPlatformAnnual != null ? currentPlatformAnnual / 12 : null;
+  const currentPlatformMonthly = currentPlatformAnnual != null ? currentPlatformAnnual / periodMonths : null;
   const htlAnnual = finalLoNetComp;
   const htlMonthly = monthlyLoNet;
   const diffAnnual = currentPlatformAnnual != null ? htlAnnual - currentPlatformAnnual : null;
@@ -264,6 +287,7 @@ export const calculate = (s: ModelState): Calc => {
     brokerPaidTotal, htlPaidTotal, extraBonusTotal,
     holdbackSurplus, finalLoNetComp, monthlyLoNet, requiredHoldbackPct,
     currentPlatformAnnual, currentPlatformMonthly, htlAnnual, htlMonthly, diffAnnual, diffMonthly,
+    periodMonths,
   };
 };
 

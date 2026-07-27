@@ -35,14 +35,37 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
     finalLoNetComp: calc.finalLoNetComp,
   },
   proformaId,
+  // Period the production figures cover, so the email labels honestly
+  // ("Annual" vs "Previous Six Months") instead of assuming a full year.
+  periodMonths: calc.periodMonths,
 });
 
-export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: string): Promise<void> => {
+/** Optional binary artifacts riding beside the recap, all base64 (no data:
+ *  prefix): the vault-hero GIF and the Word report. Each is independently
+ *  best-effort at the call sites — a null generator result just means the
+ *  email ships without that extra. */
+export interface RecapExtras {
+  gif?: string | null;
+  docx?: string | null;
+  /** Content hash of the Gamma presentation for this recap. When set, the
+   *  function waits for that deck's PDF export and attaches it as the
+   *  "Documented Pro Forma" — the recruit opens a file, not a link. */
+  presentationHash?: string | null;
+}
+
+export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: string, extras?: RecapExtras): Promise<void> => {
   const supabase = requireSupabase();
-  // chartPng rides beside recap, never inside it — the function's audit log
-  // stores the recap numbers only, not image bytes.
+  // Artifacts ride beside recap, never inside it — the function's audit log
+  // stores the recap numbers only, not image/attachment bytes.
   const { error } = await supabase.functions.invoke("send-recap", {
-    body: chartPng ? { to, recap, chartPng } : { to, recap },
+    body: {
+      to,
+      recap,
+      ...(chartPng ? { chartPng } : {}),
+      ...(extras?.gif ? { gif: extras.gif } : {}),
+      ...(extras?.docx ? { docx: extras.docx } : {}),
+      ...(extras?.presentationHash ? { presentationHash: extras.presentationHash } : {}),
+    },
   });
   if (error) {
     // FunctionsHttpError carries the function's JSON response; surface its message.
