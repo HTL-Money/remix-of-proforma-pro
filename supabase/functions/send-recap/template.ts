@@ -35,6 +35,11 @@ export interface RecapPayload {
   /** Months the production figures cover (the RETR pull window). 12 = a true
    *  year. Optional for backward-compat with older payloads → defaults to 12. */
   periodMonths?: number;
+  /** True when the production figures were typed in by the recipient instead
+   *  of pulled from RETR (the manual-entry fallback). Renders an honest
+   *  "self-reported" note so a hand-entered pro forma is never mistaken for
+   *  verified data. Optional for backward-compat → old payloads are RETR-era. */
+  selfReported?: boolean;
 }
 
 const usd = (n: number) =>
@@ -336,6 +341,11 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${detailRow("Channel strategy", r.corrActive ? "Broker + Correspondent" : "Broker Only")}
             ${r.currentBps != null ? detailRow("Current platform comp", `${Number(r.currentBps)} BPS`) : ""}
           </table>
+          ${
+            r.selfReported
+              ? `<div style="color:${GRAY_MID};font-size:11px;margin-top:8px;">Production figures were self-reported by the recipient and have not been verified against RETR records.</div>`
+              : ""
+          }
         </td></tr>
 
         <!-- Buckets -->

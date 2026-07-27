@@ -55,6 +55,12 @@ export interface ModelState {
   // total for that shorter/longer window — calculate() reads this to keep
   // "monthly" and employee-salary proration honest for any period.
   productionPeriodMonths: number;
+  // True only when the production figures above came from a real RETR pull.
+  // Drives two things: (1) volume/files/mix stay LOCKED read-only in the UI
+  // (Part J's data-integrity decision), and (2) anything sent (recap email,
+  // Word doc) is labeled RETR-verified. False = the manual-entry fallback is
+  // active and every artifact must say "self-reported".
+  retrSourced: boolean;
 }
 
 export const BROKER_CAP = 2.75;
@@ -118,6 +124,7 @@ export const defaultState = (): ModelState => ({
   buckets: defaultBuckets(),
   employees: defaultEmployees(),
   productionPeriodMonths: 12,
+  retrSourced: false,
 });
 
 export interface BucketCalc {

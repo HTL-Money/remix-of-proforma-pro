@@ -2,7 +2,7 @@
 // slide-over drawer on mobile, content area to the right. Wraps every route.
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Calculator, LayoutDashboard, ListChecks, LogIn, LogOut, Mail, Menu } from "lucide-react";
+import { Calculator, LayoutDashboard, ListChecks, LogOut, Mail, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
@@ -16,17 +16,12 @@ const TEAM_NAV = [
   { to: "/emails", label: "Sent Emails", icon: Mail },
 ];
 
-// Signed-out visitors get the calculator only — everything else here is
-// team data (saves, pipeline, recap history) behind login.
-const PUBLIC_NAV = [
-  { to: "/calculator", label: "Calculator", icon: Calculator },
-];
-
+// Only ever rendered for team members now — anonymous visitors get no shell
+// at all (see AppShell below), so there's no public nav variant anymore.
 const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
   const location = useLocation();
   const { user, authRequired, signOut } = useAuth();
-  const isTeamMember = !authRequired || !!user;
-  const items = isTeamMember ? TEAM_NAV : PUBLIC_NAV;
+  const items = TEAM_NAV;
   return (
     <div className="flex h-full flex-col">
       <div className="px-5 pt-6 pb-5">
@@ -78,23 +73,27 @@ const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
           </Button>
         </div>
       )}
-      {authRequired && !user && (
-        <div className="px-3 pb-5 pt-3 border-t border-white/10">
-          <Link
-            to="/targets"
-            onClick={onNavigate}
-            className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-white/65 hover:bg-white/5 hover:text-white transition-colors"
-          >
-            <LogIn className="h-4 w-4 shrink-0" /> Team sign in
-          </Link>
-        </div>
-      )}
     </div>
   );
 };
 
 export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const [open, setOpen] = useState(false);
+  const { user, authRequired, loading } = useAuth();
+  const isTeamMember = !authRequired || !!user;
+
+  // While the session is still resolving we don't yet know which frame to
+  // draw — render the brand backdrop only (same approach as Home) instead of
+  // flashing a sidebar at a recruit or a bare page at a team member.
+  if (authRequired && loading) return <div className="min-h-screen glass-bg" />;
+
+  // External visitors see ONLY the pro forma: no sidebar, no drawer, no
+  // "Team sign in". This is a recruit-facing marketing surface reached from
+  // a public link; the internal chrome reads as clutter (or worse, as
+  // something they're locked out of). Team sign-in stays reachable by
+  // direct URL — /targets still gates through RequireAuth.
+  if (!isTeamMember) return <>{children}</>;
+
   return (
     <div className="min-h-screen glass-bg">
       {/* Desktop sidebar: frosted glass over the brand gradient */}

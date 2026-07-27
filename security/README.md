@@ -75,17 +75,31 @@ payload-isolation test.
    this data class; revisit if regulated data ever enters `ModelState`.
 5. **npm audit residuals.** Vulnerabilities that `npm audit fix` can't resolve
    without breaking majors are listed here, with reasoning. Runtime findings
-   are never accepted. Current residuals (2026-07-23, after fixing 20 → 2):
-   - `esbuild <=0.24.2` (moderate) + its `vite <=6.4.2` parent (high): the
-     advisory is against the **local dev server** (any website can read dev
-     responses while `npm run dev` is running). Production ships static files
-     — no dev server exists in deployment. Fix requires Vite 5→8, a breaking
-     toolchain migration tracked separately. Mitigation until then: don't run
-     `npm run dev` on untrusted networks with sensitive data loaded.
-   - Everything else was fixed: react-router XSS (runtime — patched in place),
-     and the `pdfjs-dist` 4.7→4.10 bump, which also removed the abandoned
-     `canvas`/`node-pre-gyp`/`tar` install chain that carried a critical-rated
-     advisory (install-time tooling, never shipped, now gone entirely).
+   are never accepted without a written exposure analysis. Current residuals
+   (2026-07-27, after a 17 → 9 semver-compatible fix pass — the count had
+   crept up from 2 as new advisories were published against pinned versions):
+   - `eslint <10` tree (6 advisories, high): all one root cause — a
+     `brace-expansion`/`minimatch` DoS in **lint tooling**. devDependency
+     only, never shipped, only ever run by developers/CI on trusted input.
+     Real fix is the eslint 9→10 major, tracked with the toolchain migration.
+   - `esbuild`/`vite` (moderate/high): same **local dev server** advisories
+     as before plus a dev-server path-traversal — production ships static
+     files; no dev server exists in deployment. Fix requires Vite 5→8, a
+     breaking toolchain migration tracked separately. Mitigation until then:
+     don't run `npm run dev` on untrusted networks with sensitive data loaded.
+   - `react-router`/`react-router-dom 6.x` (moderate, **runtime — analyzed,
+     not waved through**): two advisories, both requiring v7.18+ (the whole
+     6.x line is affected; 6→7 is a breaking migration). Exposure analysis:
+     (a) *open redirect via backslash in `<Link>`/`useNavigate`* needs an
+     attacker-controlled **path** — every router target in this app is a
+     hardcoded internal path; the only dynamic piece is a query string
+     appended to a fixed `/calculator` path, which can't change the path
+     portion. (b) *constructor injection via `deserializeErrors()`* is SSR
+     hydration — this is a pure SPA with no SSR. Neither vector is reachable.
+     Revisit at the react-router 7 migration.
+   - Previously fixed and still fixed: react-router XSS (the 2026-07 patch),
+     `pdfjs-dist` 4.7→4.10 (which also removed the abandoned
+     `canvas`/`node-pre-gyp`/`tar` install chain and its critical advisory).
 
 ## Rotation runbook
 

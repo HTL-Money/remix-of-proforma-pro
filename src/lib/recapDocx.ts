@@ -171,7 +171,7 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
               alignment: AlignmentType.CENTER,
               children: [
                 new TextRun({
-                  text: `Projection based on ${usd(r.volume)} annual volume, ${num(r.files)} files at a ${r.loSplit}% split. All figures are illustrative — not an offer of employment or compensation.`,
+                  text: `Projection based on ${usd(r.volume)} annual volume, ${num(r.files)} files at a ${r.loSplit}% split.${r.selfReported ? " Production figures were self-reported and have not been verified against RETR records." : ""} All figures are illustrative — not an offer of employment or compensation.`,
                   italics: true,
                   color: GRAY,
                   size: 18,
