@@ -23,7 +23,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
-  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource,
+  ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource, MIX_PRESETS,
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import { Chips } from "@/components/Chips";
@@ -32,7 +32,7 @@ import { CurrencyInput } from "@/components/CurrencyInput";
 import { CloudSave } from "@/components/CloudSave";
 import { PublicRecapCta } from "@/components/PublicRecapCta";
 import { NmlsGate } from "@/components/NmlsGate";
-import { RetrParseResult } from "@/lib/retrText";
+import { applyRetrResult } from "@/lib/retrApply";
 import {
   StoredRetrReport, lookupRetrReport, normalizeNmls, isCloudConfigured,
 } from "@/lib/retrReportStore";
@@ -44,29 +44,6 @@ const GATE_KEY = "htl_nmls_gate_v1";
 
 // Stop scroll-wheel / trackpad from silently changing focused number inputs.
 const blurOnWheel = (e: React.WheelEvent<HTMLInputElement>) => e.currentTarget.blur();
-
-// Map a parsed RETR report onto the model — shared by the NMLS gate,
-// the "Pull RETR data" button, and the PDF drop zone.
-const applyRetrResult = (s: ModelState, r: RetrParseResult): ModelState => {
-  const total = r.annualFiles;
-  const pct = (n: number) => total > 0 ? (n / total) * 100 : 0;
-  return {
-    ...s,
-    recruitName: r.recruitName ?? s.recruitName,
-    nmls: r.nmls ?? s.nmls,
-    annualVolume: r.annualVolume,
-    annualFiles: r.annualFiles,
-    avgLoanAmount: r.avgLoanAmount || s.avgLoanAmount,
-    avgLoanOverride: false,
-    loanTypeMix: {
-      fha: pct(r.byLoanType.fha),
-      va: pct(r.byLoanType.va),
-      conv: pct(r.byLoanType.conv),
-      nonqm: pct(r.byLoanType.nonqm),
-    },
-    productionPeriodMonths: r.periodMonths ?? 12,
-  };
-};
 
 const loadState = (): ModelState => {
   try {
@@ -150,7 +127,7 @@ const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
 };
 
 
-const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => void }) => {
+const AddEmployeeDialog = ({ onAdd, triggerLabel = "Add Employee" }: { onAdd: (emp: Omit<Employee, "id">) => void; triggerLabel?: string }) => {
   const [open, setOpen] = useState(false);
   const [role, setRole] = useState<Role>("Processor");
   const [name, setName] = useState("");
@@ -195,7 +172,7 @@ const AddEmployeeDialog = ({ onAdd }: { onAdd: (emp: Omit<Employee, "id">) => vo
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
       <DialogTrigger asChild>
         <Button size="sm" className="gold-accent text-accent-foreground hover:opacity-90">
-          <Plus className="h-4 w-4 mr-1" /> Add Employee
+          <Plus className="h-4 w-4 mr-1" /> {triggerLabel}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
@@ -297,6 +274,15 @@ const Index = () => {
   const [previewGrowth, setPreviewGrowth] = useState(false);
   // Brief highlight flash on the production fields right after a live pull.
   const [pullFlourish, setPullFlourish] = useState(false);
+  // Anonymous visitors: "I don't have any employees" acknowledgment — turns
+  // the opt-in payroll card into a one-line confirmation. Session-scoped so
+  // a fresh visit asks again (a different recruit may be on this device).
+  const NO_PAYROLL_KEY = "htl_no_payroll_v1";
+  const [noPayroll, setNoPayroll] = useState(() => sessionStorage.getItem(NO_PAYROLL_KEY) === "1");
+  const confirmNoPayroll = () => {
+    sessionStorage.setItem(NO_PAYROLL_KEY, "1");
+    setNoPayroll(true);
+  };
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -424,23 +410,30 @@ const Index = () => {
     });
   };
 
-  const handleGateEnter = ({ nmls, report }: { nmls: string; report: StoredRetrReport | null }) => {
+  const handleGateEnter = ({ nmls, report, currentSplit }: { nmls: string; report: StoredRetrReport | null; currentSplit: number | null }) => {
     sessionStorage.setItem(GATE_KEY, "1");
     setGated(false);
     if (normalizeNmls(state.nmls) === nmls && state.annualVolume > 0) {
-      // Same LO as the in-progress draft — resume it rather than clobbering edits.
+      // Same LO as the in-progress draft — resume it rather than clobbering
+      // edits. A BPS entered at the gate still applies: it's fresher than
+      // whatever the draft held.
+      if (currentSplit != null) setState(s => ({ ...s, currentSplit }));
       toast({ title: "Resumed", description: `Continuing your in-progress pro forma for NMLS ${nmls}.` });
       return;
     }
     if (report) {
       applyStoredReport(nmls, report);
+      if (currentSplit != null) setState(s => ({ ...s, currentSplit }));
     } else {
-      setState({ ...defaultState(), nmls });
+      // No RETR data: hand over a blank, EDITABLE calculator (retrSourced
+      // stays false from defaultState) so the recruit can enter their own
+      // production instead of dead-ending on locked empty fields.
+      setState({ ...defaultState(), nmls, currentSplit });
       // When unconfigured, the gate already toasted "Working locally" — don't replace it (TOAST_LIMIT is 1).
       if (isCloudConfigured()) {
         toast(isTeamMember
           ? { title: "No RETR report on file", description: `No production on file yet for NMLS ${nmls}.` }
-          : { title: "No RETR data found", description: `No live RETR data for NMLS ${nmls} yet.` });
+          : { title: "No RETR data found", description: `No data came back for NMLS ${nmls} — enter your production below.` });
       }
     }
   };
@@ -522,9 +515,6 @@ const Index = () => {
                   onLoad={(loaded) => setState(loaded)}
                 />
               )}
-              {isCloudConfigured() && !isTeamMember && (
-                <PublicRecapCta state={state} calc={calcReal} />
-              )}
               {authRequired && user && (
                 <Button
                   variant="outline"
@@ -574,6 +564,20 @@ const Index = () => {
 
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-28 md:pb-8 space-y-8">
+        {/* Promoted conversion CTA — the ONE action for an anonymous recruit,
+            above everything else. Their info is captured when they send. */}
+        {isCloudConfigured() && !isTeamMember && (
+          <div className="premium-card border-accent/40 p-4 md:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-semibold text-primary">Your pro forma is ready to send.</p>
+              <p className="text-sm text-muted-foreground">
+                Get the full recap — comparison, production buckets, and your personalized report — in your inbox.
+              </p>
+            </div>
+            <PublicRecapCta state={state} calc={calcReal} prominent />
+          </div>
+        )}
+
         {/* Headline KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="premium-card p-5">
@@ -623,7 +627,7 @@ const Index = () => {
                 pull below — locked, read-only, and blank until a pull lands. */}
             <div className="space-y-2 md:col-span-1 lg:col-span-2">
               <div className="flex items-center gap-2">
-                <Label>{periodLabelTitle(state.productionPeriodMonths)} Funded Volume</Label>
+                <Label htmlFor={state.retrSourced ? undefined : "manual-volume"}>{periodLabelTitle(state.productionPeriodMonths)} Funded Volume</Label>
                 {state.annualVolume > 0 && (
                   <button
                     type="button"
@@ -639,9 +643,22 @@ const Index = () => {
                   </button>
                 )}
               </div>
-              <div className="max-w-[240px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 text-lg font-semibold tabular-nums">
-                {state.annualVolume > 0 ? fmtUSD(state.annualVolume) : <span className="text-muted-foreground font-normal text-base">Pull RETR to populate</span>}
-              </div>
+              {state.retrSourced ? (
+                // RETR-verified figures stay locked read-only (Part J).
+                <div className="max-w-[240px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 text-lg font-semibold tabular-nums">
+                  {state.annualVolume > 0 ? fmtUSD(state.annualVolume) : <span className="text-muted-foreground font-normal text-base">Pull RETR to populate</span>}
+                </div>
+              ) : (
+                // Manual-entry fallback: no RETR data for this NMLS, so the
+                // recruit types their own production (marked self-reported
+                // everywhere it surfaces).
+                <CurrencyInput
+                  id="manual-volume"
+                  className="max-w-[240px] text-lg font-semibold"
+                  value={state.annualVolume}
+                  onChange={v => setState(s => ({ ...s, annualVolume: v }))}
+                />
+              )}
               {previewGrowth && (
                 <p className="text-xs font-medium text-accent">Previewing +10% growth — tap +10% again to turn off.</p>
               )}
@@ -692,10 +709,25 @@ const Index = () => {
               <p className="text-xs text-muted-foreground">Live pull window — numbers reflect the actual period pulled.</p>
             </div>
             <div className="space-y-2">
-              <Label>{periodLabelTitle(state.productionPeriodMonths)} Funded File Count</Label>
-              <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums">
-                {state.annualFiles > 0 ? state.annualFiles : <span className="text-muted-foreground text-sm">—</span>}
-              </div>
+              <Label htmlFor={state.retrSourced ? undefined : "manual-files"}>{periodLabelTitle(state.productionPeriodMonths)} Funded File Count</Label>
+              {state.retrSourced ? (
+                <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums">
+                  {state.annualFiles > 0 ? state.annualFiles : <span className="text-muted-foreground text-sm">—</span>}
+                </div>
+              ) : (
+                <Input
+                  id="manual-files"
+                  className="max-w-[200px] tabular-nums"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step="1"
+                  onWheel={blurOnWheel}
+                  value={state.annualFiles || ""}
+                  placeholder="e.g. 48"
+                  onChange={e => setState(s => ({ ...s, annualFiles: Math.max(0, Math.round(+e.target.value || 0)) }))}
+                />
+              )}
             </div>
             <div className="space-y-2">
               <Label>Average Loan Amount</Label>
@@ -723,6 +755,21 @@ const Index = () => {
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
               <Label>Loan Type Mix</Label>
+              {!state.retrSourced && (
+                // Manual mode: one-tap presets (the common case) with the
+                // percent fields below for fine-tuning.
+                <Chips
+                  aria-label="Loan mix preset"
+                  options={MIX_PRESETS.map(p => ({ label: p.label, value: p.key }))}
+                  value={MIX_PRESETS.find(p =>
+                    (["fha", "va", "conv", "nonqm"] as const).every(k => p.mix[k] === state.loanTypeMix[k]),
+                  )?.key ?? ""}
+                  onChange={key => {
+                    const preset = MIX_PRESETS.find(p => p.key === key);
+                    if (preset) setState(s => ({ ...s, loanTypeMix: { ...preset.mix } }));
+                  }}
+                />
+              )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl pt-1">
                 {(["fha", "va", "conv", "nonqm"] as const).map(k => {
                   const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
@@ -740,29 +787,99 @@ const Index = () => {
                   const pct = total > 0 ? (counts[k] / total) * 100 : state.loanTypeMix[k];
                   return (
                     <div key={k} className="space-y-1">
-                      <Label className="text-xs">{labels[k]}</Label>
-                      {/* Read-only — these percentages come straight from the
-                          RETR pull, same as Volume/Files/Avg Loan above. */}
-                      <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums text-sm">
-                        {total > 0 ? counts[k] : "—"}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">{pct.toFixed(1)}%</p>
+                      <Label className="text-xs" htmlFor={state.retrSourced ? undefined : `mix-${k}`}>{labels[k]}</Label>
+                      {state.retrSourced ? (
+                        /* Read-only — these percentages come straight from the
+                           RETR pull, same as Volume/Files/Avg Loan above. */
+                        <div className="h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums text-sm">
+                          {total > 0 ? counts[k] : "—"}
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <Input
+                            id={`mix-${k}`}
+                            className="pr-7 tabular-nums"
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={100}
+                            step="1"
+                            onWheel={blurOnWheel}
+                            value={state.loanTypeMix[k]}
+                            onChange={e => setState(s => ({
+                              ...s,
+                              loanTypeMix: { ...s.loanTypeMix, [k]: Math.max(0, Math.min(100, +e.target.value || 0)) },
+                            }))}
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">%</span>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-muted-foreground">
+                        {state.retrSourced ? `${pct.toFixed(1)}%` : total > 0 ? `≈ ${counts[k]} files` : " "}
+                      </p>
                     </div>
                   );
                 })}
               </div>
+              {!state.retrSourced && (() => {
+                const mixTotal = (["fha", "va", "conv", "nonqm"] as const).reduce((sum, k) => sum + (state.loanTypeMix[k] || 0), 0);
+                return Math.round(mixTotal) !== 100 ? (
+                  <Warn>Loan mix adds to {Math.round(mixTotal)}% — adjust so it totals 100%.</Warn>
+                ) : null;
+              })()}
               <p className="text-xs text-muted-foreground">
                 FHA stays Broker (2.75% cap). VA &amp; Conventional route to Correspondent when active; otherwise Broker. Non-QM routes to Correspondent Non-QM when active.
               </p>
             </div>
           </div>
+          {!state.retrSourced && state.annualVolume > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Self-reported production</span> — these figures were entered
+              manually, not verified against RETR records. Pull RETR above to replace them with verified data.
+            </p>
+          )}
         </Section>
 
-        {/* Team builder — collapsed by default to keep above-the-fold tight */}
+        {/* Team builder. Anonymous recruits with no employees get a light
+            OPT-IN card instead — most LOs are solo, and a payroll form
+            standing between them and their number costs conversions. It
+            never opens automatically; adding staff is always their choice. */}
+        {!isTeamMember && state.employees.length === 0 ? (
+          <section className="premium-card p-5 md:p-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Users className="h-5 w-5 text-primary" />
+              <h2 className="section-header !mb-0 !border-0 !pb-0 !text-base">Team &amp; Payroll</h2>
+            </div>
+            {noPayroll ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 mt-2">
+                <p className="text-sm text-muted-foreground">✓ No employees added — your pro forma assumes no payroll costs.</p>
+                <AddEmployeeDialog
+                  triggerLabel="Actually, add someone"
+                  onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))}
+                />
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground mt-1 mb-4">
+                  Do you pay any processors, loan officer assistants, or loan partners out of your production?
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <AddEmployeeDialog
+                    triggerLabel="Add processors, LOAs, or loan partners"
+                    onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))}
+                  />
+                  <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={confirmNoPayroll}>
+                    I don't have any employees. I don't pay any payroll.
+                  </Button>
+                </div>
+              </>
+            )}
+          </section>
+        ) : (
         <Section
           icon={<Users className="h-5 w-5" />}
           title="Team & Employee Support"
-          defaultOpen={false}
+          defaultOpen={!isTeamMember}
           compact
           right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
         >
@@ -860,6 +977,7 @@ const Index = () => {
             </div>
           )}
         </Section>
+        )}
 
 
         {/* Comparison Tool */}
@@ -897,7 +1015,10 @@ const Index = () => {
             const currentBrokerGross = state.annualVolume * 0.0275;
             const currentLoComp = state.annualVolume * (state.currentSplit / 100);
             const htlBrokerGross = calc.totals.grossRevenue;
-            const brokerGrossDelta = htlBrokerGross - currentBrokerGross;
+            // Rounded to whole dollars: bucket-sum float drift (~1e-10) would
+            // otherwise render a red "−$0" in the gain banner when the two
+            // gross figures are actually equal.
+            const brokerGrossDelta = Math.round(htlBrokerGross - currentBrokerGross) || 0;
             const loCompDelta = calc.diffAnnual ?? 0;
             const monthlyDelta = calc.diffMonthly ?? 0;
             return (

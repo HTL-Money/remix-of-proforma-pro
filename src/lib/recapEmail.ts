@@ -38,6 +38,9 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   // Period the production figures cover, so the email labels honestly
   // ("Annual" vs "Previous Six Months") instead of assuming a full year.
   periodMonths: calc.periodMonths,
+  // Manual-entry fallback: figures typed by the recipient (no RETR pull)
+  // must say so in every artifact — email, Word doc — not just on screen.
+  selfReported: !state.retrSourced,
 });
 
 /** Optional binary artifacts riding beside the recap, all base64 (no data:
@@ -57,7 +60,7 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
   const supabase = requireSupabase();
   // Artifacts ride beside recap, never inside it — the function's audit log
   // stores the recap numbers only, not image/attachment bytes.
-  const { error } = await supabase.functions.invoke("send-recap", {
+  const { data, error } = await supabase.functions.invoke("send-recap", {
     body: {
       to,
       recap,
@@ -79,5 +82,11 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
       }
     }
     throw new Error(error.message || "The recap email couldn't be sent.");
+  }
+  // Suppression is a 200 with a marker, not an error — the function refused
+  // cleanly because this address opted out. Tell the sender honestly instead
+  // of letting the UI claim "sent" for an email that will never arrive.
+  if ((data as { suppressed?: boolean } | null)?.suppressed) {
+    throw new Error("This address has unsubscribed from Hometown Lending emails, so no recap was sent. Email marketing@hometownlend.com to opt back in.");
   }
 };

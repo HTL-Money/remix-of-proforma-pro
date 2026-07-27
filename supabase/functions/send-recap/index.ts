@@ -18,6 +18,7 @@
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
 import { decideSourcingAction, expiryTimestamp, SourcingRow } from "./sourcing.ts";
+import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -98,6 +99,21 @@ const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";
 // Graph restricts custom internet headers, so on the Graph path the visible
 // mailto in the email footer is the compliant unsubscribe mechanism.
 const UNSUBSCRIBE_MAILTO = "marketing@hometownlend.com";
+
+/** Look up `to` on the opt-out list. The verdict logic (and the FAIL-CLOSED
+ *  policy rationale) lives in suppression.ts where vitest can reach it. */
+const checkSuppression = async (supabaseUrl: string, serviceKey: string, to: string) => {
+  try {
+    const resp = await fetch(
+      `${supabaseUrl}/rest/v1/email_suppressions?select=email&email=eq.${encodeURIComponent(normalizeEmail(to))}`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+    );
+    return suppressionVerdict({ ok: resp.ok, rows: resp.ok ? await resp.json() : null });
+  } catch (e) {
+    console.error("suppression check failed (fail-CLOSED)", e);
+    return suppressionVerdict(null);
+  }
+};
 
 /** True if `to` is still under the send cap. Fails open on error — a rate-limit outage must never block a legitimate send. */
 const withinRateLimit = async (supabaseUrl: string, serviceKey: string, to: string): Promise<boolean> => {
@@ -572,6 +588,42 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  // Decoded here (not at the sender-copy-back block below) because the
+  // suppressed-send audit row also records who attempted the send.
+  const senderId = extractSenderId(req);
+
+  // Opt-out check FIRST — a suppressed address must never be emailed again,
+  // whoever asks (CAN-SPAM: opt-outs are permanent until the person opts back
+  // in). Keyed on the recruit `to` only; the fixed internal BCCs are ours.
+  if (supabaseUrl && serviceKey) {
+    const verdict = await checkSuppression(supabaseUrl, serviceKey, to);
+    if (verdict === "unavailable") {
+      // Fail CLOSED (see suppression.ts): refuse retryably rather than risk
+      // emailing someone who opted out.
+      return json(503, { error: "Couldn't verify this address is okay to email. Try again in a moment." });
+    }
+    if (verdict === "suppressed") {
+      // Clean non-send, recorded in the audit trail so the team can see WHY
+      // nothing arrived. 200 + marker (not an opaque error): the client
+      // surfaces an honest "this address has unsubscribed" message.
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
+          method: "POST",
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ sent_to: to, sent_by: senderId, status: "suppressed", payload: null }),
+        });
+      } catch (e) {
+        console.error("suppressed-send audit log failed (non-fatal)", e);
+      }
+      return json(200, { ok: true, suppressed: true });
+    }
+  }
+
   if (supabaseUrl && serviceKey && !(await withinRateLimit(supabaseUrl, serviceKey, to))) {
     return json(429, { error: "Too many recap emails sent to this address recently. Try again in a bit." });
   }
@@ -603,8 +655,9 @@ Deno.serve(async (req: Request) => {
   // Sender-copy-back: a signed-in team member automatically gets a BCC copy
   // of what they just sent — an automatic record with no manual CC needed.
   // Looked up server-side from their auth session, never client-supplied.
-  // Anonymous/public sends have no signed-in sender, so this naturally no-ops.
-  const senderId = extractSenderId(req);
+  // Anonymous/public sends have no signed-in sender, so this naturally
+  // no-ops. (senderId itself is decoded earlier, beside the suppression
+  // check, which also records it.)
   let senderEmail: string | null = null;
   if (senderId && supabaseUrl && serviceKey) {
     senderEmail = await lookupUserEmail(supabaseUrl, serviceKey, senderId);

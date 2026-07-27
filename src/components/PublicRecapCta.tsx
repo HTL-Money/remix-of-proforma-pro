@@ -20,6 +20,9 @@ const BOOKING_URL = "https://outlook.office.com/bookwithme/user/6ae2ff896ce64b40
 interface PublicRecapCtaProps {
   state: ModelState;
   calc: Calc;
+  /** Big gold call-to-action styling (the promoted top-of-page placement)
+   *  instead of the small outline header button. */
+  prominent?: boolean;
 }
 
 // Anonymous visitors have no Cloud Save button — this is the one action
@@ -28,7 +31,7 @@ interface PublicRecapCtaProps {
 // as the rest of this app's save/snapshot pattern — one failing never
 // blocks the other. After a successful send, the dialog becomes the real
 // CTA: AJ's video + the booking link.
-export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
+export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCtaProps) => {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"email" | "sent">("email");
   const [email, setEmail] = useState("");
@@ -84,13 +87,19 @@ export const PublicRecapCta = ({ state, calc }: PublicRecapCtaProps) => {
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
-        >
-          <Mail className="h-4 w-4 mr-1" /> Email me this recap
-        </Button>
+        {prominent ? (
+          <Button size="lg" className="gold-accent text-accent-foreground hover:opacity-90 shadow-gold w-full sm:w-auto">
+            <Mail className="h-5 w-5 mr-2" /> Email me this recap
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+          >
+            <Mail className="h-4 w-4 mr-1" /> Email me this recap
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className={step === "sent" ? "sm:max-w-xl" : "sm:max-w-md"}>
         <DialogHeader>
