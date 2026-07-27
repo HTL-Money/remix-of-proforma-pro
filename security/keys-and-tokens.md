@@ -53,11 +53,9 @@ member departure and annually.
    cold start.
 3. **Resend key**: Resend dashboard → revoke + re-issue → `supabase secrets
    set RESEND_API_KEY=...`.
-3b. **RETR client secret**: request reissue from RETR (kevan@retr.app) →
-   `supabase secrets set RETR_CLIENT_SECRET=...` → confirm one live lookup →
-   old secret dies upstream. **Do this after initial go-live**: the first
-   credentials transited a chat channel during setup and should be treated as
-   exposed-once.
+3b. **RETR client secret**: request reissue through RETR's standard support
+   channel → `supabase secrets set RETR_CLIENT_SECRET=...` → confirm one live
+   lookup → old secret dies upstream.
 4. **A leaked commit**: rotating the credential is the fix — git history
    rewriting is cosmetic. Then add the leaked pattern to the secret-scan
    regexes in `src/test/security.test.ts` so it can't come back.
