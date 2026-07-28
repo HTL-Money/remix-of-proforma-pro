@@ -43,7 +43,6 @@ export interface ModelState {
   annualFiles: number;
   avgLoanAmount: number;
   avgLoanOverride: boolean;
-  loSplit: number;
   currentSplit: number | null; // stored as percent (BPS / 100)
   loanTypeMix: LoanTypeMix; // sums to 100
   buckets: Bucket[];
@@ -66,10 +65,10 @@ export interface ModelState {
 // the real test; the annual figures are just ×12 for readers who think in years.
 // "90/10" means the LO keeps 90% of gross commission and HTL keeps 10%.
 //
-// These are documented on the pro forma (see the "How the HTL LO Split Works"
-// section) but deliberately NOT auto-applied: the split chip stays a manual
-// choice, so a recruiter can model any band. tierForMonthlyVolume() exists to
-// TELL the reader which band their volume falls in, not to pick it for them.
+// The split is NOT an input: calculate() derives the band from the entered
+// volume via tierForMonthlyVolume(), so the number on screen can never
+// contradict the published tier table. It updates live as volume changes and
+// is displayed read-only (see the "How the HTL LO Split Works" section).
 export interface SplitTier {
   loPct: number;
   htlPct: number;
@@ -134,8 +133,9 @@ export const MIX_PRESETS: MixPreset[] = [
 ];
 
 // Production numbers start zeroed — every figure on screen should be the
-// recruit's real data, never filler. HTL deal terms (split/mix) keep their
-// standard-offer defaults so the flow stays one-tap.
+// recruit's real data, never filler. HTL deal terms (mix) keep their
+// standard-offer defaults so the flow stays one-tap; the split is derived
+// from volume inside calculate(), so it has no default to keep.
 export const defaultState = (): ModelState => ({
   recruitName: "",
   nmls: "",
@@ -143,7 +143,6 @@ export const defaultState = (): ModelState => ({
   annualFiles: 0,
   avgLoanAmount: 0,
   avgLoanOverride: false,
-  loSplit: 90,
   currentSplit: null, // BPS field starts empty
   loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
   buckets: defaultBuckets(),
@@ -180,6 +179,9 @@ export interface Calc {
     nonQmFiles: number;
     totalActiveFiles: number;
   };
+  // The split band this volume qualifies for — derived, never chosen.
+  splitTier: SplitTier;
+  loSplitPct: number;
   brokerPaidSalaries: number;
   brokerPaidBonuses: number;
   htlPaidSalaries: number;
@@ -187,6 +189,10 @@ export interface Calc {
   brokerPaidTotal: number;
   htlPaidTotal: number;
   extraBonusTotal: number;
+  // Salaries + processor bonuses paid by the broker — the exact amount
+  // finalLoNetComp deducts from loNetBeforeHoldback. Per-file LOA/LP bonuses
+  // are NOT in here: they are already netted per bucket via extraBonusCost.
+  salaryObligations: number;
   holdbackSurplus: number;
   finalLoNetComp: number;
   monthlyLoNet: number;
@@ -237,6 +243,11 @@ export const calculate = (s: ModelState): Calc => {
   // a partial-year revenue total against a full year of fixed cost.
   const periodMonths = s.productionPeriodMonths > 0 ? s.productionPeriodMonths : 12;
   const periodFrac = periodMonths / 12;
+  // The split band is a pure function of monthly funded volume. Dividing by
+  // periodMonths (not a flat 12) keeps a partial-period RETR pull honest: a
+  // 6-month, $15M pull is $2.5M/mo, not $1.25M/mo.
+  const monthlyVolume = s.annualVolume / periodMonths;
+  const splitTier = tierForMonthlyVolume(monthlyVolume);
   const allocation = allocateFiles(s);
   // Force broker buckets always active (FHA + default Non-QM live there). Apply correct per-channel fee.
   const bucketsResolved: Bucket[] = s.buckets.map(b => ({
@@ -261,7 +272,7 @@ export const calculate = (s: ModelState): Calc => {
     const dollarVolume = s.annualVolume * (volumePct / 100);
     const avgLoan = b.fileCount > 0 ? dollarVolume / b.fileCount : 0;
     const grossRevenue = dollarVolume * (b.compPct / 100);
-    const loGrossSplit = grossRevenue * (s.loSplit / 100);
+    const loGrossSplit = grossRevenue * (splitTier.loPct / 100);
     const channelFees = b.fileCount * b.perFileFee;
     const extraBonusCost = b.fileCount * extraBonusPerFile;
     const loNetBeforeHoldback = loGrossSplit - channelFees - extraBonusCost;
@@ -302,10 +313,16 @@ export const calculate = (s: ModelState): Calc => {
 
   // Pass 2: spread the holdback across buckets in proportion to what each one
   // actually nets, so per-bucket figures still sum to the total.
+  //
+  // initialLoCash deliberately allocates the FULL salaryObligations, not the
+  // capped holdbackTarget: the recruit-facing take-home column must foot to
+  // finalLoNetComp even when payroll outruns production. teamHoldback keeps
+  // the cap — it is the internal collect-up-front metric and can't exceed the
+  // cash that exists.
   const bucketCalcs: BucketCalc[] = preCalcs.map(c => {
     const share = positivePool > 0 ? Math.max(0, c.loNetBeforeHoldback) / positivePool : 0;
     const teamHoldback = holdbackTarget * share;
-    return { ...c, teamHoldback, initialLoCash: c.loNetBeforeHoldback - teamHoldback };
+    return { ...c, teamHoldback, initialLoCash: c.loNetBeforeHoldback - salaryObligations * share };
   });
 
   const totals = bucketCalcs.reduce((acc, c) => {
@@ -344,8 +361,9 @@ export const calculate = (s: ModelState): Calc => {
   return {
     buckets: bucketCalcs,
     totals,
+    splitTier, loSplitPct: splitTier.loPct,
     brokerPaidSalaries, brokerPaidBonuses, htlPaidSalaries, htlPaidBonuses,
-    brokerPaidTotal, htlPaidTotal, extraBonusTotal,
+    brokerPaidTotal, htlPaidTotal, extraBonusTotal, salaryObligations,
     holdbackSurplus, finalLoNetComp, monthlyLoNet, requiredHoldbackPct,
     currentPlatformAnnual, currentPlatformMonthly, htlAnnual, htlMonthly, diffAnnual, diffMonthly,
     periodMonths,

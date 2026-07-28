@@ -169,10 +169,12 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
   // For 12mo this is literally "per year" — byte-identical to the old copy.
   const periodPhrase = months === 12 ? "per year" : `over the ${periodLabel(months)}`;
 
-  // Alt text carries the dollar amounts so clients that block CID images
-  // (plus the gain banner below) still tell the whole story.
+  // Alt text carries the dollar amounts INCLUDING the gain so clients that
+  // block CID images still tell the whole story — the gain banner is
+  // suppressed whenever the image rides along, so the alt is the only other
+  // carrier of that number above the detail rows.
   const chartAlt = hasComparison
-    ? `Earnings comparison chart: Current platform ${usd(r.current.annual ?? 0)} ${periodPhrase} (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month)`
+    ? `Earnings comparison: Current platform ${usd(r.current.annual ?? 0)} ${periodPhrase} (${usd(r.current.monthly ?? 0)} per month) vs. Hometown Lending ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month) — a modeled gain of ${usd(r.gain.annual ?? 0)} ${periodPhrase}`
     : `Hometown Lending projected earnings chart: ${usd(r.htl.annual)} ${periodPhrase} (${usd(r.htl.monthly)} per month)`;
 
   const bucketRows = r.buckets
@@ -262,7 +264,11 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
     </td></tr>`
     : "";
 
-  const gainBanner = hasComparison
+  // Suppressed when the comparison visual rides along: the image carries its
+  // own gold gain bubble, and repeating the number in a second banner directly
+  // beneath it reads as shouting. The figures still appear as real HTML text
+  // in the detail rows below — that's the image-blocked/text fallback.
+  const gainBanner = hasComparison && !opts.chartCid
     ? `
     <tr><td style="padding:18px 24px 0 24px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${GREEN};border-radius:8px;">

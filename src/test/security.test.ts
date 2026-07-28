@@ -193,7 +193,11 @@ describe("payload isolation — the outbound boundary", () => {
         name: "SECRET-EMPLOYEE-ALICE",
         role: "Processor",
         salary: 87_654,
-        salarySource: "HTL",
+        // Broker-paid so the payload's payroll figure is a genuine AGGREGATE
+        // (Alice + Bob). With a single broker-paid employee the honest total
+        // necessarily equals that one salary — the boundary this test guards
+        // is per-employee objects/names/fields, not the arithmetic sum.
+        salarySource: "Broker",
         qmBonus: 150,
         nonQmBonus: 250,
         bonusSource: "HTL",

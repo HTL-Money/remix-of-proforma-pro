@@ -60,7 +60,7 @@ describe("renderRecapHtml", () => {
   });
 
   it("shows the full content: production, buckets, economics, gain", () => {
-    for (const s of ["Production", "Production Buckets", "LO Economics", "Your Gain at Hometown Lending", "$674,500", "NMLS 123456"]) {
+    for (const s of ["Production", "Production Buckets", "LO Economics", "Your Gain at Hometown Lending", "$633,250", "NMLS 123456"]) {
       expect(html).toContain(s);
     }
   });
@@ -94,10 +94,19 @@ describe("renderRecapHtml with an inline chart image", () => {
     expect(withChart).not.toContain("#f2f2f2"); // grayscale current cell gone
   });
 
-  it("keeps the gain banner and text sections alongside the image", () => {
-    for (const s of ["Your Gain at Hometown Lending", "Production Buckets", "LO Economics", BRANDING_LINE]) {
+  it("suppresses the gain banner (the image carries the gain bubble) but keeps the text sections", () => {
+    // The comparison visual has its own gold gain bubble — a second banner
+    // repeating the number directly beneath it reads as shouting. The detail
+    // rows below stay as the image-blocked/text fallback.
+    expect(withChart).not.toContain("Your Gain at Hometown Lending");
+    for (const s of ["Production Buckets", "LO Economics", BRANDING_LINE]) {
       expect(withChart).toContain(s);
     }
+  });
+
+  it("keeps the gain banner when NO image rides along (text-only email)", () => {
+    const plain = renderRecapHtml(p);
+    expect(plain).toContain("Your Gain at Hometown Lending");
   });
 
   it("carries both annual amounts in the alt text for image-blocking clients", () => {

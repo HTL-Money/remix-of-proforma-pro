@@ -29,6 +29,7 @@ import {
 } from "@/lib/proforma";
 import { Chips } from "@/components/Chips";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
+import HMark from "@/components/HMark";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { CloudSave } from "@/components/CloudSave";
 import { PublicRecapCta } from "@/components/PublicRecapCta";
@@ -128,8 +129,21 @@ const emptyEmployee = (role: Role = "Processor"): Omit<Employee, "id"> => {
 };
 
 
-const AddEmployeeDialog = ({ onAdd, triggerLabel = "Add Employee" }: { onAdd: (emp: Omit<Employee, "id">) => void; triggerLabel?: string }) => {
-  const [open, setOpen] = useState(false);
+const AddEmployeeDialog = ({ onAdd, triggerLabel = "Add Employee", open: openProp, onOpenChange }: {
+  onAdd: (emp: Omit<Employee, "id">) => void;
+  triggerLabel?: string;
+  /** Controlled mode (no trigger rendered) — used by the post-gate payroll
+   *  popup to chain straight into the breakdown screen. */
+  open?: boolean;
+  onOpenChange?: (v: boolean) => void;
+}) => {
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean) => {
+    if (controlled) onOpenChange?.(v);
+    else setOpenState(v);
+  };
   const [role, setRole] = useState<Role>("Processor");
   const [name, setName] = useState("");
   const [salary, setSalary] = useState<number>(PROCESSOR_DEFAULTS.salary);
@@ -171,11 +185,13 @@ const AddEmployeeDialog = ({ onAdd, triggerLabel = "Add Employee" }: { onAdd: (e
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
-      <DialogTrigger asChild>
-        <Button size="sm" className="gold-accent text-accent-foreground hover:opacity-90">
-          <Plus className="h-4 w-4 mr-1" /> {triggerLabel}
-        </Button>
-      </DialogTrigger>
+      {!controlled && (
+        <DialogTrigger asChild>
+          <Button size="sm" className="gold-accent text-accent-foreground hover:opacity-90">
+            <Plus className="h-4 w-4 mr-1" /> {triggerLabel}
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Add Employee</DialogTitle>
@@ -270,9 +286,6 @@ const Index = () => {
   // Live-pull window. Defaults to 12 months (a true annual view); shorter
   // windows show their own actual totals, never annualized (see retrApi.ts).
   const [retrRange, setRetrRange] = useState<RetrDateRange>(RETR_DEFAULT_RANGE);
-  // Temporary "+10%" opportunity preview — never mutates real state, never
-  // reaches a sent recap/animation/docx (those always use calcReal below).
-  const [previewGrowth, setPreviewGrowth] = useState(false);
   // Brief highlight flash on the production fields right after a live pull.
   const [pullFlourish, setPullFlourish] = useState(false);
   // Anonymous visitors: "I don't have any employees" acknowledgment — turns
@@ -284,6 +297,12 @@ const Index = () => {
     sessionStorage.setItem(NO_PAYROLL_KEY, "1");
     setNoPayroll(true);
   };
+  // Post-gate payroll question (owner-requested flow): right after the
+  // NMLS/BPS submit pulls their data, ask once — "yes" opens the employee
+  // breakdown, "no" goes straight to the pro forma with every payroll/
+  // holdback concept omitted. Asked once per session via NO_PAYROLL_KEY.
+  const [payrollPromptOpen, setPayrollPromptOpen] = useState(false);
+  const [payrollBreakdownOpen, setPayrollBreakdownOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -330,35 +349,19 @@ const Index = () => {
     }
   }, [state.annualVolume, state.annualFiles, state.avgLoanOverride]); // eslint-disable-line
 
-  // Volume math shared by the (removed) manual entry path and the +10%
-  // preview below: keeps the average loan steady and rescales the file count.
-  const scaleVolume = (s: ModelState, v: number): ModelState => {
-    const avg = s.avgLoanAmount > 0 ? s.avgLoanAmount : 400_000;
-    const files = v > 0 ? Math.max(1, Math.round(v / avg)) : 0;
-    return { ...s, annualVolume: v, annualFiles: files };
-  };
-
-  // The +10% toggle is a TEMPORARY, view-only overlay — it recomputes the
-  // on-screen comparison at 110% of the real pulled volume without ever
-  // touching `state`. Turning it off instantly reverts everything below,
-  // since effectiveState falls straight back to the real state.
-  const effectiveState = useMemo(
-    () => (previewGrowth && state.annualVolume > 0 ? scaleVolume(state, state.annualVolume * 1.1) : state),
-    [state, previewGrowth],
-  );
-  const calc = useMemo(() => calculate(effectiveState), [effectiveState]); // on-screen comparison only
-  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(effectiveState), [effectiveState]);
-  // The real numbers — ALWAYS used for anything that leaves the page (recap
-  // email, Word report, vault animation). The +10% preview must never leak
-  // into a saved/sent artifact.
-  const calcReal = useMemo(() => calculate(state), [state]);
+  // One calc for everything — on-screen figures and every artifact that
+  // leaves the page (recap email, Word report, vault animation) all read the
+  // same numbers. (The old "+10% preview" overlay that forked this into
+  // effective-vs-real is gone by owner request.)
+  const calc = useMemo(() => calculate(state), [state]);
+  const calcBrokerOnly = useMemo(() => calculateBrokerOnly(state), [state]);
   const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
   const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
 
   // Split tiers key off MONTHLY funded volume. Use the production period the
   // figures actually cover, not a hard /12, so a 6-month RETR pull doesn't
   // report an artificially low monthly average.
-  const monthlyVolume = effectiveState.annualVolume / (calc.periodMonths || 12);
+  const monthlyVolume = state.annualVolume / (calc.periodMonths || 12);
   const qualifyingTier = monthlyVolume > 0 ? tierForMonthlyVolume(monthlyVolume) : null;
 
   // Payroll-dependent columns/cards only make sense once someone is on payroll.
@@ -392,6 +395,9 @@ const Index = () => {
   };
 
 
+  const addEmployee = (emp: Omit<Employee, "id">) => {
+    setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }));
+  };
   const updateEmployee = (id: string, patch: Partial<Employee>) => {
     setState(s => ({ ...s, employees: s.employees.map(e => e.id === id ? { ...e, ...patch } : e) }));
   };
@@ -424,6 +430,10 @@ const Index = () => {
   const handleGateEnter = ({ nmls, report, currentSplit }: { nmls: string; report: StoredRetrReport | null; currentSplit: number | null }) => {
     sessionStorage.setItem(GATE_KEY, "1");
     setGated(false);
+    // Ask the payroll question the moment their data lands — recruits only,
+    // once per session, and never re-asked after an answer. The modal itself
+    // also bails if employees already exist (resumed draft).
+    if (!isTeamMember && !noPayroll) setPayrollPromptOpen(true);
     if (normalizeNmls(state.nmls) === nmls && state.annualVolume > 0) {
       // Same LO as the in-progress draft — resume it rather than clobbering
       // edits. A BPS entered at the gate still applies: it's fresher than
@@ -486,6 +496,44 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Post-gate payroll question. "No" is one tap and lands on the pro
+          forma with no payroll/holdback concept anywhere; "yes" chains into
+          the employee breakdown dialog below. */}
+      <Dialog
+        open={payrollPromptOpen && !hasPayroll}
+        onOpenChange={v => {
+          setPayrollPromptOpen(v);
+          // Dismissing (Esc / outside click) counts as "not now", not "no" —
+          // the inline Team & Payroll card still offers the question.
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Users className="h-5 w-5" /> Team &amp; Payroll</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Do you pay any processors, loan officer assistants, or loan partners out of your production?
+          </p>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              className="sm:flex-1"
+              onClick={() => { confirmNoPayroll(); setPayrollPromptOpen(false); }}
+            >
+              No — it's just me
+            </Button>
+            <Button
+              className="gold-accent text-accent-foreground hover:opacity-90 sm:flex-1"
+              onClick={() => { setPayrollPromptOpen(false); setPayrollBreakdownOpen(true); }}
+            >
+              <Plus className="h-4 w-4 mr-1" /> Yes — add my team
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* The breakdown screen the "yes" path lands on — same dialog the
+          Team section uses, controlled here so the two chain cleanly. */}
+      <AddEmployeeDialog open={payrollBreakdownOpen} onOpenChange={setPayrollBreakdownOpen} onAdd={addEmployee} />
       {/* Hero header */}
       <header className="hero-bg text-primary-foreground border-b border-border/40">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10">
@@ -499,12 +547,20 @@ const Index = () => {
                   onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
                 />
               </div>
-              <div className="md:pt-2 min-w-0">
-                <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 7vw, 6rem)" }}>Hometown Lending</h1>
-                <p className="font-display font-semibold mt-2 md:mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
-                  <span style={{ fontSize: "clamp(1.25rem, 3.5vw, 3rem)" }}>LO Pro Forma:</span>
-                  <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(0.95rem, 1.8vw, 1.5rem)" }}>Your Production's True Value</span>
-                </p>
+              {/* Text + H mark stay on one row at every width (the outer group
+                  stacks logo above text on mobile; this inner row does not). */}
+              <div className="flex items-start gap-3 md:gap-4 min-w-0">
+                <div className="md:pt-2 min-w-0">
+                  <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 7vw, 6rem)" }}>Hometown Lending</h1>
+                  <p className="font-display font-semibold mt-2 md:mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
+                    <span style={{ fontSize: "clamp(1.25rem, 3.5vw, 3rem)" }}>LO Pro Forma:</span>
+                    {/* +4pt (0.333rem) over the old clamp(0.95rem, 1.8vw, 1.5rem) —
+                        added to all three terms so the bump holds at every width,
+                        not just at the clamp edges. */}
+                    <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1.28rem, calc(1.8vw + 0.333rem), 1.83rem)" }}>Your Production's True Value</span>
+                  </p>
+                </div>
+                <HMark className="h-10 w-10 md:h-16 md:w-16 shrink-0 self-start md:mt-2" />
               </div>
 
             </div>
@@ -540,12 +596,16 @@ const Index = () => {
               )}
             <AlertDialog>
               <AlertDialogTrigger asChild>
+                {/* Highlighted yellow by owner request — explicit amber, NOT
+                    bg-accent/gold-accent: those resolve to GREEN in light mode
+                    (the only true gold in the theme is the dark-mode accent).
+                    Same size (icon) and same last-in-row placement as before. */}
                 <Button
                   variant="outline"
                   size="icon"
                   aria-label="Reset"
                   title="Reset"
-                  className="bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+                  className="bg-[hsl(40,85%,52%)] text-[hsl(217,60%,18%)] border-transparent hover:bg-[hsl(40,85%,60%)] hover:text-[hsl(217,60%,18%)] rounded-full"
                 >
                   <RotateCcw className="h-4 w-4" />
                 </Button>
@@ -585,7 +645,7 @@ const Index = () => {
                 Get the full recap — comparison, production buckets, and your personalized report — in your inbox.
               </p>
             </div>
-            <PublicRecapCta state={state} calc={calcReal} prominent />
+            <PublicRecapCta state={state} calc={calc} prominent />
           </div>
         )}
 
@@ -637,27 +697,11 @@ const Index = () => {
             {/* Volume, Files, Avg Loan, and Mix all come from the live RETR
                 pull below — locked, read-only, and blank until a pull lands. */}
             <div className="space-y-2 md:col-span-1 lg:col-span-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor={state.retrSourced ? undefined : "manual-volume"}>{periodLabelTitle(state.productionPeriodMonths)} Funded Volume</Label>
-                {state.annualVolume > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewGrowth(p => !p)}
-                    title="Preview what +10% more volume could look like — temporary, never saved or sent"
-                    className={`text-xs font-semibold rounded-full px-2 py-0.5 border transition-colors ${
-                      previewGrowth
-                        ? "bg-accent text-accent-foreground border-accent"
-                        : "border-accent/40 text-accent hover:bg-accent hover:text-accent-foreground"
-                    }`}
-                  >
-                    +10%
-                  </button>
-                )}
-              </div>
+              <Label htmlFor={state.retrSourced ? undefined : "manual-volume"}>{periodLabelTitle(state.productionPeriodMonths)} Funded Volume</Label>
               {state.retrSourced ? (
                 // RETR-verified figures stay locked read-only (Part J).
                 <div className="max-w-[240px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 text-lg font-semibold tabular-nums">
-                  {state.annualVolume > 0 ? fmtUSD(state.annualVolume) : <span className="text-muted-foreground font-normal text-base">Pull RETR to populate</span>}
+                  {state.annualVolume > 0 ? fmtUSD(state.annualVolume) : <span className="text-muted-foreground font-normal text-base">Pull Live Data to populate</span>}
                 </div>
               ) : (
                 // Manual-entry fallback: no RETR data for this NMLS, so the
@@ -669,9 +713,6 @@ const Index = () => {
                   value={state.annualVolume}
                   onChange={v => setState(s => ({ ...s, annualVolume: v }))}
                 />
-              )}
-              {previewGrowth && (
-                <p className="text-xs font-medium text-accent">Previewing +10% growth — tap +10% again to turn off.</p>
               )}
             </div>
             <div className="space-y-2 md:col-span-1 lg:col-span-2">
@@ -713,8 +754,8 @@ const Index = () => {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button variant="outline" size="sm" className="h-10 flex-1" onClick={pullRetr} disabled={pullingRetr} title="Pull RETR production for this NMLS">
-                  {pullingRetr ? "Pulling…" : "Pull RETR"}
+                <Button variant="outline" size="sm" className="h-10 flex-1" onClick={pullRetr} disabled={pullingRetr} title="Pull live production data for this NMLS">
+                  {pullingRetr ? "Pulling…" : "Live Data"}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">Live pull window — numbers reflect the actual period pulled.</p>
@@ -748,20 +789,24 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>HTL LO Split</Label>
-              <Chips
-                aria-label="HTL LO split"
-                options={[...SPLIT_TIERS].reverse().map(t => ({ label: `${t.loPct}%`, value: t.loPct }))}
-                value={state.loSplit}
-                onChange={v => setState(s => ({ ...s, loSplit: v }))}
-              />
-              {/* Tells the reader which band their volume falls in. Informational
-                  only — it never changes the selected chip. See the "How the HTL
-                  LO Split Works" section at the bottom of the page. */}
-              {qualifyingTier && (
-                <p className="text-xs text-muted-foreground">
-                  At {fmtUSD(monthlyVolume, { compact: true })}/mo this LO is in the{" "}
-                  <span className="font-semibold text-accent">{qualifyingTier.loPct}/{qualifyingTier.htlPct}</span> band.
-                </p>
+              {/* Read-only: the band is DERIVED from monthly volume inside
+                  calculate() and updates live as volume changes. There is
+                  nothing to click — see "How the HTL LO Split Works" at the
+                  bottom of the page for the full tier table. */}
+              {state.annualVolume > 0 ? (
+                <>
+                  <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 text-lg font-semibold tabular-nums">
+                    {calc.splitTier.loPct}/{calc.splitTier.htlPct}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    You keep <span className="font-semibold text-accent">{calc.splitTier.loPct}%</span> at{" "}
+                    {fmtUSD(monthlyVolume, { compact: true })}/mo — set by volume, updates as it changes.
+                  </p>
+                </>
+              ) : (
+                <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40">
+                  <span className="text-muted-foreground font-normal text-base">Set by volume</span>
+                </div>
               )}
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
@@ -846,7 +891,7 @@ const Index = () => {
           {!state.retrSourced && state.annualVolume > 0 && (
             <p className="mt-3 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">Self-reported production</span> — these figures were entered
-              manually, not verified against RETR records. Pull RETR above to replace them with verified data.
+              manually, not verified against RETR records. Pull Live Data above to replace them with verified data.
             </p>
           )}
         </Section>
@@ -866,7 +911,7 @@ const Index = () => {
                 <p className="text-sm text-muted-foreground">✓ No employees added — your pro forma assumes no payroll costs.</p>
                 <AddEmployeeDialog
                   triggerLabel="Actually, add someone"
-                  onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))}
+                  onAdd={addEmployee}
                 />
               </div>
             ) : (
@@ -877,7 +922,7 @@ const Index = () => {
                 <div className="flex flex-col sm:flex-row gap-2">
                   <AddEmployeeDialog
                     triggerLabel="Add processors, LOAs, or loan partners"
-                    onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))}
+                    onAdd={addEmployee}
                   />
                   <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={confirmNoPayroll}>
                     I don't have any employees. I don't pay any payroll.
@@ -892,7 +937,7 @@ const Index = () => {
           title="Team & Employee Support"
           defaultOpen={!isTeamMember}
           compact
-          right={<AddEmployeeDialog onAdd={(emp) => setState(s => ({ ...s, employees: [...s.employees, { id: crypto.randomUUID(), ...emp }] }))} />}
+          right={<AddEmployeeDialog onAdd={addEmployee} />}
         >
           <p className="text-sm text-muted-foreground mb-4">
             Processor salaries and per-file bonuses are paid by Hometown Lending. Loan Officer Assistants and Loan Partners are paid by the broker, and their per-file bonus is deducted from the LO's compensation.
@@ -1063,7 +1108,7 @@ const Index = () => {
                     <p className="text-xs text-primary-foreground/80 mt-1">{fmtUSD(calc.monthlyLoNet)} / month</p>
                     <div className="mt-4 space-y-1 text-xs text-primary-foreground/80 border-t border-primary-foreground/15 pt-3">
                       <div className="flex justify-between"><span>Broker gross</span><span className="tabular-nums">{fmtUSD(htlBrokerGross)}</span></div>
-                      <div className="flex justify-between"><span>LO gross split ({state.loSplit}%)</span><span className="tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</span></div>
+                      <div className="flex justify-between"><span>LO gross split ({calc.loSplitPct}%)</span><span className="tabular-nums">{fmtUSD(calc.totals.loGrossSplit)}</span></div>
                       <div className="flex justify-between text-destructive-foreground/90"><span>Less channel fees</span><span className="tabular-nums">−{fmtUSD(calc.totals.channelFees)}</span></div>
                       {calc.brokerPaidSalaries > 0 && (
                         <div className="flex justify-between text-destructive-foreground/90"><span>Less broker-paid salaries</span><span className="tabular-nums">−{fmtUSD(calc.brokerPaidSalaries)}</span></div>
@@ -1128,7 +1173,6 @@ const Index = () => {
                   <th className="py-3 px-2 font-semibold">Avg Loan</th>
                   <th className="py-3 px-2 font-semibold">Comp %</th>
                   <th className="py-3 px-2 font-semibold">{hasPayroll ? "LO Net Before Payroll" : "LO Net"}</th>
-                  {hasPayroll && <th className="py-3 px-2 font-semibold">Your Payroll Cost</th>}
                   <th className="py-3 pl-2 font-semibold">{hasPayroll ? "LO Net After Payroll" : "Take-Home"}</th>
                 </tr>
               </thead>
@@ -1161,7 +1205,6 @@ const Index = () => {
                         />
                       </td>
                       <td className="px-2 align-top tabular-nums font-semibold">{c ? fmtUSD(c.loNetBeforeHoldback) : "—"}</td>
-                      {hasPayroll && <td className="px-2 align-top tabular-nums text-accent">{c ? fmtUSD(c.teamHoldback) : "—"}</td>}
                       <td className="pl-2 align-top tabular-nums font-semibold text-success">{c ? fmtUSD(c.initialLoCash) : "—"}</td>
                     </tr>
                   );
@@ -1175,7 +1218,6 @@ const Index = () => {
                   <td className="px-2"></td>
                   <td className="px-2"></td>
                   <td className="px-2 tabular-nums">{fmtUSD(calc.totals.loNetBeforeHoldback)}</td>
-                  {hasPayroll && <td className="px-2 tabular-nums text-accent">{fmtUSD(calc.totals.teamHoldback)}</td>}
                   <td className="pl-2 tabular-nums text-success">{fmtUSD(calc.totals.initialLoCash)}</td>
                 </tr>
               </tfoot>
@@ -1192,7 +1234,19 @@ const Index = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="premium-card p-5"><Stat label={hasPayroll ? "LO Net Before Payroll" : "Total LO Net"} value={fmtUSD(calc.totals.loNetBeforeHoldback)} /></div>
             {hasPayroll && (
-              <div className="premium-card p-5"><Stat label="Your Team Payroll Cost" value={fmtUSD(calc.brokerPaidTotal)} accent="gold" /></div>
+              // salaryObligations, not brokerPaidTotal: per-file LOA/LP bonuses
+              // are already deducted inside "LO Net Before Payroll", so this trio
+              // must show only what's deducted BETWEEN card 1 and card 3 —
+              // otherwise the three cards don't foot.
+              <div className="premium-card p-5">
+                <Stat label="Your Team Payroll Cost" value={fmtUSD(calc.salaryObligations)} accent="gold" />
+                {calc.extraBonusTotal > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Per-file LOA / Loan Partner bonuses ({fmtUSD(calc.extraBonusTotal)}) are already deducted
+                    inside each bucket's LO Net above.
+                  </p>
+                )}
+              </div>
             )}
 
             <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
@@ -1208,8 +1262,11 @@ const Index = () => {
             holdback is no longer something the LO picks or even sees; it is
             derived from their actual overhead so HTL can size an offer. The
             recruit's own numbers above are unaffected: finalLoNetComp deducts
-            payroll in full either way, so nothing material is hidden here. */}
-        {isTeamMember && hasPayroll && (
+            payroll in full either way, so nothing material is hidden here.
+            Gated on a REAL signed-in user (not isTeamMember): when auth is
+            unconfigured isTeamMember is true for everyone, which would leak
+            this block to any visitor who adds an employee. */}
+        {!!user && hasPayroll && (
           <Section icon={<Lock className="h-5 w-5" />} title="Internal — Payroll Economics" defaultOpen={false}>
             <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning-foreground mb-4 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -1271,8 +1328,8 @@ const Index = () => {
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
             Monthly volume is the test; the annual figures are the same thresholds ×12, shown for readers who
-            think in years. Volume at a boundary falls in the lower band. The figures elsewhere on this page use
-            whichever split is selected in the Production section above — change it there to model another band.
+            think in years. Volume at a boundary falls in the lower band. The split is applied automatically from
+            the volume entered above — every figure on this page already uses the band your production qualifies for.
           </p>
         </Section>
 

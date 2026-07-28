@@ -488,6 +488,29 @@ const sendSourcingAlert = async (nmls: string, previousSourcedBy: string, newSou
   }
 };
 
+/** Internal heads-up when a recap is withheld because the modeled HTL comp
+ *  doesn't beat the recruit's current comp. Sending them "your ceiling just
+ *  moved" over a zero/negative gain would be dishonest marketing — the team
+ *  gets the numbers instead and decides how to approach. Best-effort. */
+const sendNegativeGainAlert = async (recap: RecapPayload, recruitTo: string, gainAnnual: number): Promise<void> => {
+  try {
+    const graph = graphConfig();
+    const resendKey = Deno.env.get("RESEND_API_KEY");
+    if (!graph && !resendKey) return;
+    const fmt = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+    const subject = `Recap withheld (no gain) — ${recap.loName || recap.savedName || "unnamed"}${recap.nmls ? ` / NMLS ${recap.nmls}` : ""}`;
+    const html = `<p>A pro forma recap was <b>not</b> emailed because the modeled Hometown Lending comp does not beat the recruit's current comp.</p>
+      <p>LO: <b>${escHtml(recap.loName || recap.savedName || "—")}</b>${recap.nmls ? ` · NMLS ${escHtml(recap.nmls)}` : ""}<br/>
+      Recipient (not sent): ${escHtml(recruitTo)}<br/>
+      Current annual: <b>${fmt(recap.current.annual ?? 0)}</b> · HTL annual: <b>${fmt(recap.htl.annual)}</b> · Gain: <b>${fmt(gainAnnual)}</b></p>
+      <p>The submission itself was still recorded. This is an automatic internal alert — no email reached the recruit.</p>`;
+    if (graph) await sendViaGraph(graph, LO_SOURCING_ALERT_TO, subject, html, {}, []);
+    else await sendViaResend(resendKey!, LO_SOURCING_ALERT_TO, subject, html, {}, []);
+  } catch (e) {
+    console.error("negative-gain alert send failed (non-fatal)", e);
+  }
+};
+
 /** Records who sourced this LO, first-sender-wins with a configurable
  *  expiry. Runs AFTER a successful send. Never surfaced to the recipient —
  *  purely backend bookkeeping. */
@@ -533,8 +556,10 @@ Deno.serve(async (req: Request) => {
     // renderRecapHtml reads recap.current/gain/buckets/totals unconditionally;
     // a partial payload that slipped past a two-field check would throw at
     // render time (outside any try) → an ungraceful platform 500 with no CORS.
-    // The numeric checks also close an HTML-injection hole: loSplit/holdbackPct/
-    // currentBps are interpolated into the email, so a string here is markup.
+    // The numeric checks also close an HTML-injection hole: loSplit/currentBps
+    // are interpolated into the email, so a string here is markup.
+    // (holdbackPct and totals.teamHoldback are RETIRED payload keys — the
+    // holdback became a derived internal metric and no longer travels.)
     const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
     const isNumOrNull = (v: unknown) => v == null || isNum(v);
     if (
@@ -543,12 +568,12 @@ Deno.serve(async (req: Request) => {
       !recap.htl || !isNum(recap.htl.annual) || !isNum(recap.htl.monthly) ||
       !recap.current || !isNumOrNull(recap.current.annual) || !isNumOrNull(recap.current.monthly) ||
       !recap.gain || !isNumOrNull(recap.gain.annual) || !isNumOrNull(recap.gain.monthly) ||
-      !isNum(recap.loSplit) || !isNum(recap.holdbackPct) || !isNumOrNull(recap.currentBps) ||
+      !isNum(recap.loSplit) || !isNumOrNull(recap.currentBps) ||
       !isNumOrNull(recap.volume) || !isNumOrNull(recap.files) || !isNumOrNull(recap.avgLoan) ||
       !Array.isArray(recap.buckets) ||
       !recap.buckets.every(b => b && typeof b.label === "string" && isNum(b.compPct)) ||
       !recap.totals ||
-      ![recap.totals.loNetBeforeHoldback, recap.totals.teamHoldback, recap.totals.brokerPaidTotal, recap.totals.finalLoNetComp].every(isNumOrNull)
+      ![recap.totals.loNetBeforeHoldback, recap.totals.brokerPaidTotal, recap.totals.finalLoNetComp].every(isNumOrNull)
     ) {
       return json(400, { error: "Invalid recap payload." });
     }
@@ -626,6 +651,33 @@ Deno.serve(async (req: Request) => {
 
   if (supabaseUrl && serviceKey && !(await withinRateLimit(supabaseUrl, serviceKey, to))) {
     return json(429, { error: "Too many recap emails sent to this address recently. Try again in a bit." });
+  }
+
+  // Zero/negative-gain guard — SERVER-side and recomputed from the raw
+  // figures (never trusting the client's recap.gain), so no client can
+  // accidentally send a "your ceiling just moved" email over a number that
+  // moved down. No BPS entered (current.annual == null) means there is no
+  // comparison to lose — those send normally.
+  const gainAnnual = recap.current.annual != null ? recap.htl.annual - recap.current.annual : null;
+  if (gainAnnual != null && gainAnnual <= 0) {
+    await sendNegativeGainAlert(recap, to, gainAnnual);
+    if (supabaseUrl && serviceKey) {
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
+          method: "POST",
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ sent_to: to, sent_by: senderId, status: "negative_gain", payload: null }),
+        });
+      } catch (e) {
+        console.error("negative-gain audit log failed (non-fatal)", e);
+      }
+    }
+    return json(200, { ok: true, suppressed: "negative_gain" });
   }
 
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;

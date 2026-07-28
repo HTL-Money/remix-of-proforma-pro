@@ -8,6 +8,7 @@ import { toast } from "@/hooks/use-toast";
 import { ModelState, Calc } from "@/lib/proforma";
 import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
+import { renderCeilingVisualPng } from "@/lib/ceilingVisual";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { submitPublicProforma } from "@/lib/proformaStore";
 import { hashRecap } from "@/lib/recapLink";
@@ -57,7 +58,9 @@ export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCt
       } catch (e) {
         console.warn("Public submission not stored:", e);
       }
-      const chartPng = renderRecapChartPng(payload);
+      // The "Your ceiling just moved" visual is the email body; the classic
+      // chart is the fallback when the artwork can't render. Both best-effort.
+      const chartPng = (await renderCeilingVisualPng(payload)) ?? renderRecapChartPng(payload);
       // Word report: best-effort (returns null rather than throws) — a
       // rendering hiccup never blocks the email. The presentation (Gamma) is
       // the single deliverable in the email body now — no separate graphic.

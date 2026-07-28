@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/auth";
 import { buildRecapPayload, sendRecap, isValidEmail, RecapPayload } from "@/lib/recapEmail";
 import { renderRecapChartPng } from "@/lib/recapChart";
+import { renderCeilingVisualPng } from "@/lib/ceilingVisual";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
 import { autoAdvanceOnRecap } from "@/lib/pipeline";
 import { hashRecap } from "@/lib/recapLink";
@@ -63,10 +64,12 @@ export const CloudSave = ({ state, onLoad }: CloudSaveProps) => {
     }
     setSending(true);
     try {
-      // Null chart (no comparison, or no canvas) just means the email keeps
+      // The "Your ceiling just moved" visual is the email body; the classic
+      // comparison chart is the fallback when the artwork can't render
+      // (missing file, no canvas). Null from both just means the email keeps
       // its HTML comparison cells — never a blocked send. Same posture for
       // the Word report: null = email without it.
-      const chartPng = renderRecapChartPng(pendingRecap.payload);
+      const chartPng = (await renderCeilingVisualPng(pendingRecap.payload)) ?? renderRecapChartPng(pendingRecap.payload);
       const docx = await buildRecapDocxBase64(pendingRecap.payload);
       // Queue the deck before sending so it can be attached — same ordering
       // and same non-fatal posture as the public flow.

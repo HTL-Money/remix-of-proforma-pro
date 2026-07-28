@@ -9,10 +9,17 @@ export interface ProformaSummary {
   updated_at: string;
 }
 
-/** Merge stored JSON with defaults so older saves stay compatible with newer state shapes. */
-const hydrate = (data: unknown): ModelState => {
+/** Merge stored JSON with defaults so older saves stay compatible with newer
+ *  state shapes. Exported for tests — the legacy-key stripping below is the
+ *  one place an old blob could silently resurrect a retired input. */
+export const hydrate = (data: unknown): ModelState => {
   const def = defaultState();
-  const parsed = (data ?? {}) as Partial<ModelState>;
+  const parsed = { ...((data ?? {}) as Partial<ModelState> & { loSplit?: number; holdbackPct?: number }) };
+  // Retired inputs that may linger in old blobs. The split is now DERIVED from
+  // volume inside calculate(); left in place, a stored manual value would ride
+  // the spread below and shadow the derived one.
+  delete parsed.loSplit;
+  delete parsed.holdbackPct;
   return { ...def, ...parsed, buckets: parsed.buckets ?? def.buckets, employees: parsed.employees ?? def.employees };
 };
 
@@ -52,7 +59,7 @@ const economicsColumns = (state: ModelState) => {
   return {
     nmls: state.nmls || null,
     annual_volume: state.annualVolume,
-    lo_split: state.loSplit,
+    lo_split: calc.loSplitPct,
     employee_count: state.employees.length,
     payroll_overhead: calc.brokerPaidSalaries + calc.brokerPaidBonuses,
     derived_holdback_pct: calc.requiredHoldbackPct,
