@@ -222,8 +222,7 @@ const RecapView = () => {
             <Row label={`${periodTitle} funded volume`} value={usd(recap.volume)} />
             <Row label={`${periodTitle} funded files`} value={num(recap.files)} />
             <Row label="Average loan amount" value={usd(recap.avgLoan)} />
-            <Row label="HTL LO split" value={`${num(recap.loSplit)}%`} />
-            <Row label="Team-support holdback" value={`${num(recap.holdbackPct)}%`} />
+            <Row label="HTL LO split" value={`${num(recap.loSplit)}/${100 - Number(recap.loSplit)} — you keep ${num(recap.loSplit)}%`} />
             <Row label="Channel strategy" value={recap.corrActive ? "Broker + Correspondent" : "Broker Only"} />
           </dl>
         </section>
@@ -234,9 +233,8 @@ const RecapView = () => {
             LO Economics
           </h2>
           <dl className="mt-3 space-y-2 text-[13px]">
-            <Row label="LO net before holdback" value={usd(recap.totals.loNetBeforeHoldback)} />
-            <Row label="Team-support holdback" value={usd(recap.totals.teamHoldback)} />
-            <Row label="Broker-paid team costs" value={usd(recap.totals.brokerPaidTotal)} />
+            <Row label="LO net before payroll" value={usd(recap.totals.loNetBeforeHoldback)} />
+            <Row label="Your team payroll cost" value={usd(recap.totals.brokerPaidTotal)} />
             <div className="flex items-center justify-between pt-2">
               <span className="text-sm font-extrabold" style={{ color: NAVY }}>
                 {months === 12 ? "Final LO net annual comp" : `Final LO net comp — ${periodTitle}`}

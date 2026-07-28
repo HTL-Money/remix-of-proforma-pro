@@ -56,10 +56,11 @@ export const prepareChartData = (r: RecapPayload): RecapChartData | null => {
   };
 };
 
-const FONT = "Arial, Helvetica, sans-serif";
+export const FONT = "Arial, Helvetica, sans-serif";
 
 // Manual path instead of ctx.roundRect — older Safari lacks it.
-const roundedRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+// (Exported for ceilingVisual.ts, which composites the same way.)
+export const roundedRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
   const rr = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
   ctx.moveTo(x + rr, y);
@@ -71,13 +72,13 @@ const roundedRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: num
 };
 
 // letterSpacing is Chromium-only; purely cosmetic elsewhere.
-const setLetterSpacing = (ctx: CanvasRenderingContext2D, v: string) => {
+export const setLetterSpacing = (ctx: CanvasRenderingContext2D, v: string) => {
   const c = ctx as CanvasRenderingContext2D & { letterSpacing?: string };
   if ("letterSpacing" in c) c.letterSpacing = v;
 };
 
 // Shrinks the font until the text fits — eight-figure producers exist.
-const fillTextFit = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, weight: string, basePx: number, maxW: number) => {
+export const fillTextFit = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, weight: string, basePx: number, maxW: number) => {
   let px = basePx;
   ctx.font = `${weight} ${px}px ${FONT}`;
   while (px > basePx * 0.6 && ctx.measureText(text).width > maxW) {

@@ -15,8 +15,10 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   files: state.annualFiles,
   avgLoan: Math.round(state.avgLoanAmount),
   currentBps: state.currentSplit == null ? null : Math.round(state.currentSplit * 100),
-  loSplit: state.loSplit,
-  holdbackPct: state.holdbackPct,
+  // Derived from volume (never chosen), but still a plain number in the
+  // payload — the function validates it with isNum, which also closes an
+  // HTML-injection hole. Do not make this nullable.
+  loSplit: calc.loSplitPct,
   corrActive: state.buckets.some(b => b.channel === "Correspondent" && b.active),
   current: { annual: calc.currentPlatformAnnual, monthly: calc.currentPlatformMonthly },
   htl: { annual: calc.finalLoNetComp, monthly: calc.monthlyLoNet },
@@ -30,8 +32,11 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   })),
   totals: {
     loNetBeforeHoldback: calc.totals.loNetBeforeHoldback,
-    teamHoldback: calc.totals.teamHoldback,
-    brokerPaidTotal: calc.brokerPaidTotal,
+    // salaryObligations, NOT brokerPaidTotal: the trio must foot
+    // (before − payroll = final). Per-file LOA/LP bonuses are already
+    // deducted inside each bucket's loNet, so including them here
+    // (as brokerPaidTotal does) double-counts the deduction.
+    brokerPaidTotal: calc.salaryObligations,
     finalLoNetComp: calc.finalLoNetComp,
   },
   proformaId,
@@ -84,9 +89,15 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
     throw new Error(error.message || "The recap email couldn't be sent.");
   }
   // Suppression is a 200 with a marker, not an error — the function refused
-  // cleanly because this address opted out. Tell the sender honestly instead
-  // of letting the UI claim "sent" for an email that will never arrive.
-  if ((data as { suppressed?: boolean } | null)?.suppressed) {
+  // cleanly. Two flavors: the address opted out, or the modeled gain is
+  // zero/negative (server-side guard — the "ceiling just moved" email must
+  // never ship over a number that moved down). Tell the sender honestly
+  // instead of letting the UI claim "sent" for an email that never arrives.
+  const suppressed = (data as { suppressed?: boolean | string } | null)?.suppressed;
+  if (suppressed === "negative_gain") {
+    throw new Error("This recap wasn't emailed — the submission was recorded and our team will follow up personally.");
+  }
+  if (suppressed) {
     throw new Error("This address has unsubscribed from Hometown Lending emails, so no recap was sent. Email marketing@hometownlend.com to opt back in.");
   }
 };

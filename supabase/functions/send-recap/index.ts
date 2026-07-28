@@ -8,6 +8,10 @@
 //      Unset any one of them to fall back to Resend instantly.
 //   2. Resend — RESEND_API_KEY, optional RECAP_FROM ("Name <addr>").
 //
+// Test-mode lock: set RECAP_TEST_ONLY_TO (e.g. james@hometownlend.com) and
+// this function will only ever email that address — other recipients get a
+// 403, and all BCCs / internal alerts are suppressed. Unset it to go live.
+//
 // Deploy:   supabase functions deploy send-recap
 //
 // verify_jwt (on by default) only checks that the bearer token is a validly
@@ -88,10 +92,18 @@ const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").re
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
-// Every recap is BCC'd to marketing for the team's records. The per-recipient
-// rate limit is keyed on `to` only (see withinRateLimit), so this fixed
-// internal BCC never counts against — or is throttled by — a recruit's cap.
-const BCC_RECIPIENTS = ["marketing@hometownlend.com"];
+// Every recap is BCC'd here for the team's records (owner-directed address).
+// The per-recipient rate limit is keyed on `to` only (see withinRateLimit),
+// so this fixed internal BCC never counts against — or is throttled by — a
+// recruit's cap.
+const BCC_RECIPIENTS = ["chris@utilitypartnersusa.com"];
+// Test-mode lock (owner-directed): while RECAP_TEST_ONLY_TO is set, the ONLY
+// mailbox this function may email — for any reason — is that address. Recap
+// sends addressed to anyone else are refused, and every side email (internal
+// BCC, sender copy-back, sourcing/negative-gain alerts) is dropped, so a live
+// test can never leak mail to a real recruit or teammate. Unset the secret to
+// restore normal delivery.
+const TEST_ONLY_TO = (Deno.env.get("RECAP_TEST_ONLY_TO") ?? "").trim().toLowerCase() || null;
 // Replies always route to Aryan, whichever mailbox actually sends. Overridable
 // via secret so it can change without a code deploy.
 const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";
@@ -474,6 +486,10 @@ const reassignSourcingRow = async (
  *  provider is already configured — best-effort, never throws. */
 const sendSourcingAlert = async (nmls: string, previousSourcedBy: string, newSourcedBy: string): Promise<void> => {
   try {
+    if (TEST_ONLY_TO) {
+      console.log("test mode: sourcing alert suppressed", { nmls });
+      return;
+    }
     const graph = graphConfig();
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!graph && !resendKey) return;
@@ -485,6 +501,33 @@ const sendSourcingAlert = async (nmls: string, previousSourcedBy: string, newSou
     else await sendViaResend(resendKey!, LO_SOURCING_ALERT_TO, subject, html, {}, []);
   } catch (e) {
     console.error("sourcing alert send failed (non-fatal)", e);
+  }
+};
+
+/** Internal heads-up when a recap is withheld because the modeled HTL comp
+ *  doesn't beat the recruit's current comp. Sending them "your ceiling just
+ *  moved" over a zero/negative gain would be dishonest marketing — the team
+ *  gets the numbers instead and decides how to approach. Best-effort. */
+const sendNegativeGainAlert = async (recap: RecapPayload, recruitTo: string, gainAnnual: number): Promise<void> => {
+  try {
+    if (TEST_ONLY_TO) {
+      console.log("test mode: negative-gain alert suppressed", { recruitTo });
+      return;
+    }
+    const graph = graphConfig();
+    const resendKey = Deno.env.get("RESEND_API_KEY");
+    if (!graph && !resendKey) return;
+    const fmt = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+    const subject = `Recap withheld (no gain) — ${recap.loName || recap.savedName || "unnamed"}${recap.nmls ? ` / NMLS ${recap.nmls}` : ""}`;
+    const html = `<p>A pro forma recap was <b>not</b> emailed because the modeled Hometown Lending comp does not beat the recruit's current comp.</p>
+      <p>LO: <b>${escHtml(recap.loName || recap.savedName || "—")}</b>${recap.nmls ? ` · NMLS ${escHtml(recap.nmls)}` : ""}<br/>
+      Recipient (not sent): ${escHtml(recruitTo)}<br/>
+      Current annual: <b>${fmt(recap.current.annual ?? 0)}</b> · HTL annual: <b>${fmt(recap.htl.annual)}</b> · Gain: <b>${fmt(gainAnnual)}</b></p>
+      <p>The submission itself was still recorded. This is an automatic internal alert — no email reached the recruit.</p>`;
+    if (graph) await sendViaGraph(graph, LO_SOURCING_ALERT_TO, subject, html, {}, []);
+    else await sendViaResend(resendKey!, LO_SOURCING_ALERT_TO, subject, html, {}, []);
+  } catch (e) {
+    console.error("negative-gain alert send failed (non-fatal)", e);
   }
 };
 
@@ -529,12 +572,17 @@ Deno.serve(async (req: Request) => {
     to = String(body.to ?? "").trim();
     recap = body.recap as RecapPayload;
     if (!EMAIL_RE.test(to)) return json(400, { error: "Invalid recipient email address." });
+    if (TEST_ONLY_TO && normalizeEmail(to) !== TEST_ONLY_TO) {
+      return json(403, { error: `Test mode: recaps can only be sent to ${TEST_ONLY_TO} right now.` });
+    }
     // Validate the FULL shape the template dereferences — not just two fields.
     // renderRecapHtml reads recap.current/gain/buckets/totals unconditionally;
     // a partial payload that slipped past a two-field check would throw at
     // render time (outside any try) → an ungraceful platform 500 with no CORS.
-    // The numeric checks also close an HTML-injection hole: loSplit/holdbackPct/
-    // currentBps are interpolated into the email, so a string here is markup.
+    // The numeric checks also close an HTML-injection hole: loSplit/currentBps
+    // are interpolated into the email, so a string here is markup.
+    // (holdbackPct and totals.teamHoldback are RETIRED payload keys — the
+    // holdback became a derived internal metric and no longer travels.)
     const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
     const isNumOrNull = (v: unknown) => v == null || isNum(v);
     if (
@@ -543,12 +591,12 @@ Deno.serve(async (req: Request) => {
       !recap.htl || !isNum(recap.htl.annual) || !isNum(recap.htl.monthly) ||
       !recap.current || !isNumOrNull(recap.current.annual) || !isNumOrNull(recap.current.monthly) ||
       !recap.gain || !isNumOrNull(recap.gain.annual) || !isNumOrNull(recap.gain.monthly) ||
-      !isNum(recap.loSplit) || !isNum(recap.holdbackPct) || !isNumOrNull(recap.currentBps) ||
+      !isNum(recap.loSplit) || !isNumOrNull(recap.currentBps) ||
       !isNumOrNull(recap.volume) || !isNumOrNull(recap.files) || !isNumOrNull(recap.avgLoan) ||
       !Array.isArray(recap.buckets) ||
       !recap.buckets.every(b => b && typeof b.label === "string" && isNum(b.compPct)) ||
       !recap.totals ||
-      ![recap.totals.loNetBeforeHoldback, recap.totals.teamHoldback, recap.totals.brokerPaidTotal, recap.totals.finalLoNetComp].every(isNumOrNull)
+      ![recap.totals.loNetBeforeHoldback, recap.totals.brokerPaidTotal, recap.totals.finalLoNetComp].every(isNumOrNull)
     ) {
       return json(400, { error: "Invalid recap payload." });
     }
@@ -628,6 +676,33 @@ Deno.serve(async (req: Request) => {
     return json(429, { error: "Too many recap emails sent to this address recently. Try again in a bit." });
   }
 
+  // Zero/negative-gain guard — SERVER-side and recomputed from the raw
+  // figures (never trusting the client's recap.gain), so no client can
+  // accidentally send a "your ceiling just moved" email over a number that
+  // moved down. No BPS entered (current.annual == null) means there is no
+  // comparison to lose — those send normally.
+  const gainAnnual = recap.current.annual != null ? recap.htl.annual - recap.current.annual : null;
+  if (gainAnnual != null && gainAnnual <= 0) {
+    await sendNegativeGainAlert(recap, to, gainAnnual);
+    if (supabaseUrl && serviceKey) {
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
+          method: "POST",
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ sent_to: to, sent_by: senderId, status: "negative_gain", payload: null }),
+        });
+      } catch (e) {
+        console.error("negative-gain audit log failed (non-fatal)", e);
+      }
+    }
+    return json(200, { ok: true, suppressed: "negative_gain" });
+  }
+
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
   // BOOKING_URL secret (Microsoft Bookings page) turns on the "Book a
   // recruiting call" button in the email; unset = button omitted.
@@ -665,9 +740,11 @@ Deno.serve(async (req: Request) => {
   // Never BCC an address that's already the primary recipient (e.g. a test
   // send straight to marketing, or someone emailing their own recap) — that
   // would double-deliver.
-  const bcc = [...BCC_RECIPIENTS, ...(senderEmail ? [senderEmail] : [])].filter(
-    (a, i, arr) => a.toLowerCase() !== to.toLowerCase() && arr.indexOf(a) === i,
-  );
+  const bcc = TEST_ONLY_TO
+    ? [] // test mode: nobody but the test address gets a copy
+    : [...BCC_RECIPIENTS, ...(senderEmail ? [senderEmail] : [])].filter(
+        (a, i, arr) => a.toLowerCase() !== to.toLowerCase() && arr.indexOf(a) === i,
+      );
   try {
     if (graph) await sendViaGraph(graph, to, subject, html, attachments, bcc);
     else await sendViaResend(resendKey!, to, subject, html, attachments, bcc);

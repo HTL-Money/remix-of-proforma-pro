@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard.tsx";
 import Index from "./pages/Index.tsx";
 import Targets from "./pages/Targets.tsx";
 import SentEmails from "./pages/SentEmails.tsx";
+import Submissions from "./pages/Submissions.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import RecapView from "./pages/RecapView.tsx";
 
@@ -62,6 +63,7 @@ const App = () => (
                       <Route path="/calculator" element={<Index />} />
                       <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
                       <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
+                      <Route path="/submissions" element={<RequireAuth><Submissions /></RequireAuth>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
                     </Routes>

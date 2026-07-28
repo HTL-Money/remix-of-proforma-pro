@@ -29,7 +29,8 @@ describe("prepareChartData", () => {
     expect(d!.current.annual).toBe(fmtUSD(p.current.annual!));
     expect(d!.htl.title).toBe("HOMETOWN LENDING");
     expect(d!.htl.annual).toBe(fmtUSD(p.htl.annual));
-    expect(d!.htl.subtitle).toContain("90% split");
+    // $30M/yr = $2.5M/mo → the derived 85/15 band.
+    expect(d!.htl.subtitle).toContain("85% split");
   });
 
   it("scales the bars to the larger amount", () => {

@@ -9,6 +9,8 @@ import {
   QM_FEE,
   NONQM_FEE,
   CORR_FEE,
+  SPLIT_TIERS,
+  tierForAnnualVolume,
 } from "@/lib/proforma";
 
 // allocateFiles is not exported; exercise it indirectly through calculate()/calculateBrokerOnly()
@@ -41,8 +43,8 @@ describe("defaultState: zeroed-out start", () => {
     expect(s.recruitName).toBe("");
     expect(s.nmls).toBe("");
     // Deal terms are the standard HTL offer, not filler data — they stay.
-    expect(s.loSplit).toBe(90);
-    expect(s.holdbackPct).toBe(10);
+    // (The split is no longer part of state at all: calculate() derives it
+    // from volume, so a zeroed state has nothing to assert here.)
     expect(s.loanTypeMix).toEqual({ fha: 20, va: 15, conv: 55, nonqm: 10 });
   });
 
@@ -149,9 +151,11 @@ describe("allocateFiles (exercised via calculate())", () => {
   });
 });
 
-describe("golden scenario: $30,000,000 / 100 files / mix {fha:20, va:15, conv:55, nonqm:10} / loSplit 90 / holdback 10", () => {
+describe("golden scenario: $30,000,000 / 100 files / mix {fha:20, va:15, conv:55, nonqm:10} / derived split 85 (2.5M/mo band)", () => {
   // Default bucket comp percentages used (from defaultBuckets()):
   //   broker_qm compPct = 2.75, broker_nonqm compPct = 2.75, corr_qm compPct = 3.25, corr_nonqm compPct = 3.25
+  //
+  // The split is DERIVED: $30M over 12 months = $2.5M/mo → the 85/15 band.
   //
   // Allocation (shared by both variants):
   //   fha  = round(100*0.20) = 20
@@ -163,11 +167,14 @@ describe("golden scenario: $30,000,000 / 100 files / mix {fha:20, va:15, conv:55
     const s = baseState({
       annualVolume: 30_000_000,
       annualFiles: 100,
-      loSplit: 90,
-      holdbackPct: 10,
       loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
     });
     const calc = calculate(s);
+
+    it("derives the 85/15 band from volume", () => {
+      expect(calc.loSplitPct).toBe(85);
+      expect(calc.splitTier.htlPct).toBe(15);
+    });
 
     it("allocates all QM files (fha+va+conv=90) to broker_qm and remainder (10) to broker_nonqm", () => {
       expect(fileCountOf(calc, "broker_qm")).toBe(90);
@@ -178,65 +185,61 @@ describe("golden scenario: $30,000,000 / 100 files / mix {fha:20, va:15, conv:55
       // volumePct = 90/100*100 = 90%
       // dollarVolume = 30,000,000 * 0.90 = 27,000,000
       // grossRevenue = 27,000,000 * 0.0275 = 742,500
-      // loGrossSplit = 742,500 * 0.90 = 668,250
+      // loGrossSplit = 742,500 * 0.85 = 631,125
       // channelFees = 90 * 650 = 58,500
-      // loNetBeforeHoldback = 668,250 - 58,500 = 609,750
-      // teamHoldback = 609,750 * 0.10 = 60,975
-      // initialLoCash = 609,750 - 60,975 = 548,775
+      // loNetBeforeHoldback = 631,125 - 58,500 = 572,625
       const row = calc.buckets.find(b => b.bucket.key === "broker_qm")!;
       expect(row.volumePct).toBeCloseTo(90, 6);
       expect(row.dollarVolume).toBeCloseTo(27_000_000, 2);
       expect(row.grossRevenue).toBeCloseTo(742_500, 2);
-      expect(row.loGrossSplit).toBeCloseTo(668_250, 2);
+      expect(row.loGrossSplit).toBeCloseTo(631_125, 2);
       expect(row.channelFees).toBeCloseTo(58_500, 2);
-      expect(row.loNetBeforeHoldback).toBeCloseTo(609_750, 2);
-      expect(row.teamHoldback).toBeCloseTo(60_975, 2);
-      expect(row.initialLoCash).toBeCloseTo(548_775, 2);
+      expect(row.loNetBeforeHoldback).toBeCloseTo(572_625, 2);
+      expect(row.teamHoldback).toBe(0); // no employees -> nothing to hold back
+      expect(row.initialLoCash).toBeCloseTo(572_625, 2);
     });
 
     it("computes broker_nonqm bucket row exactly", () => {
       // volumePct = 10%
       // dollarVolume = 30,000,000 * 0.10 = 3,000,000
       // grossRevenue = 3,000,000 * 0.0275 = 82,500
-      // loGrossSplit = 82,500 * 0.90 = 74,250
+      // loGrossSplit = 82,500 * 0.85 = 70,125
       // channelFees = 10 * 950 = 9,500
-      // loNetBeforeHoldback = 74,250 - 9,500 = 64,750
-      // teamHoldback = 64,750 * 0.10 = 6,475
-      // initialLoCash = 64,750 - 6,475 = 58,275
+      // loNetBeforeHoldback = 70,125 - 9,500 = 60,625
       const row = calc.buckets.find(b => b.bucket.key === "broker_nonqm")!;
       expect(row.volumePct).toBeCloseTo(10, 6);
       expect(row.dollarVolume).toBeCloseTo(3_000_000, 2);
       expect(row.grossRevenue).toBeCloseTo(82_500, 2);
-      expect(row.loGrossSplit).toBeCloseTo(74_250, 2);
+      expect(row.loGrossSplit).toBeCloseTo(70_125, 2);
       expect(row.channelFees).toBeCloseTo(9_500, 2);
-      expect(row.loNetBeforeHoldback).toBeCloseTo(64_750, 2);
-      expect(row.teamHoldback).toBeCloseTo(6_475, 2);
-      expect(row.initialLoCash).toBeCloseTo(58_275, 2);
+      expect(row.loNetBeforeHoldback).toBeCloseTo(60_625, 2);
+      expect(row.teamHoldback).toBe(0);
+      expect(row.initialLoCash).toBeCloseTo(60_625, 2);
     });
 
     it("computes totals exactly (no employees, so totals overwrite is a no-op: extraBonusTotal=0)", () => {
       // totals.grossRevenue = 742,500 + 82,500 = 825,000
-      // totals.loGrossSplit = 668,250 + 74,250 = 742,500
+      // totals.loGrossSplit = 631,125 + 70,125 = 701,250
       // totals.channelFees = 58,500 + 9,500 = 68,000
-      // totals.loNetBeforeHoldback = 742,500 - 68,000 - 0(extraBonusTotal) = 674,500
-      // totals.teamHoldback = 674,500 * 0.10 = 67,450
-      // totals.initialLoCash = 674,500 - 67,450 = 607,050
+      // totals.loNetBeforeHoldback = 701,250 - 68,000 - 0(extraBonusTotal) = 633,250
+      // totals.teamHoldback = 0 (no employees -> no broker-paid overhead to fund)
+      // totals.initialLoCash = 633,250 - 0 = 633,250
       expect(calc.totals.grossRevenue).toBeCloseTo(825_000, 2);
-      expect(calc.totals.loGrossSplit).toBeCloseTo(742_500, 2);
+      expect(calc.totals.loGrossSplit).toBeCloseTo(701_250, 2);
       expect(calc.totals.channelFees).toBeCloseTo(68_000, 2);
-      expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(674_500, 2);
-      expect(calc.totals.teamHoldback).toBeCloseTo(67_450, 2);
-      expect(calc.totals.initialLoCash).toBeCloseTo(607_050, 2);
+      expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(633_250, 2);
+      expect(calc.totals.teamHoldback).toBe(0);
+      expect(calc.totals.initialLoCash).toBeCloseTo(633_250, 2);
       expect(calc.totals.qmFiles).toBe(90);
       expect(calc.totals.nonQmFiles).toBe(10);
     });
 
     it("computes finalLoNetComp and monthlyLoNet exactly (no employees -> no salaryObligations)", () => {
       // salaryObligations = 0 (no employees)
-      // finalLoNetComp = 674,500 - 0 = 674,500
-      // monthlyLoNet = 674,500 / 12 = 56,208.333...
-      expect(calc.finalLoNetComp).toBeCloseTo(674_500, 2);
-      expect(calc.monthlyLoNet).toBeCloseTo(674_500 / 12, 2);
+      // finalLoNetComp = 633,250 - 0 = 633,250
+      // monthlyLoNet = 633,250 / 12 = 52,770.833...
+      expect(calc.finalLoNetComp).toBeCloseTo(633_250, 2);
+      expect(calc.monthlyLoNet).toBeCloseTo(633_250 / 12, 2);
     });
   });
 
@@ -244,8 +247,6 @@ describe("golden scenario: $30,000,000 / 100 files / mix {fha:20, va:15, conv:55
     const s = baseState({
       annualVolume: 30_000_000,
       annualFiles: 100,
-      loSplit: 90,
-      holdbackPct: 10,
       loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
       buckets: withCorrespondentActive(),
     });
@@ -262,79 +263,71 @@ describe("golden scenario: $30,000,000 / 100 files / mix {fha:20, va:15, conv:55
       // volumePct = 20/100*100 = 20%
       // dollarVolume = 30,000,000 * 0.20 = 6,000,000
       // grossRevenue = 6,000,000 * 0.0275 = 165,000
-      // loGrossSplit = 165,000 * 0.90 = 148,500
+      // loGrossSplit = 165,000 * 0.85 = 140,250
       // channelFees = 20 * 650 = 13,000
-      // loNetBeforeHoldback = 148,500 - 13,000 = 135,500
-      // teamHoldback = 135,500 * 0.10 = 13,550
-      // initialLoCash = 135,500 - 13,550 = 121,950
+      // loNetBeforeHoldback = 140,250 - 13,000 = 127,250
       const row = calc.buckets.find(b => b.bucket.key === "broker_qm")!;
       expect(row.dollarVolume).toBeCloseTo(6_000_000, 2);
       expect(row.grossRevenue).toBeCloseTo(165_000, 2);
-      expect(row.loGrossSplit).toBeCloseTo(148_500, 2);
+      expect(row.loGrossSplit).toBeCloseTo(140_250, 2);
       expect(row.channelFees).toBeCloseTo(13_000, 2);
-      expect(row.loNetBeforeHoldback).toBeCloseTo(135_500, 2);
-      expect(row.teamHoldback).toBeCloseTo(13_550, 2);
-      expect(row.initialLoCash).toBeCloseTo(121_950, 2);
+      expect(row.loNetBeforeHoldback).toBeCloseTo(127_250, 2);
+      expect(row.teamHoldback).toBe(0);
+      expect(row.initialLoCash).toBeCloseTo(127_250, 2);
     });
 
     it("computes corr_qm bucket row exactly", () => {
       // volumePct = 70%
       // dollarVolume = 30,000,000 * 0.70 = 21,000,000
       // grossRevenue = 21,000,000 * 0.0325 = 682,500
-      // loGrossSplit = 682,500 * 0.90 = 614,250
+      // loGrossSplit = 682,500 * 0.85 = 580,125
       // channelFees = 70 * 250 = 17,500
-      // loNetBeforeHoldback = 614,250 - 17,500 = 596,750
-      // teamHoldback = 596,750 * 0.10 = 59,675
-      // initialLoCash = 596,750 - 59,675 = 537,075
+      // loNetBeforeHoldback = 580,125 - 17,500 = 562,625
       const row = calc.buckets.find(b => b.bucket.key === "corr_qm")!;
       expect(row.dollarVolume).toBeCloseTo(21_000_000, 2);
       expect(row.grossRevenue).toBeCloseTo(682_500, 2);
-      expect(row.loGrossSplit).toBeCloseTo(614_250, 2);
+      expect(row.loGrossSplit).toBeCloseTo(580_125, 2);
       expect(row.channelFees).toBeCloseTo(17_500, 2);
-      expect(row.loNetBeforeHoldback).toBeCloseTo(596_750, 2);
-      expect(row.teamHoldback).toBeCloseTo(59_675, 2);
-      expect(row.initialLoCash).toBeCloseTo(537_075, 2);
+      expect(row.loNetBeforeHoldback).toBeCloseTo(562_625, 2);
+      expect(row.teamHoldback).toBe(0);
+      expect(row.initialLoCash).toBeCloseTo(562_625, 2);
     });
 
     it("computes corr_nonqm bucket row exactly", () => {
       // volumePct = 10%
       // dollarVolume = 30,000,000 * 0.10 = 3,000,000
       // grossRevenue = 3,000,000 * 0.0325 = 97,500
-      // loGrossSplit = 97,500 * 0.90 = 87,750
+      // loGrossSplit = 97,500 * 0.85 = 82,875
       // channelFees = 10 * 250 = 2,500
-      // loNetBeforeHoldback = 87,750 - 2,500 = 85,250
-      // teamHoldback = 85,250 * 0.10 = 8,525
-      // initialLoCash = 85,250 - 8,525 = 76,725
+      // loNetBeforeHoldback = 82,875 - 2,500 = 80,375
       const row = calc.buckets.find(b => b.bucket.key === "corr_nonqm")!;
       expect(row.dollarVolume).toBeCloseTo(3_000_000, 2);
       expect(row.grossRevenue).toBeCloseTo(97_500, 2);
-      expect(row.loGrossSplit).toBeCloseTo(87_750, 2);
+      expect(row.loGrossSplit).toBeCloseTo(82_875, 2);
       expect(row.channelFees).toBeCloseTo(2_500, 2);
-      expect(row.loNetBeforeHoldback).toBeCloseTo(85_250, 2);
-      expect(row.teamHoldback).toBeCloseTo(8_525, 2);
-      expect(row.initialLoCash).toBeCloseTo(76_725, 2);
+      expect(row.loNetBeforeHoldback).toBeCloseTo(80_375, 2);
+      expect(row.teamHoldback).toBe(0);
+      expect(row.initialLoCash).toBeCloseTo(80_375, 2);
     });
 
     it("computes totals exactly", () => {
       // totals.grossRevenue = 165,000 + 682,500 + 97,500 = 945,000
-      // totals.loGrossSplit = 148,500 + 614,250 + 87,750 = 850,500
+      // totals.loGrossSplit = 140,250 + 580,125 + 82,875 = 803,250
       // totals.channelFees = 13,000 + 17,500 + 2,500 = 33,000
-      // totals.loNetBeforeHoldback = 850,500 - 33,000 - 0 = 817,500
-      // totals.teamHoldback = 817,500 * 0.10 = 81,750
-      // totals.initialLoCash = 817,500 - 81,750 = 735,750
+      // totals.loNetBeforeHoldback = 803,250 - 33,000 - 0 = 770,250
       expect(calc.totals.grossRevenue).toBeCloseTo(945_000, 2);
-      expect(calc.totals.loGrossSplit).toBeCloseTo(850_500, 2);
+      expect(calc.totals.loGrossSplit).toBeCloseTo(803_250, 2);
       expect(calc.totals.channelFees).toBeCloseTo(33_000, 2);
-      expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(817_500, 2);
-      expect(calc.totals.teamHoldback).toBeCloseTo(81_750, 2);
-      expect(calc.totals.initialLoCash).toBeCloseTo(735_750, 2);
+      expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(770_250, 2);
+      expect(calc.totals.teamHoldback).toBe(0);
+      expect(calc.totals.initialLoCash).toBeCloseTo(770_250, 2);
       expect(calc.totals.qmFiles).toBe(90); // 20 broker_qm + 70 corr_qm
       expect(calc.totals.nonQmFiles).toBe(10);
     });
 
     it("computes finalLoNetComp and monthlyLoNet exactly", () => {
-      expect(calc.finalLoNetComp).toBeCloseTo(817_500, 2);
-      expect(calc.monthlyLoNet).toBeCloseTo(817_500 / 12, 2);
+      expect(calc.finalLoNetComp).toBeCloseTo(770_250, 2);
+      expect(calc.monthlyLoNet).toBeCloseTo(770_250 / 12, 2);
     });
   });
 });
@@ -344,8 +337,6 @@ describe("calculateBrokerOnly", () => {
     const activeState = baseState({
       annualVolume: 30_000_000,
       annualFiles: 100,
-      loSplit: 90,
-      holdbackPct: 10,
       loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
       buckets: withCorrespondentActive(),
     });
@@ -362,15 +353,13 @@ describe("calculateBrokerOnly", () => {
     const activeState = baseState({
       annualVolume: 30_000_000,
       annualFiles: 100,
-      loSplit: 90,
-      holdbackPct: 10,
       loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
       buckets: withCorrespondentActive(),
     });
     const brokerOnly = calculateBrokerOnly(activeState);
     // Same golden totals as the "correspondent INACTIVE" describe block above.
-    expect(brokerOnly.totals.loNetBeforeHoldback).toBeCloseTo(674_500, 2);
-    expect(brokerOnly.finalLoNetComp).toBeCloseTo(674_500, 2);
+    expect(brokerOnly.totals.loNetBeforeHoldback).toBeCloseTo(633_250, 2);
+    expect(brokerOnly.finalLoNetComp).toBeCloseTo(633_250, 2);
   });
 });
 
@@ -379,8 +368,6 @@ describe("current-platform comparison", () => {
     const s = baseState({
       annualVolume: 30_000_000,
       annualFiles: 100,
-      loSplit: 90,
-      holdbackPct: 10,
       currentSplit: 25,
       loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
     });
@@ -388,14 +375,14 @@ describe("current-platform comparison", () => {
     // currentPlatformAnnual = annualVolume * (currentSplit/100) - brokerPaidTotal
     //                       = 30,000,000 * 0.25 - 0 (no employees) = 7,500,000
     // currentPlatformMonthly = 7,500,000 / 12 = 625,000
-    // htlAnnual = finalLoNetComp = 674,500 (from golden correspondent-inactive scenario)
-    // diffAnnual = htlAnnual - currentPlatformAnnual = 674,500 - 7,500,000 = -6,825,500
-    // diffMonthly = htlMonthly - currentPlatformMonthly = 56,208.333... - 625,000 = -568,791.666...
+    // htlAnnual = finalLoNetComp = 633,250 (from golden correspondent-inactive scenario)
+    // diffAnnual = htlAnnual - currentPlatformAnnual = 633,250 - 7,500,000 = -6,866,750
+    // diffMonthly = htlMonthly - currentPlatformMonthly = 52,770.833... - 625,000 = -572,229.166...
     expect(calc.currentPlatformAnnual).toBeCloseTo(7_500_000, 2);
     expect(calc.currentPlatformMonthly).toBeCloseTo(625_000, 2);
-    expect(calc.htlAnnual).toBeCloseTo(674_500, 2);
-    expect(calc.diffAnnual).toBeCloseTo(-6_825_500, 2);
-    expect(calc.diffMonthly).toBeCloseTo(674_500 / 12 - 625_000, 2);
+    expect(calc.htlAnnual).toBeCloseTo(633_250, 2);
+    expect(calc.diffAnnual).toBeCloseTo(-6_866_750, 2);
+    expect(calc.diffMonthly).toBeCloseTo(633_250 / 12 - 625_000, 2);
   });
 
   it("returns null for currentPlatform*/diff* fields when currentSplit is null", () => {
@@ -454,9 +441,9 @@ describe("employees: salaries and extra bonuses reduce final comp", () => {
     );
     // salary is broker-paid, bonus source is HTL and role IS Processor but qmBonus/nonQmBonus are 0,
     // so brokerPaidBonuses stays 0. salaryObligations = brokerPaidSalaries + brokerPaidBonuses = 40,000.
-    // finalLoNetComp = loNetBeforeHoldback(674,500, extraBonusTotal=0) - 40,000 = 634,500
-    expect(noEmployees.finalLoNetComp).toBeCloseTo(674_500, 2);
-    expect(withEmployee.finalLoNetComp).toBeCloseTo(634_500, 2);
+    // finalLoNetComp = loNetBeforeHoldback(633,250, extraBonusTotal=0) - 40,000 = 593,250
+    expect(noEmployees.finalLoNetComp).toBeCloseTo(633_250, 2);
+    expect(withEmployee.finalLoNetComp).toBeCloseTo(593_250, 2);
     expect(noEmployees.finalLoNetComp - withEmployee.finalLoNetComp).toBeCloseTo(40_000, 2);
   });
 
@@ -474,7 +461,7 @@ describe("employees: salaries and extra bonuses reduce final comp", () => {
     );
     expect(withEmployee.htlPaidSalaries).toBeCloseTo(40_000, 2);
     expect(withEmployee.brokerPaidSalaries).toBe(0);
-    expect(withEmployee.finalLoNetComp).toBeCloseTo(674_500, 2);
+    expect(withEmployee.finalLoNetComp).toBeCloseTo(633_250, 2);
   });
 
   it("Processor per-file qmBonus/nonQmBonus scale with qmFiles/nonQmFiles and only apply to role='Processor'", () => {
@@ -527,8 +514,8 @@ describe("employees: salaries and extra bonuses reduce final comp", () => {
     // extraBonusTotal = 300 * 100 = 30,000
     expect(calc.extraBonusTotal).toBeCloseTo(30_000, 2);
     // extraBonusTotal is NOT part of salaryObligations, but it IS baked into loNetBeforeHoldback via the totals overwrite.
-    // finalLoNetComp = loNetBeforeHoldback(674,500 - 30,000 = 644,500) - salaryObligations(0) = 644,500
-    expect(calc.finalLoNetComp).toBeCloseTo(644_500, 2);
+    // finalLoNetComp = loNetBeforeHoldback(633,250 - 30,000 = 603,250) - salaryObligations(0) = 603,250
+    expect(calc.finalLoNetComp).toBeCloseTo(603_250, 2);
   });
 
   it("a Loan Partner's extraBonus (350/file, mirroring LOAN_PARTNER_EXTRA_BONUS) feeds extraBonusTotal identically to an LOA's", () => {
@@ -545,7 +532,7 @@ describe("employees: salaries and extra bonuses reduce final comp", () => {
     );
     // extraBonusTotal = 350 * 100 = 35,000
     expect(calc.extraBonusTotal).toBeCloseTo(35_000, 2);
-    expect(calc.finalLoNetComp).toBeCloseTo(674_500 - 35_000, 2);
+    expect(calc.finalLoNetComp).toBeCloseTo(633_250 - 35_000, 2);
   });
 
   it("multiple employees' extraBonus amounts sum together in extraBonusTotal, and salaries/bonuses combine into salaryObligations", () => {
@@ -566,13 +553,17 @@ describe("employees: salaries and extra bonuses reduce final comp", () => {
     // htlPaidSalaries = 50,000
     // neither employee is a Processor, so brokerPaidBonuses/htlPaidBonuses stay 0
     // salaryObligations = 40,000 + 0 = 40,000
-    // totals.loNetBeforeHoldback (post-overwrite) = 674,500 - 65,000 = 609,500
-    // finalLoNetComp = 609,500 - 40,000 = 569,500
+    // totals.loNetBeforeHoldback (post-overwrite) = 633,250 - 65,000 = 568,250
+    // finalLoNetComp = 568,250 - 40,000 = 528,250
     expect(calc.extraBonusTotal).toBeCloseTo(65_000, 2);
     expect(calc.brokerPaidSalaries).toBeCloseTo(40_000, 2);
     expect(calc.htlPaidSalaries).toBeCloseTo(50_000, 2);
-    expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(609_500, 2);
-    expect(calc.finalLoNetComp).toBeCloseTo(569_500, 2);
+    expect(calc.salaryObligations).toBeCloseTo(40_000, 2);
+    expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(568_250, 2);
+    expect(calc.finalLoNetComp).toBeCloseTo(528_250, 2);
+    // The recruit-facing trio must foot even with per-file bonuses in play:
+    // before - salaryObligations = final (extra bonuses live INSIDE 'before').
+    expect(calc.totals.loNetBeforeHoldback - calc.salaryObligations).toBeCloseTo(calc.finalLoNetComp, 6);
   });
 });
 
@@ -651,32 +642,85 @@ describe("edge cases", () => {
     expect(total).not.toBe(100);
   });
 
-  it("holdbackPct = 0 means teamHoldback is 0 and initialLoCash equals loNetBeforeHoldback", () => {
+  // The holdback is no longer a user input. It is derived from the LO's actual
+  // broker-paid overhead, so with no employees there is nothing to hold back.
+  it("no employees means the derived holdback is zero and take-home equals LO net", () => {
     const calc = calculate(
       baseState({
         annualVolume: 30_000_000,
         annualFiles: 100,
-        holdbackPct: 0,
         loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
       })
     );
     expect(calc.totals.teamHoldback).toBe(0);
+    expect(calc.requiredHoldbackPct).toBe(0);
+    expect(calc.holdbackSurplus).toBe(0);
     expect(calc.totals.initialLoCash).toBeCloseTo(calc.totals.loNetBeforeHoldback, 2);
-    expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(674_500, 2);
+    expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(633_250, 2);
   });
 
-  it("holdbackPct = 100 means teamHoldback equals loNetBeforeHoldback and initialLoCash is 0", () => {
+  it("with broker-paid payroll the holdback collects exactly the obligation — no surplus, no shortfall", () => {
     const calc = calculate(
       baseState({
         annualVolume: 30_000_000,
         annualFiles: 100,
-        holdbackPct: 100,
         loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
+        employees: [
+          { id: "e1", name: "P", role: "Processor", salary: 60_000, salarySource: "Broker",
+            qmBonus: 0, nonQmBonus: 0, bonusSource: "Broker", extraBonus: 0 },
+        ],
       })
     );
-    expect(calc.totals.teamHoldback).toBeCloseTo(calc.totals.loNetBeforeHoldback, 2);
-    expect(calc.totals.teamHoldback).toBeCloseTo(674_500, 2);
-    expect(calc.totals.initialLoCash).toBeCloseTo(0, 2);
+    const obligation = calc.brokerPaidSalaries + calc.brokerPaidBonuses;
+    expect(obligation).toBeCloseTo(60_000, 2);
+    expect(calc.totals.teamHoldback).toBeCloseTo(obligation, 2);
+    expect(calc.holdbackSurplus).toBeCloseTo(0, 6);
+    // The derived rate is exactly the share of LO net that funds the team.
+    expect(calc.requiredHoldbackPct).toBeCloseTo((obligation / calc.totals.loNetBeforeHoldback) * 100, 6);
+    // The bottom line is untouched by the holdback — payroll is deducted in full.
+    expect(calc.finalLoNetComp).toBeCloseTo(calc.totals.loNetBeforeHoldback - obligation, 2);
+  });
+
+  it("payroll larger than LO net clamps the holdback but take-home still foots to finalLoNetComp", () => {
+    const calc = calculate(
+      baseState({
+        annualVolume: 2_000_000,
+        annualFiles: 8,
+        loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
+        employees: [
+          { id: "e1", name: "P", role: "Processor", salary: 500_000, salarySource: "Broker",
+            qmBonus: 0, nonQmBonus: 0, bonusSource: "Broker", extraBonus: 0 },
+        ],
+      })
+    );
+    // Can't hold back more cash than the buckets produced (internal metric).
+    expect(calc.totals.teamHoldback).toBeCloseTo(Math.max(0, calc.totals.loNetBeforeHoldback), 2);
+    expect(calc.holdbackSurplus).toBeLessThan(0);
+    // But the recruit-facing take-home column deducts payroll IN FULL, so its
+    // total equals the headline number even when the LO is underwater —
+    // the buckets table must never show a rosier bottom line than the hero card.
+    expect(calc.totals.initialLoCash).toBeCloseTo(calc.finalLoNetComp, 2);
+    expect(calc.finalLoNetComp).toBeCloseTo(calc.totals.loNetBeforeHoldback - calc.salaryObligations, 2);
+    expect(calc.finalLoNetComp).toBeLessThan(0);
+  });
+
+  it("the derived holdback is allocated pro rata and still sums to the total", () => {
+    const calc = calculate(
+      baseState({
+        annualVolume: 30_000_000,
+        annualFiles: 100,
+        loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
+        buckets: defaultBuckets().map(b => b.channel === "Correspondent" ? { ...b, active: true } : b),
+        employees: [
+          { id: "e1", name: "P", role: "Processor", salary: 80_000, salarySource: "Broker",
+            qmBonus: 0, nonQmBonus: 0, bonusSource: "Broker", extraBonus: 0 },
+        ],
+      })
+    );
+    expect(calc.buckets.length).toBeGreaterThan(1);
+    const summed = calc.buckets.reduce((n, b) => n + b.teamHoldback, 0);
+    expect(summed).toBeCloseTo(calc.totals.teamHoldback, 6);
+    calc.buckets.forEach(b => expect(b.teamHoldback).toBeGreaterThanOrEqual(0));
   });
 });
 
@@ -749,7 +793,7 @@ describe("THE INVARIANT: per-bucket rows must sum to the totals row", () => {
     expect(sumBucketField(calc, "initialLoCash")).toBeCloseTo(calc.totals.initialLoCash, 2);
   });
 
-  it("holds with employees that have extra bonuses (edge: holdbackPct=0, so no max(0,.) clamp interaction) [Part 2 spec]", () => {
+  it("holds with employees that have extra bonuses (HTL-paid, so the derived holdback stays 0) [Part 2 spec]", () => {
     const employees: Employee[] = [
       { id: "1", name: "LP", role: "Loan Partner", salary: 0, salarySource: "HTL", qmBonus: 0, nonQmBonus: 0, bonusSource: "HTL", extraBonus: 350 },
     ];
@@ -757,7 +801,6 @@ describe("THE INVARIANT: per-bucket rows must sum to the totals row", () => {
       baseState({
         annualVolume: 30_000_000,
         annualFiles: 100,
-        holdbackPct: 0,
         loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
         employees,
       })
@@ -772,49 +815,49 @@ describe("KNOWN DIVERGENCE: per-bucket holdback clamping vs. aggregate clamping 
   // Fixing the invariant (deducting extraBonusCost inside each bucket, then summing) changes WHEN the
   // Math.max(0, loNetBeforeHoldback) clamp fires: per-bucket instead of once on the aggregate. These
   // produce the SAME totals.loNetBeforeHoldback (a pure linear sum, unaffected by clamping) and thus the
-  // SAME finalLoNetComp — but CAN produce a different totals.teamHoldback (and initialLoCash /
-  // holdbackSurplus) whenever one bucket's post-bonus loNetBeforeHoldback goes negative while the
-  // aggregate stays positive. This does not occur in any Part 1 golden-scenario configuration (no bucket
-  // goes negative there), but is characterized here since it is a real, narrow behavioral change
-  // introduced by the Part 2 fix. See final report for the numeric walkthrough.
-  it("teamHoldback differs from the pre-fix aggregate-clamp formula when one bucket goes negative and another stays positive", () => {
-    // broker_qm: 90 files, loGrossSplit=668,250, channelFees=58,500 -> pre-bonus loNetBeforeHoldback=609,750
-    // broker_nonqm: 10 files, loGrossSplit=74,250, channelFees=9,500 -> pre-bonus loNetBeforeHoldback=64,750
-    // extraBonus = 6,500/file (single Loan Partner, HTL-paid so it doesn't affect salaryObligations)
-    //   broker_qm extraBonusCost = 90*6,500=585,000 -> loNetBeforeHoldback = 609,750-585,000 = 24,750 (still POSITIVE)
-    //   broker_nonqm extraBonusCost = 10*6,500=65,000 -> loNetBeforeHoldback = 64,750-65,000 = -250 (NEGATIVE)
-    // Post-fix (per-bucket clamp): teamHoldback = max(0,24,750)*10% + max(0,-250)*10% = 2,475 + 0 = 2,475
-    // Pre-fix (aggregate clamp):   aggregate loNetBeforeHoldback = 24,750-250 = 24,500 (positive)
-    //                              teamHoldback = max(0,24,500)*10% = 2,450
-    // 2,475 != 2,450 -- a $25 divergence in this constructed scenario, NOT present in Part 1 golden scenarios.
+  // SAME finalLoNetComp — but a bucket whose post-bonus loNetBeforeHoldback goes negative can
+  // never fund a holdback. That clamp survived the switch from a user-chosen percentage to a
+  // rate derived from payroll: the negative bucket simply gets a zero share of the pro-rata
+  // allocation, and the positive bucket absorbs the whole obligation.
+  it("a bucket that goes negative funds none of the holdback; the positive bucket absorbs it all", () => {
+    // broker_qm: 90 files, loGrossSplit=631,125 (85%), channelFees=58,500 -> pre-bonus loNetBeforeHoldback=572,625
+    // broker_nonqm: 10 files, loGrossSplit=70,125 (85%), channelFees=9,500 -> pre-bonus loNetBeforeHoldback=60,625
+    // extraBonus = 6,200/file (single Loan Partner, HTL-paid so it doesn't affect salaryObligations)
+    //   broker_qm    extraBonusCost = 90*6,200 = 558,000 -> loNetBeforeHoldback =  14,625 (still POSITIVE)
+    //   broker_nonqm extraBonusCost = 10*6,200 =  62,000 -> loNetBeforeHoldback =  -1,375 (NEGATIVE)
+    // (6,200 keeps the signs mixed under the derived 85% split — the point of this test.)
+    // The Loan Partner's salary is broker-paid here, so there IS an obligation to fund.
     const employees: Employee[] = [
-      { id: "1", name: "LP", role: "Loan Partner", salary: 0, salarySource: "HTL", qmBonus: 0, nonQmBonus: 0, bonusSource: "HTL", extraBonus: 6500 },
+      { id: "1", name: "LP", role: "Loan Partner", salary: 10_000, salarySource: "Broker", qmBonus: 0, nonQmBonus: 0, bonusSource: "HTL", extraBonus: 6200 },
     ];
     const calc = calculate(
       baseState({
         annualVolume: 30_000_000,
         annualFiles: 100,
-        loSplit: 90,
-        holdbackPct: 10,
         loanTypeMix: { fha: 20, va: 15, conv: 55, nonqm: 10 },
         employees,
       })
     );
     const brokerQmRow = calc.buckets.find(b => b.bucket.key === "broker_qm")!;
     const brokerNonqmRow = calc.buckets.find(b => b.bucket.key === "broker_nonqm")!;
-    expect(brokerQmRow.loNetBeforeHoldback).toBeCloseTo(24_750, 2); // stays positive
-    expect(brokerNonqmRow.loNetBeforeHoldback).toBeCloseTo(-250, 2); // goes negative
+    expect(brokerQmRow.loNetBeforeHoldback).toBeCloseTo(14_625, 2); // stays positive
+    expect(brokerNonqmRow.loNetBeforeHoldback).toBeCloseTo(-1_375, 2); // goes negative
     expect(brokerNonqmRow.teamHoldback).toBe(0); // clamped at the bucket level
 
-    // totals.loNetBeforeHoldback is a pure linear sum -> identical under old and new formulas
-    expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(24_500, 2);
-    expect(calc.finalLoNetComp).toBeCloseTo(24_500, 2); // headline number: UNCHANGED by the fix
-
-    // totals.teamHoldback DOES diverge from the old aggregate-clamp formula (2,450) because the fix
-    // clamps per-bucket (2,475 = 2,475 + 0), which is the intended, more-correct behavior post-fix.
-    expect(calc.totals.teamHoldback).toBeCloseTo(2_475, 2);
-    expect(sumBucketField(calc, "teamHoldback")).toBeCloseTo(calc.totals.teamHoldback, 2); // invariant still holds
+    // totals.loNetBeforeHoldback is a pure linear sum, unaffected by how the holdback is derived.
+    expect(calc.totals.loNetBeforeHoldback).toBeCloseTo(13_250, 2);
+    // The obligation is the broker-paid salary; the single positive bucket funds all of it.
+    expect(calc.brokerPaidSalaries).toBeCloseTo(10_000, 2);
+    expect(brokerQmRow.teamHoldback).toBeCloseTo(10_000, 2);
+    expect(calc.totals.teamHoldback).toBeCloseTo(10_000, 2);
+    expect(calc.holdbackSurplus).toBeCloseTo(0, 6); // derived rate never over- or under-collects
+    expect(sumBucketField(calc, "teamHoldback")).toBeCloseTo(calc.totals.teamHoldback, 6); // invariant holds
+    expect(calc.finalLoNetComp).toBeCloseTo(3_250, 2); // 13,250 - 10,000 broker-paid salary
+    // Take-home follows the FULL obligation (not the clamped holdback), so the
+    // negative bucket keeps its own loss and the positive bucket carries the payroll.
+    expect(calc.totals.initialLoCash).toBeCloseTo(calc.finalLoNetComp, 2);
   });
+
 });
 
 describe("productionPeriodMonths: period-aware monthly + salary proration", () => {
@@ -845,8 +888,11 @@ describe("productionPeriodMonths: period-aware monthly + salary proration", () =
   });
 
   it("a 6-month pull prorates the flat salary to half, not a full year", () => {
-    const annual = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 12 });
-    const sixMo = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 6 });
+    // $10M, not $12M: a 6-month $12M pull annualizes to exactly $24M — the 85
+    // band — while the 12-month case stays 80, and this test needs both runs
+    // in the SAME band so the revenue side is identical by construction.
+    const annual = baseState({ annualVolume: 10_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 12 });
+    const sixMo = baseState({ annualVolume: 10_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 6 });
     const calcAnnual = calculate(annual);
     const calcSixMo = calculate(sixMo);
     // Same revenue-side numbers (by construction of this test), half the salary cost.
@@ -884,5 +930,82 @@ describe("productionPeriodMonths: period-aware monthly + salary proration", () =
     const calc = calculateBrokerOnly(s);
     expect(calc.periodMonths).toBe(6);
     expect(calc.brokerPaidSalaries).toBeCloseTo(20_000, 2); // half of the 40k annual salary
+  });
+});
+
+describe("HTL LO split tiers", () => {
+  it("exposes exactly the three real bands, each summing to 100", () => {
+    expect(SPLIT_TIERS.map(t => `${t.loPct}/${t.htlPct}`)).toEqual(["80/20", "85/15", "90/10"]);
+    SPLIT_TIERS.forEach(t => expect(t.loPct + t.htlPct).toBe(100));
+  });
+
+  it("maps annual volume to the right band", () => {
+    expect(tierForAnnualVolume(0).loPct).toBe(80);
+    expect(tierForAnnualVolume(18_000_000).loPct).toBe(80);
+    expect(tierForAnnualVolume(23_999_999).loPct).toBe(80);
+    expect(tierForAnnualVolume(30_000_000).loPct).toBe(85);
+    expect(tierForAnnualVolume(47_999_999).loPct).toBe(85);
+    expect(tierForAnnualVolume(120_000_000).loPct).toBe(90);
+  });
+
+  it("puts a volume sitting exactly on a boundary in the UPPER band (owner's stated rule)", () => {
+    expect(tierForAnnualVolume(24_000_000).loPct).toBe(85);
+    expect(tierForAnnualVolume(48_000_000).loPct).toBe(90);
+  });
+});
+
+describe("derived split: calculate() picks the band from volume — no input, no override", () => {
+  const at = (annualVolume: number, productionPeriodMonths = 12) =>
+    calculate(baseState({ annualVolume, annualFiles: 100, productionPeriodMonths }));
+
+  it("moves 80 → 85 → 90 as annual volume grows", () => {
+    expect(at(10_000_000).loSplitPct).toBe(80);
+    expect(at(30_000_000).loSplitPct).toBe(85);
+    expect(at(60_000_000).loSplitPct).toBe(90);
+  });
+
+  it("annual boundaries land in the UPPER band ($24M and $48M exactly)", () => {
+    expect(at(23_999_999).loSplitPct).toBe(80);
+    expect(at(24_000_000).loSplitPct).toBe(85);
+    expect(at(47_999_999).loSplitPct).toBe(85);
+    expect(at(48_000_000).loSplitPct).toBe(90);
+  });
+
+  it("zero volume sits in the bottom band (nothing to model, nothing to promise)", () => {
+    expect(at(0).loSplitPct).toBe(80);
+  });
+
+  it("a partial-period pull annualizes from ITS OWN window, not the raw total", () => {
+    // $15M over 6 months is a $30M/yr pace → 85. Using the raw total would
+    // call it $15M/yr → 80 and quietly under-offer every partial-period recruit.
+    expect(at(15_000_000, 6).loSplitPct).toBe(85);
+    // And the same $15M over a full year genuinely IS the 80 band.
+    expect(at(15_000_000, 12).loSplitPct).toBe(80);
+  });
+
+  it("the derived split is what feeds the gross-split math (single point of consumption)", () => {
+    const calc = at(60_000_000);
+    // 100 files, mix 20/15/55/10, corr inactive: gross = 60M*0.9*0.0275 + 60M*0.1*0.0275
+    // loGrossSplit must be gross * 0.90 (the derived band), not any stored value.
+    expect(calc.totals.loGrossSplit).toBeCloseTo(calc.totals.grossRevenue * 0.9, 2);
+  });
+});
+
+describe("hydrate: legacy saves can't resurrect retired inputs", () => {
+  it("strips a stored loSplit/holdbackPct so the derived band wins", async () => {
+    const { hydrate } = await import("@/lib/proformaStore");
+    // A pro forma saved when the split was a manual 90 chip, at $10M/yr —
+    // volume that today derives to the 80/20 band.
+    const legacyBlob = {
+      ...baseState({ annualVolume: 10_000_000, annualFiles: 40 }),
+      loSplit: 90,
+      holdbackPct: 20,
+    } as unknown;
+    const state = hydrate(legacyBlob);
+    expect("loSplit" in (state as unknown as Record<string, unknown>)).toBe(false);
+    expect("holdbackPct" in (state as unknown as Record<string, unknown>)).toBe(false);
+    const calc = calculate(state);
+    expect(calc.loSplitPct).toBe(80); // derived from volume, not the stored 90
+    expect(state.annualVolume).toBe(10_000_000); // everything else survives
   });
 });
