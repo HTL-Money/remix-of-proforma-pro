@@ -8,6 +8,10 @@
 //      Unset any one of them to fall back to Resend instantly.
 //   2. Resend — RESEND_API_KEY, optional RECAP_FROM ("Name <addr>").
 //
+// Test-mode lock: set RECAP_TEST_ONLY_TO (e.g. james@hometownlend.com) and
+// this function will only ever email that address — other recipients get a
+// 403, and all BCCs / internal alerts are suppressed. Unset it to go live.
+//
 // Deploy:   supabase functions deploy send-recap
 //
 // verify_jwt (on by default) only checks that the bearer token is a validly
@@ -93,6 +97,13 @@ const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 // so this fixed internal BCC never counts against — or is throttled by — a
 // recruit's cap.
 const BCC_RECIPIENTS = ["chris@utilitypartnersusa.com"];
+// Test-mode lock (owner-directed): while RECAP_TEST_ONLY_TO is set, the ONLY
+// mailbox this function may email — for any reason — is that address. Recap
+// sends addressed to anyone else are refused, and every side email (internal
+// BCC, sender copy-back, sourcing/negative-gain alerts) is dropped, so a live
+// test can never leak mail to a real recruit or teammate. Unset the secret to
+// restore normal delivery.
+const TEST_ONLY_TO = (Deno.env.get("RECAP_TEST_ONLY_TO") ?? "").trim().toLowerCase() || null;
 // Replies always route to Aryan, whichever mailbox actually sends. Overridable
 // via secret so it can change without a code deploy.
 const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";
@@ -475,6 +486,10 @@ const reassignSourcingRow = async (
  *  provider is already configured — best-effort, never throws. */
 const sendSourcingAlert = async (nmls: string, previousSourcedBy: string, newSourcedBy: string): Promise<void> => {
   try {
+    if (TEST_ONLY_TO) {
+      console.log("test mode: sourcing alert suppressed", { nmls });
+      return;
+    }
     const graph = graphConfig();
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!graph && !resendKey) return;
@@ -495,6 +510,10 @@ const sendSourcingAlert = async (nmls: string, previousSourcedBy: string, newSou
  *  gets the numbers instead and decides how to approach. Best-effort. */
 const sendNegativeGainAlert = async (recap: RecapPayload, recruitTo: string, gainAnnual: number): Promise<void> => {
   try {
+    if (TEST_ONLY_TO) {
+      console.log("test mode: negative-gain alert suppressed", { recruitTo });
+      return;
+    }
     const graph = graphConfig();
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!graph && !resendKey) return;
@@ -553,6 +572,9 @@ Deno.serve(async (req: Request) => {
     to = String(body.to ?? "").trim();
     recap = body.recap as RecapPayload;
     if (!EMAIL_RE.test(to)) return json(400, { error: "Invalid recipient email address." });
+    if (TEST_ONLY_TO && normalizeEmail(to) !== TEST_ONLY_TO) {
+      return json(403, { error: `Test mode: recaps can only be sent to ${TEST_ONLY_TO} right now.` });
+    }
     // Validate the FULL shape the template dereferences — not just two fields.
     // renderRecapHtml reads recap.current/gain/buckets/totals unconditionally;
     // a partial payload that slipped past a two-field check would throw at
@@ -718,9 +740,11 @@ Deno.serve(async (req: Request) => {
   // Never BCC an address that's already the primary recipient (e.g. a test
   // send straight to marketing, or someone emailing their own recap) — that
   // would double-deliver.
-  const bcc = [...BCC_RECIPIENTS, ...(senderEmail ? [senderEmail] : [])].filter(
-    (a, i, arr) => a.toLowerCase() !== to.toLowerCase() && arr.indexOf(a) === i,
-  );
+  const bcc = TEST_ONLY_TO
+    ? [] // test mode: nobody but the test address gets a copy
+    : [...BCC_RECIPIENTS, ...(senderEmail ? [senderEmail] : [])].filter(
+        (a, i, arr) => a.toLowerCase() !== to.toLowerCase() && arr.indexOf(a) === i,
+      );
   try {
     if (graph) await sendViaGraph(graph, to, subject, html, attachments, bcc);
     else await sendViaResend(resendKey!, to, subject, html, attachments, bcc);
