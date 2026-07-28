@@ -1,4 +1,4 @@
-import { ModelState, defaultState } from "@/lib/proforma";
+import { ModelState, calculate, defaultState } from "@/lib/proforma";
 import { requireSupabase } from "@/lib/supabaseClient";
 
 const TABLE = "proformas";
@@ -40,11 +40,31 @@ const snapshot = async (proformaId: string, name: string, state: ModelState): Pr
   }
 };
 
+/**
+ * Economics promoted out of the `data` blob into real columns so the team can
+ * monitor them (see 20260728000000_proforma_economics.sql). Derived here from
+ * calculate() rather than passed in, so the stored metric can never drift from
+ * the rendered one. `data` is still the source of truth — these are a
+ * queryable projection of it.
+ */
+const economicsColumns = (state: ModelState) => {
+  const calc = calculate(state);
+  return {
+    nmls: state.nmls || null,
+    annual_volume: state.annualVolume,
+    lo_split: state.loSplit,
+    employee_count: state.employees.length,
+    payroll_overhead: calc.brokerPaidSalaries + calc.brokerPaidBonuses,
+    derived_holdback_pct: calc.requiredHoldbackPct,
+    final_lo_net: calc.finalLoNetComp,
+  };
+};
+
 export const saveProforma = async (name: string, state: ModelState): Promise<string> => {
   const supabase = requireSupabase();
   const { data, error } = await supabase
     .from(TABLE)
-    .insert({ name, data: state })
+    .insert({ name, data: state, ...economicsColumns(state) })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
@@ -59,7 +79,7 @@ export const saveProforma = async (name: string, state: ModelState): Promise<str
 // are team save-history, not meaningful for a one-shot anonymous send.
 export const submitPublicProforma = async (name: string, state: ModelState): Promise<void> => {
   const supabase = requireSupabase();
-  const { error } = await supabase.from(TABLE).insert({ name, data: state, source: "public" });
+  const { error } = await supabase.from(TABLE).insert({ name, data: state, source: "public", ...economicsColumns(state) });
   if (error) throw new Error(error.message);
 };
 
@@ -67,7 +87,7 @@ export const updateProforma = async (id: string, name: string, state: ModelState
   const supabase = requireSupabase();
   const { error } = await supabase
     .from(TABLE)
-    .update({ name, data: state, updated_at: new Date().toISOString() })
+    .update({ name, data: state, updated_at: new Date().toISOString(), ...economicsColumns(state) })
     .eq("id", id);
   if (error) throw new Error(error.message);
   await snapshot(id, name, state);

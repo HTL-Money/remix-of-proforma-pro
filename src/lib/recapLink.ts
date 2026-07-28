@@ -69,7 +69,6 @@ export const hashRecap = (r: RecapPayload): string => {
     avgLoan: r.avgLoan,
     currentBps: r.currentBps,
     loSplit: r.loSplit,
-    holdbackPct: r.holdbackPct,
     corrActive: r.corrActive,
     currentAnnual: r.current.annual,
     htlAnnual: r.htl.annual,

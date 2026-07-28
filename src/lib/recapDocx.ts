@@ -156,9 +156,8 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
 
             label("Totals"),
             plainTable([
-              kv("LO net before holdback", usd(r.totals.loNetBeforeHoldback)),
-              kv(`Team holdback (${r.holdbackPct}%)`, usd(r.totals.teamHoldback)),
-              kv("Broker-paid total", usd(r.totals.brokerPaidTotal)),
+              kv("LO net before payroll", usd(r.totals.loNetBeforeHoldback)),
+              kv("Your team payroll cost", usd(r.totals.brokerPaidTotal)),
               kv("Final LO net comp", usd(r.totals.finalLoNetComp)),
             ]),
 
@@ -171,7 +170,7 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
               alignment: AlignmentType.CENTER,
               children: [
                 new TextRun({
-                  text: `Projection based on ${usd(r.volume)} annual volume, ${num(r.files)} files at a ${r.loSplit}% split.${r.selfReported ? " Production figures were self-reported and have not been verified against RETR records." : ""} All figures are illustrative — not an offer of employment or compensation.`,
+                  text: `Projection based on ${usd(r.volume)} annual volume, ${num(r.files)} files at a ${r.loSplit}/${100 - Number(r.loSplit)} split — the loan officer keeps ${r.loSplit}% of gross commission and Hometown Lending keeps ${100 - Number(r.loSplit)}%. Split bands are set by monthly funded volume: up to $2M/month is 80/20, $2M–$4M is 85/15, and above $4M is 90/10.${r.selfReported ? " Production figures were self-reported and have not been verified against RETR records." : ""} All figures are illustrative — not an offer of employment or compensation.`,
                   italics: true,
                   color: GRAY,
                   size: 18,

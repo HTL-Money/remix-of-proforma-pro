@@ -16,7 +16,6 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   avgLoan: Math.round(state.avgLoanAmount),
   currentBps: state.currentSplit == null ? null : Math.round(state.currentSplit * 100),
   loSplit: state.loSplit,
-  holdbackPct: state.holdbackPct,
   corrActive: state.buckets.some(b => b.channel === "Correspondent" && b.active),
   current: { annual: calc.currentPlatformAnnual, monthly: calc.currentPlatformMonthly },
   htl: { annual: calc.finalLoNetComp, monthly: calc.monthlyLoNet },
@@ -30,7 +29,6 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   })),
   totals: {
     loNetBeforeHoldback: calc.totals.loNetBeforeHoldback,
-    teamHoldback: calc.totals.teamHoldback,
     brokerPaidTotal: calc.brokerPaidTotal,
     finalLoNetComp: calc.finalLoNetComp,
   },

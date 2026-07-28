@@ -19,7 +19,6 @@ export interface RecapPayload {
   avgLoan: number;
   currentBps: number | null;
   loSplit: number;
-  holdbackPct: number;
   corrActive: boolean;
   current: { annual: number | null; monthly: number | null };
   htl: { annual: number; monthly: number };
@@ -27,7 +26,6 @@ export interface RecapPayload {
   buckets: RecapBucketRow[];
   totals: {
     loNetBeforeHoldback: number;
-    teamHoldback: number;
     brokerPaidTotal: number;
     finalLoNetComp: number;
   };
@@ -336,8 +334,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${detailRow(`${periodTitle(months)} funded volume`, usd(r.volume))}
             ${detailRow(`${periodTitle(months)} funded files`, num(r.files))}
             ${detailRow("Average loan amount", usd(r.avgLoan))}
-            ${detailRow("HTL LO split", `${Number(r.loSplit)}%`)}
-            ${detailRow("Team-support holdback", `${Number(r.holdbackPct)}%`)}
+            ${detailRow("HTL LO split", `${Number(r.loSplit)}/${100 - Number(r.loSplit)} — you keep ${Number(r.loSplit)}%`)}
             ${detailRow("Channel strategy", r.corrActive ? "Broker + Correspondent" : "Broker Only")}
             ${r.currentBps != null ? detailRow("Current platform comp", `${Number(r.currentBps)} BPS`) : ""}
           </table>
@@ -372,9 +369,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         <tr><td style="padding:22px 24px 4px 24px;">
           <div style="color:${NAVY};font-size:15px;font-weight:700;border-bottom:2px solid ${GREEN};padding-bottom:6px;">LO Economics</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">
-            ${detailRow("LO net before holdback", usd(r.totals.loNetBeforeHoldback))}
-            ${detailRow("Team-support holdback", usd(r.totals.teamHoldback))}
-            ${detailRow("Broker-paid team costs", usd(r.totals.brokerPaidTotal))}
+            ${detailRow("LO net before payroll", usd(r.totals.loNetBeforeHoldback))}
+            ${detailRow("Your team payroll cost", usd(r.totals.brokerPaidTotal))}
             <tr>
               <td style="padding:10px 0 4px 0;color:${NAVY};font-size:14px;font-weight:800;">${months === 12 ? "Final LO net annual comp" : `Final LO net comp — ${periodTitle(months)}`}</td>
               <td align="right" style="padding:10px 0 4px 0;color:${GREEN};font-size:18px;font-weight:800;">${usd(r.totals.finalLoNetComp)}</td>

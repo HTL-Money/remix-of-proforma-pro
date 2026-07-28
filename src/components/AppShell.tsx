@@ -2,7 +2,7 @@
 // slide-over drawer on mobile, content area to the right. Wraps every route.
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Calculator, LayoutDashboard, ListChecks, LogOut, Mail, Menu } from "lucide-react";
+import { Calculator, LayoutDashboard, ListChecks, LogOut, Mail, Menu, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
@@ -14,6 +14,7 @@ const TEAM_NAV = [
   { to: "/calculator", label: "Calculator", icon: Calculator },
   { to: "/targets", label: "Targets", icon: ListChecks },
   { to: "/emails", label: "Sent Emails", icon: Mail },
+  { to: "/submissions", label: "Submissions", icon: Table2 },
 ];
 
 // Only ever rendered for team members now — anonymous visitors get no shell
