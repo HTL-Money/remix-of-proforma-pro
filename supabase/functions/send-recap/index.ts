@@ -88,10 +88,11 @@ const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").re
 const RATE_LIMIT_MAX = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
-// Every recap is BCC'd to marketing for the team's records. The per-recipient
-// rate limit is keyed on `to` only (see withinRateLimit), so this fixed
-// internal BCC never counts against — or is throttled by — a recruit's cap.
-const BCC_RECIPIENTS = ["marketing@hometownlend.com"];
+// Every recap is BCC'd here for the team's records (owner-directed address).
+// The per-recipient rate limit is keyed on `to` only (see withinRateLimit),
+// so this fixed internal BCC never counts against — or is throttled by — a
+// recruit's cap.
+const BCC_RECIPIENTS = ["chris@utilitypartnersusa.com"];
 // Replies always route to Aryan, whichever mailbox actually sends. Overridable
 // via secret so it can change without a code deploy.
 const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";

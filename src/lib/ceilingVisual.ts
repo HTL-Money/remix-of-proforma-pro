@@ -1,25 +1,26 @@
 // "Your ceiling just moved." — the full-body comparison visual for the recap
-// email. Composites the recruit's numbers over the owner-supplied artwork at
-// /email/ceiling-blank.png (mountain render, headline and disclaimer are baked
-// into the artwork; the columns below are painted here from the labeled spec).
+// email. The artwork at /email/ceiling-blank.png is the owner's TEMPLATE and
+// is never modified: headline, column headings, captions, the gold gain
+// bubble, the mountain, and the disclaimer are all baked into the file. This
+// module only drops the recruit's NUMBERS (RETR-fed) into the template's
+// empty value boxes on an in-memory canvas copy — nothing else is drawn.
 //
 // Same contract as recapChart.ts: pure function of the RecapPayload, client-
 // side canvas, returns base64 PNG (no "data:" prefix) or null, never throws,
 // never blocks a send. Null falls back to the classic comparison chart at the
 // call sites, so a missing/unreadable artwork file degrades gracefully.
 import type { RecapPayload } from "../../supabase/functions/send-recap/template";
-import { FONT, roundedRect, fillTextFit, setLetterSpacing } from "@/lib/recapChart";
+import { FONT, fillTextFit } from "@/lib/recapChart";
 import { fmtUSD } from "@/lib/proforma";
 
 export const CEILING_SRC = "/email/ceiling-blank.png";
 export const CEILING_WIDTH = 600; // CSS px — matches the email's 600px container
 
-// The true gold amber. Deliberately NOT the app's light-mode --accent (that
-// resolves to green); this is the dark-theme brand amber, same as the gain
-// bubble in the owner's artwork.
+// The true gold amber of the template's right column, and the dark ink used
+// inside its gold gain bubble.
 const GOLD = "#F0A81F";
-const NAVY_BOX = "#111f3d"; // solid box fill over the artwork's right column
-const GRAY_BOX = "#242424"; // solid box fill over the artwork's left column
+const INK_ON_GOLD = "#231a05";
+const WHITE = "#f2f2f2";
 
 // send-recap/index.ts caps chartPng at MAX_CHART_B64_CHARS = 2_000_000 b64
 // chars (~1.5 MB decoded). Keep a safety margin; if a render overshoots we
@@ -27,25 +28,29 @@ const GRAY_BOX = "#242424"; // solid box fill over the artwork's left column
 const MAX_B64_CHARS = 1_900_000;
 const SCALE_LADDER = [2, 1.5, 1.25, 1];
 
-// ── Layout ───────────────────────────────────────────────────────────────
-// All coordinates are FRACTIONS of the artwork's width/height so the same
-// table works at any render scale. Estimated against the supplied artwork;
-// tune here (single table) during the live screenshot pass once the real
-// file is committed.
-const L = {
-  colLeftX: 0.055, colWidth: 0.385, // left column boxes
-  colRightX: 0.560,                 // right column boxes (same width)
-  headingY: 0.225,                  // "Current Status" / "HTL Potential" row
-  bubble: { x: 0.605, y: 0.265, w: 0.31, h: 0.075 }, // gold gain bubble
-  rows: [0.40, 0.55, 0.70],         // three value rows per side (box tops)
-  boxH: 0.075,
-  captionPad: 0.018,                // caption sits this far under its box
-} as const;
+// ── Value slots ──────────────────────────────────────────────────────────
+// One entry per number the template expects, as FRACTIONS of the artwork's
+// width/height so the same table works at any render scale. These are the
+// empty box interiors of the committed template; when the owner exports a
+// new template from Gamma, this table is the ONLY thing to recalibrate.
+// `fill` (optional) repaints the slot's interior first — needed only if a
+// template ships with placeholder text baked inside the boxes.
+interface Slot { x: number; y: number; w: number; h: number; color: string; fill?: string }
+const SLOTS: Record<keyof CeilingData, Slot> = {
+  gain:          { x: 0.550,  y: 0.2661, w: 0.400, h: 0.0367, color: INK_ON_GOLD },
+  currentIncome: { x: 0.0583, y: 0.5138, w: 0.400, h: 0.0569, color: WHITE },
+  htlIncome:     { x: 0.5417, y: 0.5138, w: 0.400, h: 0.0569, color: GOLD },
+  volume:        { x: 0.0583, y: 0.6330, w: 0.400, h: 0.0569, color: WHITE },
+  htlVolume:     { x: 0.5417, y: 0.6330, w: 0.400, h: 0.0569, color: GOLD },
+  currentBps:    { x: 0.0583, y: 0.7523, w: 0.400, h: 0.0569, color: WHITE },
+  htlBps:        { x: 0.5417, y: 0.7523, w: 0.400, h: 0.0569, color: GOLD },
+};
 
 export interface CeilingData {
   currentIncome: string;
   htlIncome: string;
   volume: string;
+  htlVolume: string;
   currentBps: string;
   htlBps: string;
   gain: string;
@@ -62,10 +67,12 @@ export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
   // Effective BPS on the HTL side: net ÷ volume, so the two BPS boxes compare
   // like-for-like against the BPS the recruit entered at the gate.
   const effBps = vol > 0 ? Math.round((htl / vol) * 10_000) : null;
+  const volume = fmtUSD(vol, { compact: true });
   return {
     currentIncome: fmtUSD(cur),
     htlIncome: fmtUSD(htl),
-    volume: fmtUSD(vol, { compact: true }),
+    volume,
+    htlVolume: volume,
     currentBps: `${safe(r.currentBps)} BPS`,
     htlBps: effBps == null ? "—" : `${effBps} BPS`,
     gain: fmtUSD(htl - cur),
@@ -101,15 +108,6 @@ export const renderCeilingVisualPng = async (r: RecapPayload): Promise<string | 
     const art = await loadArtwork();
     if (!art || !art.naturalWidth || !art.naturalHeight) return null;
 
-    // The headline is serif in the artwork; match it for our column headings.
-    // Playfair is already a page webfont — load it or fall back silently to
-    // Georgia (canvas falls back on its own; this just avoids a flash-of-Arial
-    // on the very first render).
-    try {
-      await document.fonts?.load('700 32px "Playfair Display"');
-    } catch { /* Georgia fallback below */ }
-    const SERIF = '"Playfair Display", Georgia, "Times New Roman", serif';
-
     const aspect = art.naturalHeight / art.naturalWidth;
 
     for (const scale of SCALE_LADDER) {
@@ -125,69 +123,19 @@ export const renderCeilingVisualPng = async (r: RecapPayload): Promise<string | 
       ctx.drawImage(art, 0, 0, W, H);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      ctx.font = `bold 26px ${FONT}`;
 
-      const fx = (f: number) => f * W;
-      const fy = (f: number) => f * H;
-      const boxW = fx(L.colWidth);
-      const boxH = fy(L.boxH);
-      const leftCx = fx(L.colLeftX) + boxW / 2;
-      const rightCx = fx(L.colRightX) + boxW / 2;
-
-      // Column headings (spec puts them at the top).
-      setLetterSpacing(ctx, "0.5px");
-      ctx.font = `700 21px ${SERIF}`;
-      ctx.fillStyle = "#9a9a9a";
-      ctx.fillText("Current Status", leftCx, fy(L.headingY));
-      ctx.fillStyle = GOLD;
-      ctx.fillText("Hometown Lending Potential", rightCx, fy(L.headingY));
-      setLetterSpacing(ctx, "0px");
-
-      // Gold gain bubble with pointer.
-      const b = { x: fx(L.bubble.x), y: fy(L.bubble.y), w: fx(L.bubble.w), h: fy(L.bubble.h) };
-      roundedRect(ctx, b.x, b.y, b.w, b.h, 8);
-      ctx.fillStyle = GOLD;
-      ctx.fill();
-      ctx.beginPath(); // pointer tip
-      ctx.moveTo(b.x + b.w / 2 - 10, b.y + b.h);
-      ctx.lineTo(b.x + b.w / 2 + 10, b.y + b.h);
-      ctx.lineTo(b.x + b.w / 2, b.y + b.h + 12);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "#231a05";
-      fillTextFit(ctx, data.gain, b.x + b.w / 2, b.y + b.h * 0.38, "bold", 26, b.w - 24);
-      ctx.font = `12px ${FONT}`;
-      ctx.fillText("Headline one-year gain", b.x + b.w / 2, b.y + b.h * 0.74);
-
-      // The three value rows per side, captions beneath (per the labeled spec).
-      const rows: Array<{ value: string; caption: string; hValue: string; hCaption: string }> = [
-        { value: data.currentIncome, caption: "Current annual income", hValue: data.htlIncome, hCaption: "Annual income at Hometown Lending" },
-        { value: data.volume, caption: "Annual funded volume", hValue: data.volume, hCaption: "Annual funded volume" },
-        { value: data.currentBps, caption: "Basis points", hValue: data.htlBps, hCaption: "Effective basis points" },
-      ];
-      rows.forEach((row, i) => {
-        const y = fy(L.rows[i]);
-        // Left: muted gray panel, white value, gray caption.
-        roundedRect(ctx, fx(L.colLeftX), y, boxW, boxH, 6);
-        ctx.fillStyle = GRAY_BOX;
-        ctx.fill();
-        ctx.fillStyle = "#f2f2f2";
-        fillTextFit(ctx, row.value, leftCx, y + boxH / 2, "bold", 26, boxW - 28);
-        ctx.fillStyle = "#9a9a9a";
-        ctx.font = `14px ${FONT}`;
-        ctx.fillText(row.caption, leftCx, y + boxH + fy(L.captionPad) + 8);
-
-        // Right: navy panel with gold border, gold value, gold caption.
-        roundedRect(ctx, fx(L.colRightX), y, boxW, boxH, 6);
-        ctx.fillStyle = NAVY_BOX;
-        ctx.fill();
-        ctx.strokeStyle = GOLD;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        ctx.fillStyle = GOLD;
-        fillTextFit(ctx, row.hValue, rightCx, y + boxH / 2, "bold", 26, boxW - 28);
-        ctx.font = `14px ${FONT}`;
-        ctx.fillText(row.hCaption, rightCx, y + boxH + fy(L.captionPad) + 8);
-      });
+      // Numbers only — everything else is baked into the template.
+      for (const key of Object.keys(SLOTS) as Array<keyof CeilingData>) {
+        const s = SLOTS[key];
+        const x = s.x * W, y = s.y * H, w = s.w * W, h = s.h * H;
+        if (s.fill) {
+          ctx.fillStyle = s.fill;
+          ctx.fillRect(x, y, w, h);
+        }
+        ctx.fillStyle = s.color;
+        fillTextFit(ctx, data[key], x + w / 2, y + h / 2, "bold", 26, w - 28);
+      }
 
       const url = canvas.toDataURL("image/png");
       if (!url.startsWith("data:image/png;base64,")) return null;
