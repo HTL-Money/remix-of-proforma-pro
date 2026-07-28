@@ -21,11 +21,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 import {
-  ModelState, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct,
+  ModelState, Calc, defaultState, calculate, calculateBrokerOnly, fmtUSD, fmtPct,
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource, MIX_PRESETS,
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
-  SPLIT_TIERS, tierForMonthlyVolume,
+  SPLIT_TIERS, tierForAnnualVolume,
 } from "@/lib/proforma";
 import { Chips } from "@/components/Chips";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
@@ -270,6 +270,125 @@ const AddEmployeeDialog = ({ onAdd, triggerLabel = "Add Employee", open: openPro
   );
 };
 
+// Full team editor — the Team & Support box is off the pro forma itself
+// (owner request: payroll is a popup-only concept). This dialog is the one
+// place a recruit builds out their team: reached via "yes" on the payroll
+// question or the header's team button. The pro forma still REPORTS payroll
+// (payroll cost card, after-payroll column) — only the input lives here.
+const TeamSupportDialog = ({ open, onOpenChange, employees, calc, onAdd, onUpdate, onRemove }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  employees: Employee[];
+  calc: Calc;
+  onAdd: (emp: Omit<Employee, "id">) => void;
+  onUpdate: (id: string, patch: Partial<Employee>) => void;
+  onRemove: (id: string) => void;
+}) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2"><Users className="h-5 w-5" /> Team &amp; Employee Support</DialogTitle>
+      </DialogHeader>
+      <p className="text-sm text-muted-foreground">
+        Processor salaries and per-file bonuses are paid by Hometown Lending. Loan Officer Assistants and Loan Partners are paid by the broker, and their per-file bonus is deducted from the LO's compensation.
+      </p>
+      {employees.length === 0 && (
+        <div className="rounded-md border border-dashed border-border bg-secondary/30 px-4 py-6 text-sm text-muted-foreground text-center">
+          No team members yet. Click <span className="font-medium text-foreground">Add Employee</span> to build out your support team.
+        </div>
+      )}
+      <div className="space-y-3">
+        {employees.map(e => {
+          const isProcessor = e.role === "Processor";
+          return (
+            <div key={e.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-lg border border-border bg-secondary/30">
+              <div className="md:col-span-3 space-y-1">
+                <Label className="text-xs">Name</Label>
+                <Input value={e.name} onChange={ev => onUpdate(e.id, { name: ev.target.value })} placeholder="Name" />
+              </div>
+              <div className="md:col-span-2 space-y-1">
+                <Label className="text-xs">Role / Title</Label>
+                <div className="flex items-center h-10 px-3 rounded-md border border-input bg-muted/40 text-sm">{e.role}</div>
+              </div>
+              {isProcessor ? (
+                <>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Salary (HTL)</Label>
+                    <CurrencyInput value={e.salary} onChange={v => onUpdate(e.id, { salary: v })} />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">QM/file</Label>
+                    <CurrencyInput value={e.qmBonus} onChange={v => onUpdate(e.id, { qmBonus: v })} />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Non-QM/file</Label>
+                    <CurrencyInput value={e.nonQmBonus} onChange={v => onUpdate(e.id, { nonQmBonus: v })} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Annual Salary</Label>
+                    <CurrencyInput value={e.salary} onChange={v => onUpdate(e.id, { salary: v })} />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">Salary Paid By</Label>
+                    <Select value={e.salarySource} onValueChange={v => onUpdate(e.id, { salarySource: v as PaySource })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Broker">Broker</SelectItem>
+                        <SelectItem value="HTL">Hometown Lending</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <Label className="text-xs">$/file</Label>
+                    <CurrencyInput value={e.extraBonus} onChange={v => onUpdate(e.id, { extraBonus: v })} />
+                  </div>
+                </>
+              )}
+              <div className="md:col-span-1 flex items-end justify-end">
+                <Button variant="ghost" size="icon" onClick={() => onRemove(e.id)} className="text-destructive hover:bg-destructive/10">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {employees.length > 0 && (
+        <div>
+          <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Annual Cost Per Employee</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {employees.map(e => {
+              const totalFiles = calc.totals.qmFiles + calc.totals.nonQmFiles;
+              const bonusAnnual = e.role === "Processor"
+                ? calc.totals.qmFiles * (e.qmBonus || 0) + calc.totals.nonQmFiles * (e.nonQmBonus || 0)
+                : (e.extraBonus || 0) * totalFiles;
+              const total = (e.salary || 0) + bonusAnnual;
+              return (
+                <div key={e.id} className="premium-card p-4">
+                  <p className="text-xs text-muted-foreground">{e.role}</p>
+                  <p className="font-semibold text-primary">{e.name || "Unnamed"}</p>
+                  <p className="stat-value text-accent mt-2 tabular-nums">{fmtUSD(total)}</p>
+                  <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                    <div className="flex justify-between"><span>Salary ({e.salarySource})</span><span className="tabular-nums">{fmtUSD(e.salary || 0)}</span></div>
+                    <div className="flex justify-between"><span>Per-file bonuses</span><span className="tabular-nums">{fmtUSD(bonusAnnual)}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <DialogFooter className="gap-2 sm:justify-between">
+        <AddEmployeeDialog onAdd={onAdd} />
+        <Button variant="outline" onClick={() => onOpenChange(false)}>Done</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+);
+
 // ---- Main page ----
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -358,11 +477,11 @@ const Index = () => {
   const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
   const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
 
-  // Split tiers key off MONTHLY funded volume. Use the production period the
-  // figures actually cover, not a hard /12, so a 6-month RETR pull doesn't
-  // report an artificially low monthly average.
-  const monthlyVolume = state.annualVolume / (calc.periodMonths || 12);
-  const qualifyingTier = monthlyVolume > 0 ? tierForMonthlyVolume(monthlyVolume) : null;
+  // Split tiers key off ANNUAL funded volume. Annualize using the production
+  // period the figures actually cover, not a hard assumption of a full year,
+  // so a 6-month RETR pull doesn't report an artificially low annual pace.
+  const annualizedVolume = state.annualVolume * (12 / (calc.periodMonths || 12));
+  const qualifyingTier = annualizedVolume > 0 ? tierForAnnualVolume(annualizedVolume) : null;
 
   // Payroll-dependent columns/cards only make sense once someone is on payroll.
   // A solo LO should never see a team-cost concept at all.
@@ -498,13 +617,15 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       {/* Post-gate payroll question. "No" is one tap and lands on the pro
           forma with no payroll/holdback concept anywhere; "yes" chains into
-          the employee breakdown dialog below. */}
+          the team dialog below. The Team & Support box is OFF the pro forma
+          itself (owner request) — this popup and the header's team button are
+          the only ways payroll ever surfaces to a recruit. */}
       <Dialog
         open={payrollPromptOpen && !hasPayroll}
         onOpenChange={v => {
           setPayrollPromptOpen(v);
           // Dismissing (Esc / outside click) counts as "not now", not "no" —
-          // the inline Team & Payroll card still offers the question.
+          // the header team button can still reopen the breakdown later.
         }}
       >
         <DialogContent className="sm:max-w-md">
@@ -512,7 +633,7 @@ const Index = () => {
             <DialogTitle className="flex items-center gap-2"><Users className="h-5 w-5" /> Team &amp; Payroll</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Do you pay any processors, loan officer assistants, or loan partners out of your production?
+            Do you have current payroll?
           </p>
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button
@@ -520,22 +641,33 @@ const Index = () => {
               className="sm:flex-1"
               onClick={() => { confirmNoPayroll(); setPayrollPromptOpen(false); }}
             >
-              No — it's just me
+              No
             </Button>
             <Button
               className="gold-accent text-accent-foreground hover:opacity-90 sm:flex-1"
               onClick={() => { setPayrollPromptOpen(false); setPayrollBreakdownOpen(true); }}
             >
-              <Plus className="h-4 w-4 mr-1" /> Yes — add my team
+              Yes
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* The breakdown screen the "yes" path lands on — same dialog the
-          Team section uses, controlled here so the two chain cleanly. */}
-      <AddEmployeeDialog open={payrollBreakdownOpen} onOpenChange={setPayrollBreakdownOpen} onAdd={addEmployee} />
+      {/* The breakdown screen the "yes" path lands on — the full team editor
+          (add several, edit, remove), also reachable from the header button. */}
+      <TeamSupportDialog
+        open={payrollBreakdownOpen}
+        onOpenChange={setPayrollBreakdownOpen}
+        employees={state.employees}
+        calc={calc}
+        onAdd={addEmployee}
+        onUpdate={updateEmployee}
+        onRemove={removeEmployee}
+      />
       {/* Hero header */}
-      <header className="hero-bg text-primary-foreground border-b border-border/40">
+      {/* overflow-hidden: the showcased H mark below is absolutely positioned
+          past the heading's right edge; clip it at the header instead of
+          letting it widen the page into a horizontal scrollbar. */}
+      <header className="hero-bg text-primary-foreground border-b border-border/40 overflow-hidden">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10">
           <div className="flex items-start justify-between gap-4 md:gap-6 flex-wrap">
             <div className="flex items-start gap-4 md:gap-6 flex-col sm:flex-row min-w-0">
@@ -549,7 +681,7 @@ const Index = () => {
               </div>
               {/* Text + H mark stay on one row at every width (the outer group
                   stacks logo above text on mobile; this inner row does not). */}
-              <div className="flex items-start gap-3 md:gap-4 min-w-0">
+              <div className="relative flex items-start gap-3 md:gap-4 min-w-0">
                 <div className="md:pt-2 min-w-0">
                   <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 7vw, 6rem)" }}>Hometown Lending</h1>
                   <p className="font-display font-semibold mt-2 md:mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
@@ -560,7 +692,14 @@ const Index = () => {
                     <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1.28rem, calc(1.8vw + 0.333rem), 1.83rem)" }}>Your Production's True Value</span>
                   </p>
                 </div>
-                <HMark className="h-10 w-10 md:h-16 md:w-16 shrink-0 self-start md:mt-2" />
+                {/* Showcased H mark. Desktop: bigger and pushed ~2in right of
+                    the heading, absolutely positioned so the offset can't
+                    shove the Reset/Save cluster or wrap the header (owner:
+                    "don't move anything else"). Mobile/tablet: an in-flow copy
+                    at the old size — a 2in offset would land off a phone
+                    screen entirely. */}
+                <HMark className="h-10 w-10 md:h-16 md:w-16 shrink-0 self-start md:mt-2 lg:hidden" />
+                <HMark className="hidden lg:block absolute left-full top-0 ml-[2in] h-28 w-28 pointer-events-none" />
               </div>
 
             </div>
@@ -594,6 +733,24 @@ const Index = () => {
                   <LogOut className="h-4 w-4" />
                 </Button>
               )}
+              {/* Reopens the team editor — the only path back to payroll now
+                  that the inline box is off the page. Sits before Reset so
+                  Reset keeps the corner. */}
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Team & payroll"
+                title="Team & payroll"
+                onClick={() => setPayrollBreakdownOpen(true)}
+                className="relative bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
+              >
+                <Users className="h-4 w-4" />
+                {state.employees.length > 0 && (
+                  <span className="absolute -top-1 -right-1 h-4 min-w-4 px-0.5 rounded-full bg-[hsl(40,85%,52%)] text-[hsl(217,60%,18%)] text-[10px] font-bold leading-4 text-center tabular-nums">
+                    {state.employees.length}
+                  </span>
+                )}
+              </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 {/* Highlighted yellow by owner request — explicit amber, NOT
@@ -789,7 +946,7 @@ const Index = () => {
             </div>
             <div className="space-y-2">
               <Label>HTL LO Split</Label>
-              {/* Read-only: the band is DERIVED from monthly volume inside
+              {/* Read-only: the band is DERIVED from annual volume inside
                   calculate() and updates live as volume changes. There is
                   nothing to click — see "How the HTL LO Split Works" at the
                   bottom of the page for the full tier table. */}
@@ -800,7 +957,7 @@ const Index = () => {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     You keep <span className="font-semibold text-accent">{calc.splitTier.loPct}%</span> at{" "}
-                    {fmtUSD(monthlyVolume, { compact: true })}/mo — set by volume, updates as it changes.
+                    {fmtUSD(annualizedVolume, { compact: true })}/yr — set by volume, updates as it changes.
                   </p>
                 </>
               ) : (
@@ -896,145 +1053,10 @@ const Index = () => {
           )}
         </Section>
 
-        {/* Team builder. Anonymous recruits with no employees get a light
-            OPT-IN card instead — most LOs are solo, and a payroll form
-            standing between them and their number costs conversions. It
-            never opens automatically; adding staff is always their choice. */}
-        {!isTeamMember && state.employees.length === 0 ? (
-          <section className="premium-card p-5 md:p-6">
-            <div className="flex items-center gap-2 mb-1">
-              <Users className="h-5 w-5 text-primary" />
-              <h2 className="section-header !mb-0 !border-0 !pb-0 !text-base">Team &amp; Payroll</h2>
-            </div>
-            {noPayroll ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 mt-2">
-                <p className="text-sm text-muted-foreground">✓ No employees added — your pro forma assumes no payroll costs.</p>
-                <AddEmployeeDialog
-                  triggerLabel="Actually, add someone"
-                  onAdd={addEmployee}
-                />
-              </div>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground mt-1 mb-4">
-                  Do you pay any processors, loan officer assistants, or loan partners out of your production?
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <AddEmployeeDialog
-                    triggerLabel="Add processors, LOAs, or loan partners"
-                    onAdd={addEmployee}
-                  />
-                  <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={confirmNoPayroll}>
-                    I don't have any employees. I don't pay any payroll.
-                  </Button>
-                </div>
-              </>
-            )}
-          </section>
-        ) : (
-        <Section
-          icon={<Users className="h-5 w-5" />}
-          title="Team & Employee Support"
-          defaultOpen={!isTeamMember}
-          compact
-          right={<AddEmployeeDialog onAdd={addEmployee} />}
-        >
-          <p className="text-sm text-muted-foreground mb-4">
-            Processor salaries and per-file bonuses are paid by Hometown Lending. Loan Officer Assistants and Loan Partners are paid by the broker, and their per-file bonus is deducted from the LO's compensation.
-          </p>
-          {state.employees.length === 0 && (
-            <div className="rounded-md border border-dashed border-border bg-secondary/30 px-4 py-6 text-sm text-muted-foreground text-center">
-              No team members yet. Click <span className="font-medium text-foreground">Add Employee</span> to build out your support team.
-            </div>
-          )}
-          <div className="space-y-3">
-            {state.employees.map(e => {
-              const isProcessor = e.role === "Processor";
-              return (
-                <div key={e.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 rounded-lg border border-border bg-secondary/30">
-                  <div className="md:col-span-3 space-y-1">
-                    <Label className="text-xs">Name</Label>
-                    <Input value={e.name} onChange={ev => updateEmployee(e.id, { name: ev.target.value })} placeholder="Name" />
-                  </div>
-                  <div className="md:col-span-3 space-y-1">
-                    <Label className="text-xs">Role / Title</Label>
-                    <div className="flex items-center h-10 px-3 rounded-md border border-input bg-muted/40 text-sm">{e.role}</div>
-                  </div>
-                  {isProcessor ? (
-                    <>
-                      <div className="md:col-span-2 space-y-1">
-                        <Label className="text-xs">Salary (HTL)</Label>
-                        <CurrencyInput value={e.salary} onChange={v => updateEmployee(e.id, { salary: v })} />
-                      </div>
-                      <div className="md:col-span-1 space-y-1">
-                        <Label className="text-xs">QM/file</Label>
-                        <CurrencyInput value={e.qmBonus} onChange={v => updateEmployee(e.id, { qmBonus: v })} />
-                      </div>
-                      <div className="md:col-span-2 space-y-1">
-                        <Label className="text-xs">Non-QM/file</Label>
-                        <CurrencyInput value={e.nonQmBonus} onChange={v => updateEmployee(e.id, { nonQmBonus: v })} />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="md:col-span-2 space-y-1">
-                        <Label className="text-xs">Annual Salary</Label>
-                        <CurrencyInput value={e.salary} onChange={v => updateEmployee(e.id, { salary: v })} />
-                      </div>
-                      <div className="md:col-span-2 space-y-1">
-                        <Label className="text-xs">Salary Paid By</Label>
-                        <Select value={e.salarySource} onValueChange={v => updateEmployee(e.id, { salarySource: v as PaySource })}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Broker">Broker</SelectItem>
-                            <SelectItem value="HTL">Hometown Lending</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="md:col-span-1 space-y-1">
-                        <Label className="text-xs">$/file</Label>
-                        <CurrencyInput value={e.extraBonus} onChange={v => updateEmployee(e.id, { extraBonus: v })} />
-                      </div>
-                    </>
-                  )}
-                  <div className="md:col-span-1 flex items-end justify-end">
-                    <Button variant="ghost" size="icon" onClick={() => removeEmployee(e.id)} className="text-destructive hover:bg-destructive/10">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {state.employees.length > 0 && (
-            <div className="mt-6">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">Annual Cost Per Employee</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {state.employees.map(e => {
-                  const totalFiles = calc.totals.qmFiles + calc.totals.nonQmFiles;
-                  const bonusAnnual = e.role === "Processor"
-                    ? calc.totals.qmFiles * (e.qmBonus || 0) + calc.totals.nonQmFiles * (e.nonQmBonus || 0)
-                    : (e.extraBonus || 0) * totalFiles;
-                  const total = (e.salary || 0) + bonusAnnual;
-                  return (
-                    <div key={e.id} className="premium-card p-4">
-                      <p className="text-xs text-muted-foreground">{e.role}</p>
-                      <p className="font-semibold text-primary">{e.name || "Unnamed"}</p>
-                      <p className="stat-value text-accent mt-2 tabular-nums">{fmtUSD(total)}</p>
-                      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-                        <div className="flex justify-between"><span>Salary ({e.salarySource})</span><span className="tabular-nums">{fmtUSD(e.salary || 0)}</span></div>
-                        <div className="flex justify-between"><span>Per-file bonuses</span><span className="tabular-nums">{fmtUSD(bonusAnnual)}</span></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </Section>
-        )}
-
+        {/* NOTE: the Team & Employee Support box that used to sit here is
+            gone by owner request — payroll input lives exclusively in
+            TeamSupportDialog (payroll popup "yes" or the header team button).
+            The pro forma still REPORTS payroll below once employees exist. */}
 
         {/* Comparison Tool */}
         <Section icon={<TrendingUp className="h-5 w-5" />} title="Comparison Tool" id="comparison">
@@ -1296,7 +1318,7 @@ const Index = () => {
             A split of <span className="font-semibold text-foreground">90/10</span> means the loan officer keeps
             <span className="font-semibold text-foreground"> 90%</span> of the gross commission and Hometown Lending
             keeps <span className="font-semibold text-foreground">10%</span>. Which band applies is a function of
-            <span className="font-semibold text-foreground"> monthly funded volume</span>.
+            <span className="font-semibold text-foreground"> annual funded volume</span>.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[...SPLIT_TIERS].reverse().map(t => {
@@ -1304,22 +1326,22 @@ const Index = () => {
               return (
                 <div key={t.loPct} className={`premium-card p-5 ${isCurrent ? "border-accent" : ""}`}>
                   <span className="stat-label">
-                    {t.minMonthly === 0
-                      ? `Up to ${fmtUSD(t.maxMonthly ?? 0, { compact: true })} / month`
-                      : t.maxMonthly == null
-                        ? `Over ${fmtUSD(t.minMonthly, { compact: true })} / month`
-                        : `${fmtUSD(t.minMonthly, { compact: true })}–${fmtUSD(t.maxMonthly, { compact: true })} / month`}
+                    {t.minAnnual === 0
+                      ? `Under ${fmtUSD(t.maxAnnual ?? 0, { compact: true })} / year`
+                      : t.maxAnnual == null
+                        ? `${fmtUSD(t.minAnnual, { compact: true })}+ / year`
+                        : `${fmtUSD(t.minAnnual, { compact: true })}–${fmtUSD(t.maxAnnual, { compact: true })} / year`}
                   </span>
                   <span className="stat-value mt-1 block">{t.loPct}/{t.htlPct}</span>
                   <span className="text-sm text-muted-foreground mt-1 block">
                     LO keeps {t.loPct}% · HTL {t.htlPct}%
                   </span>
                   <span className="text-xs text-muted-foreground mt-2 block">
-                    {t.minMonthly === 0
-                      ? `≈ ${fmtUSD((t.maxMonthly ?? 0) * 12, { compact: true })}/yr or less`
-                      : t.maxMonthly == null
-                        ? `≈ over ${fmtUSD(t.minMonthly * 12, { compact: true })}/yr`
-                        : `≈ ${fmtUSD(t.minMonthly * 12, { compact: true })}–${fmtUSD(t.maxMonthly * 12, { compact: true })}/yr`}
+                    {t.minAnnual === 0
+                      ? `≈ under ${fmtUSD((t.maxAnnual ?? 0) / 12, { compact: true })}/mo`
+                      : t.maxAnnual == null
+                        ? `≈ ${fmtUSD(t.minAnnual / 12, { compact: true })}/mo and up`
+                        : `≈ ${fmtUSD(t.minAnnual / 12, { compact: true })}–${fmtUSD(t.maxAnnual / 12, { compact: true })}/mo`}
                   </span>
                   {isCurrent && <span className="text-xs font-semibold text-accent mt-2 block">Your current volume</span>}
                 </div>
@@ -1327,9 +1349,10 @@ const Index = () => {
             })}
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
-            Monthly volume is the test; the annual figures are the same thresholds ×12, shown for readers who
-            think in years. Volume at a boundary falls in the lower band. The split is applied automatically from
-            the volume entered above — every figure on this page already uses the band your production qualifies for.
+            Annual volume is the test; the monthly figures are the same thresholds ÷12, shown for readers who
+            think in months. Volume exactly at a threshold qualifies for the higher band — $24M is 85/15 and
+            $48M is 90/10. The split is applied automatically from the volume entered above — every figure on
+            this page already uses the band your production qualifies for.
           </p>
         </Section>
 

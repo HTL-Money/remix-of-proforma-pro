@@ -10,7 +10,7 @@ import {
   NONQM_FEE,
   CORR_FEE,
   SPLIT_TIERS,
-  tierForMonthlyVolume,
+  tierForAnnualVolume,
 } from "@/lib/proforma";
 
 // allocateFiles is not exported; exercise it indirectly through calculate()/calculateBrokerOnly()
@@ -888,8 +888,11 @@ describe("productionPeriodMonths: period-aware monthly + salary proration", () =
   });
 
   it("a 6-month pull prorates the flat salary to half, not a full year", () => {
-    const annual = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 12 });
-    const sixMo = baseState({ annualVolume: 12_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 6 });
+    // $10M, not $12M: a 6-month $12M pull annualizes to exactly $24M — the 85
+    // band — while the 12-month case stays 80, and this test needs both runs
+    // in the SAME band so the revenue side is identical by construction.
+    const annual = baseState({ annualVolume: 10_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 12 });
+    const sixMo = baseState({ annualVolume: 10_000_000, annualFiles: 40, employees: [employee()], productionPeriodMonths: 6 });
     const calcAnnual = calculate(annual);
     const calcSixMo = calculate(sixMo);
     // Same revenue-side numbers (by construction of this test), half the salary cost.
@@ -936,22 +939,18 @@ describe("HTL LO split tiers", () => {
     SPLIT_TIERS.forEach(t => expect(t.loPct + t.htlPct).toBe(100));
   });
 
-  it("maps monthly volume to the right band", () => {
-    expect(tierForMonthlyVolume(0).loPct).toBe(80);
-    expect(tierForMonthlyVolume(1_500_000).loPct).toBe(80);
-    expect(tierForMonthlyVolume(2_500_000).loPct).toBe(85);
-    expect(tierForMonthlyVolume(3_999_999).loPct).toBe(85);
-    expect(tierForMonthlyVolume(10_000_000).loPct).toBe(90);
+  it("maps annual volume to the right band", () => {
+    expect(tierForAnnualVolume(0).loPct).toBe(80);
+    expect(tierForAnnualVolume(18_000_000).loPct).toBe(80);
+    expect(tierForAnnualVolume(23_999_999).loPct).toBe(80);
+    expect(tierForAnnualVolume(30_000_000).loPct).toBe(85);
+    expect(tierForAnnualVolume(47_999_999).loPct).toBe(85);
+    expect(tierForAnnualVolume(120_000_000).loPct).toBe(90);
   });
 
-  it("puts a volume sitting exactly on a boundary in the LOWER band", () => {
-    expect(tierForMonthlyVolume(2_000_000).loPct).toBe(80);
-    expect(tierForMonthlyVolume(4_000_000).loPct).toBe(85);
-  });
-
-  it("$48M/yr — the user's stated 90/10 threshold — lands in the top band just above it", () => {
-    expect(tierForMonthlyVolume(48_000_000 / 12).loPct).toBe(85); // exactly $4M/mo = boundary
-    expect(tierForMonthlyVolume(48_000_001 / 12).loPct).toBe(90);
+  it("puts a volume sitting exactly on a boundary in the UPPER band (owner's stated rule)", () => {
+    expect(tierForAnnualVolume(24_000_000).loPct).toBe(85);
+    expect(tierForAnnualVolume(48_000_000).loPct).toBe(90);
   });
 });
 
@@ -960,25 +959,25 @@ describe("derived split: calculate() picks the band from volume — no input, no
     calculate(baseState({ annualVolume, annualFiles: 100, productionPeriodMonths }));
 
   it("moves 80 → 85 → 90 as annual volume grows", () => {
-    expect(at(10_000_000).loSplitPct).toBe(80);  // $833k/mo
-    expect(at(30_000_000).loSplitPct).toBe(85);  // $2.5M/mo
-    expect(at(60_000_000).loSplitPct).toBe(90);  // $5M/mo
+    expect(at(10_000_000).loSplitPct).toBe(80);
+    expect(at(30_000_000).loSplitPct).toBe(85);
+    expect(at(60_000_000).loSplitPct).toBe(90);
   });
 
-  it("annual boundaries land in the LOWER band ($24M and $48M exactly)", () => {
-    expect(at(24_000_000).loSplitPct).toBe(80);  // exactly $2M/mo
-    expect(at(24_000_012).loSplitPct).toBe(85);
-    expect(at(48_000_000).loSplitPct).toBe(85);  // exactly $4M/mo
-    expect(at(48_000_012).loSplitPct).toBe(90);
+  it("annual boundaries land in the UPPER band ($24M and $48M exactly)", () => {
+    expect(at(23_999_999).loSplitPct).toBe(80);
+    expect(at(24_000_000).loSplitPct).toBe(85);
+    expect(at(47_999_999).loSplitPct).toBe(85);
+    expect(at(48_000_000).loSplitPct).toBe(90);
   });
 
   it("zero volume sits in the bottom band (nothing to model, nothing to promise)", () => {
     expect(at(0).loSplitPct).toBe(80);
   });
 
-  it("a partial-period pull derives monthly volume from ITS OWN window, not /12", () => {
-    // $15M over 6 months is $2.5M/mo → 85. Dividing by a hard 12 would call it
-    // $1.25M/mo → 80 and quietly under-offer every partial-period recruit.
+  it("a partial-period pull annualizes from ITS OWN window, not the raw total", () => {
+    // $15M over 6 months is a $30M/yr pace → 85. Using the raw total would
+    // call it $15M/yr → 80 and quietly under-offer every partial-period recruit.
     expect(at(15_000_000, 6).loSplitPct).toBe(85);
     // And the same $15M over a full year genuinely IS the 80 band.
     expect(at(15_000_000, 12).loSplitPct).toBe(80);

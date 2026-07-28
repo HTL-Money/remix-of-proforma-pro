@@ -61,32 +61,38 @@ export interface ModelState {
   retrSourced: boolean;
 }
 
-// HTL LO split tiers. The band is a function of MONTHLY funded volume — that is
-// the real test; the annual figures are just ×12 for readers who think in years.
+// HTL LO split tiers. The band is a function of ANNUAL funded volume — that is
+// the real test; monthly equivalents are just ÷12 for readers who think in months.
 // "90/10" means the LO keeps 90% of gross commission and HTL keeps 10%.
 //
+// The published rule, verbatim:
+//   up to $23,999,999/yr → 80/20
+//   $24,000,000 – $47,999,999/yr → 85/15
+//   $48,000,000/yr and up → 90/10
+// Boundaries land in the UPPER band: exactly $24M is 85/15, exactly $48M is 90/10.
+//
 // The split is NOT an input: calculate() derives the band from the entered
-// volume via tierForMonthlyVolume(), so the number on screen can never
+// volume via tierForAnnualVolume(), so the number on screen can never
 // contradict the published tier table. It updates live as volume changes and
 // is displayed read-only (see the "How the HTL LO Split Works" section).
 export interface SplitTier {
   loPct: number;
   htlPct: number;
-  /** Exclusive lower bound on monthly funded volume. */
-  minMonthly: number;
-  /** Inclusive upper bound on monthly funded volume; null = no ceiling. */
-  maxMonthly: number | null;
+  /** Inclusive lower bound on annual funded volume. */
+  minAnnual: number;
+  /** Exclusive upper bound on annual funded volume; null = no ceiling. */
+  maxAnnual: number | null;
 }
 
 export const SPLIT_TIERS: SplitTier[] = [
-  { loPct: 80, htlPct: 20, minMonthly: 0,       maxMonthly: 2_000_000 },
-  { loPct: 85, htlPct: 15, minMonthly: 2_000_000, maxMonthly: 4_000_000 },
-  { loPct: 90, htlPct: 10, minMonthly: 4_000_000, maxMonthly: null },
+  { loPct: 80, htlPct: 20, minAnnual: 0,          maxAnnual: 24_000_000 },
+  { loPct: 85, htlPct: 15, minAnnual: 24_000_000, maxAnnual: 48_000_000 },
+  { loPct: 90, htlPct: 10, minAnnual: 48_000_000, maxAnnual: null },
 ];
 
-/** The tier a given monthly funded volume qualifies for. Boundaries land in the LOWER band. */
-export const tierForMonthlyVolume = (monthlyVolume: number): SplitTier =>
-  SPLIT_TIERS.find(t => t.maxMonthly == null || monthlyVolume <= t.maxMonthly) ?? SPLIT_TIERS[SPLIT_TIERS.length - 1];
+/** The tier a given annual funded volume qualifies for. Boundaries land in the UPPER band. */
+export const tierForAnnualVolume = (annualVolume: number): SplitTier =>
+  SPLIT_TIERS.find(t => t.maxAnnual == null || annualVolume < t.maxAnnual) ?? SPLIT_TIERS[SPLIT_TIERS.length - 1];
 
 export const BROKER_CAP = 2.75;
 export const CORR_MIN = 2.0;
@@ -243,11 +249,11 @@ export const calculate = (s: ModelState): Calc => {
   // a partial-year revenue total against a full year of fixed cost.
   const periodMonths = s.productionPeriodMonths > 0 ? s.productionPeriodMonths : 12;
   const periodFrac = periodMonths / 12;
-  // The split band is a pure function of monthly funded volume. Dividing by
-  // periodMonths (not a flat 12) keeps a partial-period RETR pull honest: a
-  // 6-month, $15M pull is $2.5M/mo, not $1.25M/mo.
-  const monthlyVolume = s.annualVolume / periodMonths;
-  const splitTier = tierForMonthlyVolume(monthlyVolume);
+  // The split band is a pure function of ANNUAL funded volume. Annualizing by
+  // 12/periodMonths (not using the raw total) keeps a partial-period RETR pull
+  // honest: a 6-month, $15M pull is a $30M/yr pace, not a $15M/yr pace.
+  const annualizedVolume = s.annualVolume * (12 / periodMonths);
+  const splitTier = tierForAnnualVolume(annualizedVolume);
   const allocation = allocateFiles(s);
   // Force broker buckets always active (FHA + default Non-QM live there). Apply correct per-channel fee.
   const bucketsResolved: Bucket[] = s.buckets.map(b => ({

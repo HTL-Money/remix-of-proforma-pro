@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { bpsToSplit } from "@/lib/bps";
 import { lookupRetrReport, normalizeNmls, isCloudConfigured, StoredRetrReport } from "@/lib/retrReportStore";
 import htlLogo from "@/assets/htl-logo.png.asset.json";
+import HMark from "@/components/HMark";
 
 interface NmlsGateProps {
   onEnter: (result: { nmls: string; report: StoredRetrReport | null; currentSplit: number | null }) => void;
@@ -53,7 +54,9 @@ export const NmlsGate = ({ onEnter, onSkip }: NmlsGateProps) => {
 
   return (
     <div className="min-h-screen hero-bg text-primary-foreground flex items-center justify-center px-4">
-      <div className="w-full max-w-lg text-center space-y-8 py-16">
+      {/* py-16 → py-10: buys back some of the height the H mark adds so the
+          NMLS input stays reachable without scrolling on a phone. */}
+      <div className="w-full max-w-lg text-center space-y-8 py-10">
         <div className="mx-auto rounded-lg bg-white flex items-center justify-center shadow-soft p-3 w-28 h-28 sm:w-40 sm:h-40">
           <img
             src={htlLogo.url}
@@ -62,6 +65,10 @@ export const NmlsGate = ({ onEnter, onSkip }: NmlsGateProps) => {
             onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
           />
         </div>
+        {/* Showcased brand H mark (owner request) — same component as the
+            main header so the two can never drift. space-y-8 above shifts
+            the heading + form down to make room. */}
+        <HMark className="mx-auto h-32 w-32 sm:h-40 sm:w-40" />
         <div className="space-y-2">
           <h1 className="font-display font-bold tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 5vw, 3.25rem)", lineHeight: 1.05 }}>
             Hometown Lending
