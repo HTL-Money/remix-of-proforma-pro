@@ -27,8 +27,6 @@ import {
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
 } from "@/lib/proforma";
 import { Chips } from "@/components/Chips";
-import htlLogo from "@/assets/htl-logo.png.asset.json";
-import HMark from "@/components/HMark";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { CloudSave } from "@/components/CloudSave";
 import { PublicRecapCta } from "@/components/PublicRecapCta";
@@ -657,24 +655,26 @@ const Index = () => {
         onRemove={removeEmployee}
       />
       {/* Hero header */}
-      {/* overflow-hidden: the showcased H mark below is absolutely positioned
-          past the heading's right edge; clip it at the header instead of
-          letting it widen the page into a horizontal scrollbar. */}
-      <header className="hero-bg text-primary-foreground border-b border-border/40 overflow-hidden">
+      <header className="hero-bg text-primary-foreground border-b border-border/40">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10">
           <div className="flex items-start justify-between gap-4 md:gap-6 flex-wrap">
             <div className="flex items-start gap-4 md:gap-6 flex-col sm:flex-row min-w-0">
+              {/* The real brand artwork (public/htl-logo.png) — navy/gray on
+                  white, so it keeps the white tile against the navy hero. */}
               <div className="rounded-lg bg-white flex items-center justify-center shadow-soft p-2 md:p-3 shrink-0 w-20 h-20 md:w-48 md:h-48">
                 <img
-                  src={htlLogo.url}
+                  src="/htl-logo.png"
                   alt="Hometown Lending"
                   className="h-full w-full object-contain"
-                  onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
+                  onError={e => {
+                    // Hide the tile rather than show a broken-image icon, but
+                    // never silently: a missing logo shipped unnoticed once.
+                    console.error("HTL logo failed to load: /htl-logo.png");
+                    (e.currentTarget.closest("div") as HTMLElement).style.display = "none";
+                  }}
                 />
               </div>
-              {/* Text + H mark stay on one row at every width (the outer group
-                  stacks logo above text on mobile; this inner row does not). */}
-              <div className="relative flex items-start gap-3 md:gap-4 min-w-0">
+              <div className="flex items-start gap-3 md:gap-4 min-w-0">
                 <div className="md:pt-2 min-w-0">
                   <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 7vw, 6rem)" }}>Hometown Lending</h1>
                   <p className="font-display font-semibold mt-2 md:mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
@@ -685,14 +685,6 @@ const Index = () => {
                     <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1.28rem, calc(1.8vw + 0.333rem), 1.83rem)" }}>Your Production's True Value</span>
                   </p>
                 </div>
-                {/* Showcased H mark. Desktop: bigger and pushed ~2in right of
-                    the heading, absolutely positioned so the offset can't
-                    shove the Reset/Save cluster or wrap the header (owner:
-                    "don't move anything else"). Mobile/tablet: an in-flow copy
-                    at the old size — a 2in offset would land off a phone
-                    screen entirely. */}
-                <HMark className="h-10 w-10 md:h-16 md:w-16 shrink-0 self-start md:mt-2 lg:hidden" />
-                <HMark className="hidden lg:block absolute left-full top-[0.5in] ml-[0.5in] h-28 w-28 pointer-events-none" />
               </div>
 
             </div>
