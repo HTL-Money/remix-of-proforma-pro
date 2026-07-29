@@ -79,10 +79,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // HTL5 referral-sourcing attribution — backend bookkeeping ONLY. Never read
 // by RecapPayload/template.ts/RecapView.tsx; the recap recipient never sees
-// any of this. First-sender-wins for LO_SOURCING_EXPIRY_MONTHS, after which a
-// new send may reassign it — but every reassignment logs an event and fires
-// an alert email, so a human reviews it rather than it silently overwriting.
-const LO_SOURCING_EXPIRY_MONTHS = Number(Deno.env.get("LO_SOURCING_EXPIRY_MONTHS") ?? "12");
+// any of this. First-sender-wins for LO_SOURCING_EXPIRY_DAYS (owner rule:
+// the sourcing LO holds the recruit's NMLS for 90 days), after which a new
+// send may reassign it — but every reassignment logs an event and fires an
+// alert email, so a human reviews it rather than it silently overwriting.
+const LO_SOURCING_EXPIRY_DAYS = Number(Deno.env.get("LO_SOURCING_EXPIRY_DAYS") ?? "90");
 const LO_SOURCING_ALERT_TO = Deno.env.get("LO_SOURCING_ALERT_TO") || "marketing@hometownlend.com";
 
 const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -388,11 +389,11 @@ const fetchDocumentedProforma = async (
   }
 };
 
-/** Best-effort: extracts the caller's user ID from their bearer JWT's `sub`
- *  claim, but ONLY if it's a real UUID — the public anon key is itself a
- *  valid JWT (see the file-header note), and its `sub` is not a real
- *  auth.users id, so this naturally no-ops for anonymous/public sends. */
-const extractSenderId = (req: Request): string | null => {
+/** UNVERIFIED peek at the bearer JWT's `sub` — used only as a cheap
+ *  short-circuit so anonymous sends (whose token is the public anon key,
+ *  a valid project JWT with a non-UUID `sub`) skip the Auth roundtrip.
+ *  NEVER use this value as an identity: it is attacker-controlled. */
+const unverifiedSub = (req: Request): string | null => {
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/i, "");
   const parts = token.split(".");
@@ -401,6 +402,30 @@ const extractSenderId = (req: Request): string | null => {
     const sub = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))).sub ?? null;
     return typeof sub === "string" && UUID_RE.test(sub) ? sub : null;
   } catch {
+    return null;
+  }
+};
+
+/** Resolves the caller's user ID by VERIFYING their bearer token against
+ *  Auth (`GET /auth/v1/user`) — never by trusting the JWT payload. HTL5
+ *  rev-share attribution hangs off this ID, so a forged token with an
+ *  arbitrary UUID `sub` must not be able to claim another LO's recruit.
+ *  Best-effort: any failure yields null (an anonymous send), never a
+ *  blocked send. */
+const verifiedSenderId = async (req: Request, supabaseUrl: string | undefined, serviceKey: string | undefined): Promise<string | null> => {
+  if (!unverifiedSub(req)) return null; // anon key / no token — nothing to verify
+  if (!supabaseUrl || !serviceKey) return null;
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  try {
+    const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return null; // invalid/expired/forged token — treat as anonymous
+    const data = await r.json();
+    return typeof data?.id === "string" && UUID_RE.test(data.id) ? data.id : null;
+  } catch (e) {
+    console.error("sender verification failed (non-fatal, treated as anonymous)", e);
     return null;
   }
 };
@@ -443,7 +468,7 @@ const insertSourcingRow = async (url: string, key: string, nmls: string, sourced
     await fetch(`${url}/rest/v1/lo_sourcing`, {
       method: "POST",
       headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ nmls, sourced_by: sourcedBy, expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_MONTHS) }),
+      body: JSON.stringify({ nmls, sourced_by: sourcedBy, expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_DAYS) }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
@@ -467,7 +492,7 @@ const reassignSourcingRow = async (
       body: JSON.stringify({
         sourced_by: newSourcedBy,
         sourced_at: new Date().toISOString(),
-        expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_MONTHS),
+        expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_DAYS),
       }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -636,9 +661,10 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  // Decoded here (not at the sender-copy-back block below) because the
-  // suppressed-send audit row also records who attempted the send.
-  const senderId = extractSenderId(req);
+  // Resolved here (not at the sender-copy-back block below) because the
+  // suppressed-send audit row also records who attempted the send. Verified
+  // against Auth — attribution money hangs off this ID (see verifiedSenderId).
+  const senderId = await verifiedSenderId(req, supabaseUrl, serviceKey);
 
   // Opt-out check FIRST — a suppressed address must never be emailed again,
   // whoever asks (CAN-SPAM: opt-outs are permanent until the person opts back

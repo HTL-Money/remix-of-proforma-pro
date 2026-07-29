@@ -28,5 +28,5 @@ export const decideSourcingAction = (existing: SourcingRow | null, senderId: str
   return { kind: "reassign", previousSourcedBy: existing.sourced_by }; // expired — allowed, but must be logged/alerted
 };
 
-export const expiryTimestamp = (nowMs: number, expiryMonths: number): string =>
-  new Date(nowMs + expiryMonths * 30 * 24 * 60 * 60 * 1000).toISOString();
+export const expiryTimestamp = (nowMs: number, expiryDays: number): string =>
+  new Date(nowMs + expiryDays * 24 * 60 * 60 * 1000).toISOString();

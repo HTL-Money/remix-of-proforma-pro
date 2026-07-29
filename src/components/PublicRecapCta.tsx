@@ -54,7 +54,9 @@ export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCt
     try {
       const payload = buildRecapPayload(name, state, calc);
       try {
-        await submitPublicProforma(name, state);
+        // `to` rides along so the submission row carries the recruit's email
+        // (the CRM contact record) — not just their production numbers.
+        await submitPublicProforma(name, state, to);
       } catch (e) {
         console.warn("Public submission not stored:", e);
       }

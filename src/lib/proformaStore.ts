@@ -59,6 +59,7 @@ const economicsColumns = (state: ModelState) => {
   return {
     nmls: state.nmls || null,
     annual_volume: state.annualVolume,
+    annual_files: state.annualFiles || null,
     lo_split: calc.loSplitPct,
     employee_count: state.employees.length,
     payroll_overhead: calc.brokerPaidSalaries + calc.brokerPaidBonuses,
@@ -84,9 +85,17 @@ export const saveProforma = async (name: string, state: ModelState): Promise<str
 // `source = 'public'`) would let anyone with the anon key list every prior
 // public submission via a direct REST call. No snapshot either; snapshots
 // are team save-history, not meaningful for a one-shot anonymous send.
-export const submitPublicProforma = async (name: string, state: ModelState): Promise<void> => {
+export const submitPublicProforma = async (name: string, state: ModelState, recruitEmail?: string): Promise<void> => {
   const supabase = requireSupabase();
-  const { error } = await supabase.from(TABLE).insert({ name, data: state, source: "public", ...economicsColumns(state) });
+  const { error } = await supabase.from(TABLE).insert({
+    name,
+    data: state,
+    source: "public",
+    // The address the recap is about to be sent to — the recruit's own email
+    // on the self-serve flow. Recorded so /submissions works as a CRM.
+    recruit_email: recruitEmail?.trim() || null,
+    ...economicsColumns(state),
+  });
   if (error) throw new Error(error.message);
 };
 
