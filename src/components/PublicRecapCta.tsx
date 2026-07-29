@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { toast } from "@/hooks/use-toast";
 import { ModelState, Calc } from "@/lib/proforma";
 import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
+import { getReferralToken } from "@/lib/referral";
 import { renderRecapChartPng } from "@/lib/recapChart";
 import { renderCeilingVisualPng } from "@/lib/ceilingVisual";
 import { buildRecapDocxBase64 } from "@/lib/recapDocx";
@@ -53,10 +54,13 @@ export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCt
     const name = state.recruitName || "Untitled Pro Forma";
     try {
       const payload = buildRecapPayload(name, state, calc);
+      // PURL the visitor arrived through, if any — the CRM link between this
+      // submission and the LO who gets the HTL5 sourcing claim for it.
+      const referralToken = getReferralToken();
       try {
         // `to` rides along so the submission row carries the recruit's email
         // (the CRM contact record) — not just their production numbers.
-        await submitPublicProforma(name, state, to);
+        await submitPublicProforma(name, state, to, referralToken);
       } catch (e) {
         console.warn("Public submission not stored:", e);
       }
@@ -79,7 +83,7 @@ export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCt
       } catch (e) {
         console.warn("Presentation could not be queued; sending without it:", e);
       }
-      await sendRecap(to, payload, chartPng ?? undefined, { docx, presentationHash });
+      await sendRecap(to, payload, chartPng ?? undefined, { docx, presentationHash, referralToken });
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       setStep("sent");
     } catch (e) {

@@ -30,3 +30,9 @@ export const decideSourcingAction = (existing: SourcingRow | null, senderId: str
 
 export const expiryTimestamp = (nowMs: number, expiryDays: number): string =>
   new Date(nowMs + expiryDays * 24 * 60 * 60 * 1000).toISOString();
+
+/** Recruit-PURL token shape: exactly the 16 lowercase hex chars that
+ *  referral_links mints (encode(gen_random_bytes(8), 'hex')). Validated
+ *  server-side before the token ever reaches a PostgREST filter. Lives here
+ *  (not index.ts) so vitest can reach it. */
+export const REFERRAL_TOKEN_RE = /^[0-9a-f]{16}$/;

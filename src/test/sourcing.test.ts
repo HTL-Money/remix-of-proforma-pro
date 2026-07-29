@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { decideSourcingAction, expiryTimestamp } from "../../supabase/functions/send-recap/sourcing";
+import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE } from "../../supabase/functions/send-recap/sourcing";
+import { REFERRAL_TOKEN_RE as CLIENT_RE, buildReferralUrl } from "@/lib/referral";
 
 const SENDER_A = "11111111-1111-1111-1111-111111111111";
 const SENDER_B = "22222222-2222-2222-2222-222222222222";
@@ -60,5 +61,33 @@ describe("expiryTimestamp — configurable window in DAYS", () => {
     const thirty = new Date(expiryTimestamp(NOW, 30)).getTime();
     const ninety = new Date(expiryTimestamp(NOW, 90)).getTime();
     expect(ninety).toBeGreaterThan(thirty);
+  });
+});
+
+describe("REFERRAL_TOKEN_RE — recruit-PURL token shape", () => {
+  it("accepts exactly what referral_links mints: 16 lowercase hex chars", () => {
+    expect(REFERRAL_TOKEN_RE.test("0123456789abcdef")).toBe(true);
+    expect(REFERRAL_TOKEN_RE.test("ffffffffffffffff")).toBe(true);
+  });
+
+  it("rejects everything else — the token is interpolated into a PostgREST filter", () => {
+    expect(REFERRAL_TOKEN_RE.test("0123456789ABCDEF")).toBe(false); // uppercase
+    expect(REFERRAL_TOKEN_RE.test("0123456789abcde")).toBe(false); // 15 chars
+    expect(REFERRAL_TOKEN_RE.test("0123456789abcdef0")).toBe(false); // 17 chars
+    expect(REFERRAL_TOKEN_RE.test("0123456789abcdeg")).toBe(false); // non-hex
+    expect(REFERRAL_TOKEN_RE.test("aaaaaaaa-bbbb-cc")).toBe(false); // dashes
+    expect(REFERRAL_TOKEN_RE.test("")).toBe(false);
+    expect(REFERRAL_TOKEN_RE.test("token=eq.x&or=()")).toBe(false); // injection shape
+  });
+
+  it("client and server regexes are the same rule — they can never drift apart", () => {
+    expect(CLIENT_RE.source).toBe(REFERRAL_TOKEN_RE.source);
+  });
+});
+
+describe("buildReferralUrl — the PURL an LO hands out", () => {
+  it("lands on / with ?ref= so Home forwards it to the calculator", () => {
+    expect(buildReferralUrl("https://proforma.hometownlend.com", "0123456789abcdef"))
+      .toBe("https://proforma.hometownlend.com/?ref=0123456789abcdef");
   });
 });

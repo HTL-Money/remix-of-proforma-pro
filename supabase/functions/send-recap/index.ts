@@ -21,7 +21,7 @@
 // rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
-import { decideSourcingAction, expiryTimestamp, SourcingRow } from "./sourcing.ts";
+import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
@@ -448,6 +448,48 @@ const lookupUserEmail = async (supabaseUrl: string, serviceKey: string, userId: 
   }
 };
 
+/** Resolves a recruit-PURL token to the LO who minted it. Best-effort: an
+ *  unknown/mistyped token means no attribution, never a blocked send. The
+ *  token shape was already validated against REFERRAL_TOKEN_RE. */
+const resolveReferralToken = async (url: string, key: string, token: string): Promise<string | null> => {
+  try {
+    const r = await fetch(
+      `${url}/rest/v1/referral_links?token=eq.${encodeURIComponent(token)}&select=created_by`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!r.ok) return null;
+    const rows = await r.json();
+    const id = Array.isArray(rows) && rows[0] ? rows[0].created_by : null;
+    if (!id) console.log("referral token unknown — send proceeds unattributed");
+    return typeof id === "string" && UUID_RE.test(id) ? id : null;
+  } catch (e) {
+    console.error("referral token lookup failed (non-fatal)", e);
+    return null;
+  }
+};
+
+/** Usage bookkeeping after a successful token-attributed send. Read-then-write
+ *  increment: a lost race just undercounts a vanity metric — the claim itself
+ *  lives in lo_sourcing, not here. */
+const bumpReferralUse = async (url: string, key: string, token: string): Promise<void> => {
+  try {
+    const r = await fetch(
+      `${url}/rest/v1/referral_links?token=eq.${encodeURIComponent(token)}&select=use_count`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    const rows = r.ok ? await r.json() : null;
+    const current = Array.isArray(rows) && rows[0] ? Number(rows[0].use_count) || 0 : 0;
+    await fetch(`${url}/rest/v1/referral_links?token=eq.${encodeURIComponent(token)}`, {
+      method: "PATCH",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ use_count: current + 1, last_used_at: new Date().toISOString() }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.error("referral use bump failed (non-fatal)", e);
+  }
+};
+
 const getSourcingRow = async (url: string, key: string, nmls: string): Promise<SourcingRow | null> => {
   try {
     const r = await fetch(
@@ -592,6 +634,9 @@ Deno.serve(async (req: Request) => {
   // it is validated by shape only and interpolated into a PostgREST filter --
   // hence the strict 16-hex check rather than trusting the string.
   let presentationHash: string | undefined;
+  // Recruit-PURL token (referral_links.token). Same posture as
+  // presentationHash: opaque, strictly shaped, PostgREST-filter-bound.
+  let referralToken: string | undefined;
   try {
     const body = await req.json();
     to = String(body.to ?? "").trim();
@@ -655,6 +700,11 @@ Deno.serve(async (req: Request) => {
       if (!PRESENTATION_HASH_RE.test(h)) return json(400, { error: "Invalid presentation reference." });
       presentationHash = h;
     }
+    if (body.referralToken != null) {
+      const t = String(body.referralToken);
+      if (!REFERRAL_TOKEN_RE.test(t)) return json(400, { error: "Invalid referral link." });
+      referralToken = t;
+    }
   } catch {
     return json(400, { error: "Invalid JSON body." });
   }
@@ -665,6 +715,15 @@ Deno.serve(async (req: Request) => {
   // suppressed-send audit row also records who attempted the send. Verified
   // against Auth — attribution money hangs off this ID (see verifiedSenderId).
   const senderId = await verifiedSenderId(req, supabaseUrl, serviceKey);
+  // HTL5 attribution identity: the signed-in sender when there is one,
+  // otherwise the creator of the recruit's PURL (link use = claim, owner
+  // rule). senderId keeps its own meaning everywhere else — audit rows and
+  // the copy-back BCC stay keyed on who actually pressed send.
+  const referralCreatorId =
+    !senderId && referralToken && supabaseUrl && serviceKey
+      ? await resolveReferralToken(supabaseUrl, serviceKey, referralToken)
+      : null;
+  const attributedId = senderId ?? referralCreatorId;
 
   // Opt-out check FIRST — a suppressed address must never be emailed again,
   // whoever asks (CAN-SPAM: opt-outs are permanent until the person opts back
@@ -826,15 +885,20 @@ Deno.serve(async (req: Request) => {
     console.error("recap_emails log failed (non-fatal)", e);
   }
 
-  // HTL5 referral-sourcing: only for a signed-in team member sending to a
-  // real NMLS. Best-effort — a bookkeeping hiccup must never surface to the
-  // recipient or block the send that already succeeded above.
-  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+  // HTL5 referral-sourcing: a signed-in team member's send, or a recruit
+  // self-serving through an LO's PURL (attributedId resolves either way).
+  // Best-effort — a bookkeeping hiccup must never surface to the recipient
+  // or block the send that already succeeded above.
+  if (attributedId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
     try {
-      await recordSourcing(supabaseUrl, serviceKey, recap.nmls.trim(), senderId);
+      await recordSourcing(supabaseUrl, serviceKey, recap.nmls.trim(), attributedId);
     } catch (e) {
       console.error("lo_sourcing recording failed (non-fatal)", e);
     }
+  }
+  // Track link usage only when the token actually carried the attribution.
+  if (referralCreatorId && referralToken && supabaseUrl && serviceKey) {
+    await bumpReferralUse(supabaseUrl, serviceKey, referralToken);
   }
 
   return json(200, { ok: true });
