@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Wallet, Users, Calculator, Minus, ListChecks, LogOut, Percent, Lock } from "lucide-react";
+import { Plus, RotateCcw, Trash2, TrendingUp, AlertTriangle, Users, Calculator, Minus, ListChecks, LogOut } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,11 +25,8 @@ import {
   BROKER_CAP, CORR_MIN, CORR_MAX, Bucket, Employee, ChannelKey, Role,
   ROLE_OPTIONS, PROCESSOR_DEFAULTS, PaySource, MIX_PRESETS,
   LOA_EXTRA_BONUS, LOAN_PARTNER_EXTRA_BONUS, QM_FEE, NONQM_FEE, CORR_FEE,
-  SPLIT_TIERS, tierForAnnualVolume,
 } from "@/lib/proforma";
 import { Chips } from "@/components/Chips";
-import htlLogo from "@/assets/htl-logo.png.asset.json";
-import HMark from "@/components/HMark";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { CloudSave } from "@/components/CloudSave";
 import { PublicRecapCta } from "@/components/PublicRecapCta";
@@ -477,12 +474,6 @@ const Index = () => {
   const corrUplift = calc.finalLoNetComp - calcBrokerOnly.finalLoNetComp;
   const corrActive = state.buckets.some(b => b.channel === "Correspondent" && b.active);
 
-  // Split tiers key off ANNUAL funded volume. Annualize using the production
-  // period the figures actually cover, not a hard assumption of a full year,
-  // so a 6-month RETR pull doesn't report an artificially low annual pace.
-  const annualizedVolume = state.annualVolume * (12 / (calc.periodMonths || 12));
-  const qualifyingTier = annualizedVolume > 0 ? tierForAnnualVolume(annualizedVolume) : null;
-
   // Payroll-dependent columns/cards only make sense once someone is on payroll.
   // A solo LO should never see a team-cost concept at all.
   const hasPayroll = state.employees.length > 0;
@@ -664,24 +655,26 @@ const Index = () => {
         onRemove={removeEmployee}
       />
       {/* Hero header */}
-      {/* overflow-hidden: the showcased H mark below is absolutely positioned
-          past the heading's right edge; clip it at the header instead of
-          letting it widen the page into a horizontal scrollbar. */}
-      <header className="hero-bg text-primary-foreground border-b border-border/40 overflow-hidden">
+      <header className="hero-bg text-primary-foreground border-b border-border/40">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10">
           <div className="flex items-start justify-between gap-4 md:gap-6 flex-wrap">
             <div className="flex items-start gap-4 md:gap-6 flex-col sm:flex-row min-w-0">
+              {/* The real brand artwork (public/htl-logo.png) — navy/gray on
+                  white, so it keeps the white tile against the navy hero. */}
               <div className="rounded-lg bg-white flex items-center justify-center shadow-soft p-2 md:p-3 shrink-0 w-20 h-20 md:w-48 md:h-48">
                 <img
-                  src={htlLogo.url}
+                  src="/htl-logo.png"
                   alt="Hometown Lending"
                   className="h-full w-full object-contain"
-                  onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
+                  onError={e => {
+                    // Hide the tile rather than show a broken-image icon, but
+                    // never silently: a missing logo shipped unnoticed once.
+                    console.error("HTL logo failed to load: /htl-logo.png");
+                    (e.currentTarget.closest("div") as HTMLElement).style.display = "none";
+                  }}
                 />
               </div>
-              {/* Text + H mark stay on one row at every width (the outer group
-                  stacks logo above text on mobile; this inner row does not). */}
-              <div className="relative flex items-start gap-3 md:gap-4 min-w-0">
+              <div className="flex items-start gap-3 md:gap-4 min-w-0">
                 <div className="md:pt-2 min-w-0">
                   <h1 className="font-display font-bold leading-none tracking-tight" style={{ color: "hsl(var(--success))", fontSize: "clamp(2rem, 7vw, 6rem)" }}>Hometown Lending</h1>
                   <p className="font-display font-semibold mt-2 md:mt-4 text-primary-foreground flex flex-wrap items-baseline gap-x-3 gap-y-1" style={{ lineHeight: 1.1 }}>
@@ -692,14 +685,6 @@ const Index = () => {
                     <span className="italic text-primary-foreground/85 font-normal" style={{ fontSize: "clamp(1.28rem, calc(1.8vw + 0.333rem), 1.83rem)" }}>Your Production's True Value</span>
                   </p>
                 </div>
-                {/* Showcased H mark. Desktop: bigger and pushed ~2in right of
-                    the heading, absolutely positioned so the offset can't
-                    shove the Reset/Save cluster or wrap the header (owner:
-                    "don't move anything else"). Mobile/tablet: an in-flow copy
-                    at the old size — a 2in offset would land off a phone
-                    screen entirely. */}
-                <HMark className="h-10 w-10 md:h-16 md:w-16 shrink-0 self-start md:mt-2 lg:hidden" />
-                <HMark className="hidden lg:block absolute left-full top-0 ml-[2in] h-28 w-28 pointer-events-none" />
               </div>
 
             </div>
@@ -733,24 +718,6 @@ const Index = () => {
                   <LogOut className="h-4 w-4" />
                 </Button>
               )}
-              {/* Reopens the team editor — the only path back to payroll now
-                  that the inline box is off the page. Sits before Reset so
-                  Reset keeps the corner. */}
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="Team & payroll"
-                title="Team & payroll"
-                onClick={() => setPayrollBreakdownOpen(true)}
-                className="relative bg-transparent border-accent/40 text-primary-foreground hover:bg-accent hover:text-accent-foreground rounded-full"
-              >
-                <Users className="h-4 w-4" />
-                {state.employees.length > 0 && (
-                  <span className="absolute -top-1 -right-1 h-4 min-w-4 px-0.5 rounded-full bg-[hsl(40,85%,52%)] text-[hsl(217,60%,18%)] text-[10px] font-bold leading-4 text-center tabular-nums">
-                    {state.employees.length}
-                  </span>
-                )}
-              </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 {/* Highlighted yellow by owner request — explicit amber, NOT
@@ -943,28 +910,6 @@ const Index = () => {
               <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums">
                 {state.avgLoanAmount > 0 ? fmtUSD(Math.round(state.avgLoanAmount)) : <span className="text-muted-foreground text-sm">—</span>}
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label>HTL LO Split</Label>
-              {/* Read-only: the band is DERIVED from annual volume inside
-                  calculate() and updates live as volume changes. There is
-                  nothing to click — see "How the HTL LO Split Works" at the
-                  bottom of the page for the full tier table. */}
-              {state.annualVolume > 0 ? (
-                <>
-                  <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 text-lg font-semibold tabular-nums">
-                    {calc.splitTier.loPct}/{calc.splitTier.htlPct}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    You keep <span className="font-semibold text-accent">{calc.splitTier.loPct}%</span> at{" "}
-                    {fmtUSD(annualizedVolume, { compact: true })}/yr — set by volume, updates as it changes.
-                  </p>
-                </>
-              ) : (
-                <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40">
-                  <span className="text-muted-foreground font-normal text-base">Set by volume</span>
-                </div>
-              )}
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
               <Label>Loan Type Mix</Label>
@@ -1250,111 +1195,6 @@ const Index = () => {
           </p>
         </Section>
 
-
-        {/* LO Economics Summary */}
-        <Section icon={<Wallet className="h-5 w-5" />} title="LO Economics Summary">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="premium-card p-5"><Stat label={hasPayroll ? "LO Net Before Payroll" : "Total LO Net"} value={fmtUSD(calc.totals.loNetBeforeHoldback)} /></div>
-            {hasPayroll && (
-              // salaryObligations, not brokerPaidTotal: per-file LOA/LP bonuses
-              // are already deducted inside "LO Net Before Payroll", so this trio
-              // must show only what's deducted BETWEEN card 1 and card 3 —
-              // otherwise the three cards don't foot.
-              <div className="premium-card p-5">
-                <Stat label="Your Team Payroll Cost" value={fmtUSD(calc.salaryObligations)} accent="gold" />
-                {calc.extraBonusTotal > 0 && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Per-file LOA / Loan Partner bonuses ({fmtUSD(calc.extraBonusTotal)}) are already deducted
-                    inside each bucket's LO Net above.
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div className="premium-card p-5 bg-gradient-hero text-primary-foreground border-0">
-              <span className="stat-label !text-accent">Final LO Net Annual Comp</span>
-              <span className="stat-value !text-primary-foreground mt-1 block">{fmtUSD(calc.finalLoNetComp)}</span>
-              <span className="text-sm text-primary-foreground/80 mt-1 block">{fmtUSD(calc.monthlyLoNet)} / month</span>
-            </div>
-          </div>
-
-        </Section>
-
-        {/* INTERNAL ONLY — never rendered for a recruit. The team-support
-            holdback is no longer something the LO picks or even sees; it is
-            derived from their actual overhead so HTL can size an offer. The
-            recruit's own numbers above are unaffected: finalLoNetComp deducts
-            payroll in full either way, so nothing material is hidden here.
-            Gated on a REAL signed-in user (not isTeamMember): when auth is
-            unconfigured isTeamMember is true for everyone, which would leak
-            this block to any visitor who adds an employee. */}
-        {!!user && hasPayroll && (
-          <Section icon={<Lock className="h-5 w-5" />} title="Internal — Payroll Economics" defaultOpen={false}>
-            <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning-foreground mb-4 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              Internal view — not shown to the recruit and not included in any recap sent to them.
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="premium-card p-5"><Stat label="Derived Holdback Rate" value={fmtPct(calc.requiredHoldbackPct, 2)} accent="gold" /></div>
-              <div className="premium-card p-5"><Stat label="Broker-Paid Obligations" value={fmtUSD(calc.brokerPaidSalaries + calc.brokerPaidBonuses)} /></div>
-              <div className="premium-card p-5"><Stat label="HTL-Paid Team Costs" value={fmtUSD(calc.htlPaidTotal)} /></div>
-              <div className="premium-card p-5"><Stat label="Broker-Paid Salaries" value={fmtUSD(calc.brokerPaidSalaries)} /></div>
-              <div className="premium-card p-5"><Stat label="Broker-Paid Bonuses" value={fmtUSD(calc.brokerPaidBonuses)} /></div>
-              {calc.holdbackSurplus < 0 && (
-                <div className="premium-card p-5"><Stat label="Uncovered Payroll" value={fmtUSD(calc.holdbackSurplus)} accent="destructive" /></div>
-              )}
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              The holdback rate is derived, not chosen: it is exactly the share of LO net required to fund
-              this LO's broker-paid team costs, so it neither over- nor under-collects. Use it to size the
-              offer and to show them how to keep that payroll inside the company.
-            </p>
-          </Section>
-        )}
-
-        {/* Reference material lives at the back of the document. */}
-        <Section icon={<Percent className="h-5 w-5" />} title="How the HTL LO Split Works" defaultOpen={false}>
-          <p className="text-sm text-muted-foreground mb-4">
-            A split of <span className="font-semibold text-foreground">90/10</span> means the loan officer keeps
-            <span className="font-semibold text-foreground"> 90%</span> of the gross commission and Hometown Lending
-            keeps <span className="font-semibold text-foreground">10%</span>. Which band applies is a function of
-            <span className="font-semibold text-foreground"> annual funded volume</span>.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[...SPLIT_TIERS].reverse().map(t => {
-              const isCurrent = qualifyingTier?.loPct === t.loPct;
-              return (
-                <div key={t.loPct} className={`premium-card p-5 ${isCurrent ? "border-accent" : ""}`}>
-                  <span className="stat-label">
-                    {t.minAnnual === 0
-                      ? `Under ${fmtUSD(t.maxAnnual ?? 0, { compact: true })} / year`
-                      : t.maxAnnual == null
-                        ? `${fmtUSD(t.minAnnual, { compact: true })}+ / year`
-                        : `${fmtUSD(t.minAnnual, { compact: true })}–${fmtUSD(t.maxAnnual, { compact: true })} / year`}
-                  </span>
-                  <span className="stat-value mt-1 block">{t.loPct}/{t.htlPct}</span>
-                  <span className="text-sm text-muted-foreground mt-1 block">
-                    LO keeps {t.loPct}% · HTL {t.htlPct}%
-                  </span>
-                  <span className="text-xs text-muted-foreground mt-2 block">
-                    {t.minAnnual === 0
-                      ? `≈ under ${fmtUSD((t.maxAnnual ?? 0) / 12, { compact: true })}/mo`
-                      : t.maxAnnual == null
-                        ? `≈ ${fmtUSD(t.minAnnual / 12, { compact: true })}/mo and up`
-                        : `≈ ${fmtUSD(t.minAnnual / 12, { compact: true })}–${fmtUSD(t.maxAnnual / 12, { compact: true })}/mo`}
-                  </span>
-                  {isCurrent && <span className="text-xs font-semibold text-accent mt-2 block">Your current volume</span>}
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Annual volume is the test; the monthly figures are the same thresholds ÷12, shown for readers who
-            think in months. Volume exactly at a threshold qualifies for the higher band — $24M is 85/15 and
-            $48M is 90/10. The split is applied automatically from the volume entered above — every figure on
-            this page already uses the band your production qualifies for.
-          </p>
-        </Section>
 
         <footer className="text-center text-xs text-muted-foreground py-8">
           Hometown Lending · LO Recruiting Pro Forma · All figures are illustrative and stored locally in your browser.
