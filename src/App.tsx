@@ -12,6 +12,7 @@ import Index from "./pages/Index.tsx";
 import Targets from "./pages/Targets.tsx";
 import SentEmails from "./pages/SentEmails.tsx";
 import Submissions from "./pages/Submissions.tsx";
+import RecruitLinks from "./pages/RecruitLinks.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import RecapView from "./pages/RecapView.tsx";
 
@@ -35,7 +36,9 @@ const RequireAuth = ({ children }: { children: React.ReactNode }) => {
 const Home = () => {
   const [params] = useSearchParams();
   const { authRequired, loading, user } = useAuth();
-  if (params.get("nmls") != null) return <Navigate to={`/calculator?${params.toString()}`} replace />;
+  // ?ref= is a recruit PURL — always land it on the calculator (even for a
+  // signed-in team member) so the referral flow is deterministic.
+  if (params.get("nmls") != null || params.get("ref") != null) return <Navigate to={`/calculator?${params.toString()}`} replace />;
   if (authRequired && loading) return <div className="min-h-screen hero-bg" />;
   if (authRequired && !user) return <Index />;
   return <Dashboard />;
@@ -64,6 +67,7 @@ const App = () => (
                       <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
                       <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
                       <Route path="/submissions" element={<RequireAuth><Submissions /></RequireAuth>} />
+                      <Route path="/links" element={<RequireAuth><RecruitLinks /></RequireAuth>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
                     </Routes>

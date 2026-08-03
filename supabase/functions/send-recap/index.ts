@@ -21,7 +21,7 @@
 // rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
-import { decideSourcingAction, expiryTimestamp, SourcingRow } from "./sourcing.ts";
+import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
@@ -79,10 +79,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // HTL5 referral-sourcing attribution — backend bookkeeping ONLY. Never read
 // by RecapPayload/template.ts/RecapView.tsx; the recap recipient never sees
-// any of this. First-sender-wins for LO_SOURCING_EXPIRY_MONTHS, after which a
-// new send may reassign it — but every reassignment logs an event and fires
-// an alert email, so a human reviews it rather than it silently overwriting.
-const LO_SOURCING_EXPIRY_MONTHS = Number(Deno.env.get("LO_SOURCING_EXPIRY_MONTHS") ?? "12");
+// any of this. First-sender-wins for LO_SOURCING_EXPIRY_DAYS (owner rule:
+// the sourcing LO holds the recruit's NMLS for 90 days), after which a new
+// send may reassign it — but every reassignment logs an event and fires an
+// alert email, so a human reviews it rather than it silently overwriting.
+const LO_SOURCING_EXPIRY_DAYS = Number(Deno.env.get("LO_SOURCING_EXPIRY_DAYS") ?? "90");
 const LO_SOURCING_ALERT_TO = Deno.env.get("LO_SOURCING_ALERT_TO") || "marketing@hometownlend.com";
 
 const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -388,11 +389,11 @@ const fetchDocumentedProforma = async (
   }
 };
 
-/** Best-effort: extracts the caller's user ID from their bearer JWT's `sub`
- *  claim, but ONLY if it's a real UUID — the public anon key is itself a
- *  valid JWT (see the file-header note), and its `sub` is not a real
- *  auth.users id, so this naturally no-ops for anonymous/public sends. */
-const extractSenderId = (req: Request): string | null => {
+/** UNVERIFIED peek at the bearer JWT's `sub` — used only as a cheap
+ *  short-circuit so anonymous sends (whose token is the public anon key,
+ *  a valid project JWT with a non-UUID `sub`) skip the Auth roundtrip.
+ *  NEVER use this value as an identity: it is attacker-controlled. */
+const unverifiedSub = (req: Request): string | null => {
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/i, "");
   const parts = token.split(".");
@@ -401,6 +402,30 @@ const extractSenderId = (req: Request): string | null => {
     const sub = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))).sub ?? null;
     return typeof sub === "string" && UUID_RE.test(sub) ? sub : null;
   } catch {
+    return null;
+  }
+};
+
+/** Resolves the caller's user ID by VERIFYING their bearer token against
+ *  Auth (`GET /auth/v1/user`) — never by trusting the JWT payload. HTL5
+ *  rev-share attribution hangs off this ID, so a forged token with an
+ *  arbitrary UUID `sub` must not be able to claim another LO's recruit.
+ *  Best-effort: any failure yields null (an anonymous send), never a
+ *  blocked send. */
+const verifiedSenderId = async (req: Request, supabaseUrl: string | undefined, serviceKey: string | undefined): Promise<string | null> => {
+  if (!unverifiedSub(req)) return null; // anon key / no token — nothing to verify
+  if (!supabaseUrl || !serviceKey) return null;
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  try {
+    const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return null; // invalid/expired/forged token — treat as anonymous
+    const data = await r.json();
+    return typeof data?.id === "string" && UUID_RE.test(data.id) ? data.id : null;
+  } catch (e) {
+    console.error("sender verification failed (non-fatal, treated as anonymous)", e);
     return null;
   }
 };
@@ -420,6 +445,48 @@ const lookupUserEmail = async (supabaseUrl: string, serviceKey: string, userId: 
   } catch (e) {
     console.error("sender email lookup failed (non-fatal)", e);
     return null;
+  }
+};
+
+/** Resolves a recruit-PURL token to the LO who minted it. Best-effort: an
+ *  unknown/mistyped token means no attribution, never a blocked send. The
+ *  token shape was already validated against REFERRAL_TOKEN_RE. */
+const resolveReferralToken = async (url: string, key: string, token: string): Promise<string | null> => {
+  try {
+    const r = await fetch(
+      `${url}/rest/v1/referral_links?token=eq.${encodeURIComponent(token)}&select=created_by`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!r.ok) return null;
+    const rows = await r.json();
+    const id = Array.isArray(rows) && rows[0] ? rows[0].created_by : null;
+    if (!id) console.log("referral token unknown — send proceeds unattributed");
+    return typeof id === "string" && UUID_RE.test(id) ? id : null;
+  } catch (e) {
+    console.error("referral token lookup failed (non-fatal)", e);
+    return null;
+  }
+};
+
+/** Usage bookkeeping after a successful token-attributed send. Read-then-write
+ *  increment: a lost race just undercounts a vanity metric — the claim itself
+ *  lives in lo_sourcing, not here. */
+const bumpReferralUse = async (url: string, key: string, token: string): Promise<void> => {
+  try {
+    const r = await fetch(
+      `${url}/rest/v1/referral_links?token=eq.${encodeURIComponent(token)}&select=use_count`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    const rows = r.ok ? await r.json() : null;
+    const current = Array.isArray(rows) && rows[0] ? Number(rows[0].use_count) || 0 : 0;
+    await fetch(`${url}/rest/v1/referral_links?token=eq.${encodeURIComponent(token)}`, {
+      method: "PATCH",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ use_count: current + 1, last_used_at: new Date().toISOString() }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.error("referral use bump failed (non-fatal)", e);
   }
 };
 
@@ -443,7 +510,7 @@ const insertSourcingRow = async (url: string, key: string, nmls: string, sourced
     await fetch(`${url}/rest/v1/lo_sourcing`, {
       method: "POST",
       headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ nmls, sourced_by: sourcedBy, expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_MONTHS) }),
+      body: JSON.stringify({ nmls, sourced_by: sourcedBy, expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_DAYS) }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
@@ -467,7 +534,7 @@ const reassignSourcingRow = async (
       body: JSON.stringify({
         sourced_by: newSourcedBy,
         sourced_at: new Date().toISOString(),
-        expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_MONTHS),
+        expires_at: expiryTimestamp(Date.now(), LO_SOURCING_EXPIRY_DAYS),
       }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -567,6 +634,9 @@ Deno.serve(async (req: Request) => {
   // it is validated by shape only and interpolated into a PostgREST filter --
   // hence the strict 16-hex check rather than trusting the string.
   let presentationHash: string | undefined;
+  // Recruit-PURL token (referral_links.token). Same posture as
+  // presentationHash: opaque, strictly shaped, PostgREST-filter-bound.
+  let referralToken: string | undefined;
   try {
     const body = await req.json();
     to = String(body.to ?? "").trim();
@@ -630,15 +700,30 @@ Deno.serve(async (req: Request) => {
       if (!PRESENTATION_HASH_RE.test(h)) return json(400, { error: "Invalid presentation reference." });
       presentationHash = h;
     }
+    if (body.referralToken != null) {
+      const t = String(body.referralToken);
+      if (!REFERRAL_TOKEN_RE.test(t)) return json(400, { error: "Invalid referral link." });
+      referralToken = t;
+    }
   } catch {
     return json(400, { error: "Invalid JSON body." });
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  // Decoded here (not at the sender-copy-back block below) because the
-  // suppressed-send audit row also records who attempted the send.
-  const senderId = extractSenderId(req);
+  // Resolved here (not at the sender-copy-back block below) because the
+  // suppressed-send audit row also records who attempted the send. Verified
+  // against Auth — attribution money hangs off this ID (see verifiedSenderId).
+  const senderId = await verifiedSenderId(req, supabaseUrl, serviceKey);
+  // HTL5 attribution identity: the signed-in sender when there is one,
+  // otherwise the creator of the recruit's PURL (link use = claim, owner
+  // rule). senderId keeps its own meaning everywhere else — audit rows and
+  // the copy-back BCC stay keyed on who actually pressed send.
+  const referralCreatorId =
+    !senderId && referralToken && supabaseUrl && serviceKey
+      ? await resolveReferralToken(supabaseUrl, serviceKey, referralToken)
+      : null;
+  const attributedId = senderId ?? referralCreatorId;
 
   // Opt-out check FIRST — a suppressed address must never be emailed again,
   // whoever asks (CAN-SPAM: opt-outs are permanent until the person opts back
@@ -800,15 +885,20 @@ Deno.serve(async (req: Request) => {
     console.error("recap_emails log failed (non-fatal)", e);
   }
 
-  // HTL5 referral-sourcing: only for a signed-in team member sending to a
-  // real NMLS. Best-effort — a bookkeeping hiccup must never surface to the
-  // recipient or block the send that already succeeded above.
-  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+  // HTL5 referral-sourcing: a signed-in team member's send, or a recruit
+  // self-serving through an LO's PURL (attributedId resolves either way).
+  // Best-effort — a bookkeeping hiccup must never surface to the recipient
+  // or block the send that already succeeded above.
+  if (attributedId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
     try {
-      await recordSourcing(supabaseUrl, serviceKey, recap.nmls.trim(), senderId);
+      await recordSourcing(supabaseUrl, serviceKey, recap.nmls.trim(), attributedId);
     } catch (e) {
       console.error("lo_sourcing recording failed (non-fatal)", e);
     }
+  }
+  // Track link usage only when the token actually carried the attribution.
+  if (referralCreatorId && referralToken && supabaseUrl && serviceKey) {
+    await bumpReferralUse(supabaseUrl, serviceKey, referralToken);
   }
 
   return json(200, { ok: true });

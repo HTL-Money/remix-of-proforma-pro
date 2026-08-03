@@ -37,6 +37,7 @@ import {
 } from "@/lib/retrReportStore";
 import { RetrDateRange, RETR_DEFAULT_RANGE, RETR_RANGE_OPTIONS, periodLabel, periodLabelTitle } from "@/lib/retrApi";
 import { useAuth } from "@/lib/auth";
+import { storeReferralToken } from "@/lib/referral";
 
 const STORAGE_KEY = "htl_lo_proforma_v7"; // v7: zeroed-out defaults (drop pre-filled v6 drafts)
 const GATE_KEY = "htl_nmls_gate_v1";
@@ -390,6 +391,10 @@ const TeamSupportDialog = ({ open, onOpenChange, employees, calc, onAdd, onUpdat
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkNmls = normalizeNmls(searchParams.get("nmls") ?? "");
+  // Recruit-PURL: stash ?ref= for the whole session BEFORE anything strips
+  // query params (the deep-link effect below replaces them), so the token
+  // survives the gate and rides along when the recap is sent.
+  storeReferralToken(searchParams.get("ref"));
   const { authRequired, loading: authLoading, user, signOut } = useAuth();
   // Cloud saves, recap email, and the team RETR lookup all touch the
   // database — which RLS restricts to authenticated users. When Supabase

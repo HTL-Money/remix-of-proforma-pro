@@ -59,6 +59,10 @@ export interface RecapExtras {
    *  function waits for that deck's PDF export and attaches it as the
    *  "Documented Pro Forma" — the recruit opens a file, not a link. */
   presentationHash?: string | null;
+  /** Recruit-PURL token (?ref=) the visitor arrived through. When set on an
+   *  anonymous self-serve send, the function credits the link's creator with
+   *  the HTL5 sourcing claim — link use = claim. */
+  referralToken?: string | null;
 }
 
 export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: string, extras?: RecapExtras): Promise<void> => {
@@ -73,6 +77,7 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
       ...(extras?.gif ? { gif: extras.gif } : {}),
       ...(extras?.docx ? { docx: extras.docx } : {}),
       ...(extras?.presentationHash ? { presentationHash: extras.presentationHash } : {}),
+      ...(extras?.referralToken ? { referralToken: extras.referralToken } : {}),
     },
   });
   if (error) {
