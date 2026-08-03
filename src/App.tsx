@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import { LoginGate } from "@/components/LoginGate";
 import { AppShell } from "@/components/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 import Dashboard from "./pages/Dashboard.tsx";
 import Index from "./pages/Index.tsx";
 import Targets from "./pages/Targets.tsx";
@@ -77,6 +78,7 @@ const App = () => (
             </Routes>
           </BrowserRouter>
         </AuthProvider>
+        <SpeedInsights />
       </TooltipProvider>
     </QueryClientProvider>
   </ErrorBoundary>
