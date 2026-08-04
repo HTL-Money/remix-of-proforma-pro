@@ -268,6 +268,12 @@ const mintPassword = (): string => {
 };
 
 /** Sets a password on an existing account via the auth admin API. */
+/** Sets a password on an existing account via the auth admin API, and stamps
+ *  the flag the client gate reads. A minted password is still a password
+ *  someone else generated and sent over email, so the invite path has to force
+ *  a change exactly like the shared-password rollout did — otherwise every new
+ *  hire after launch day quietly arrives ungated while the original cohort is
+ *  gated, which is the kind of gap nobody notices until it matters. */
 const setPassword = async (id: string, password: string): Promise<void> => {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -275,7 +281,7 @@ const setPassword = async (id: string, password: string): Promise<void> => {
   const r = await fetch(`${url}/auth/v1/admin/users/${id}`, {
     method: "PUT",
     headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ password, email_confirm: true }),
+    body: JSON.stringify({ password, email_confirm: true, app_metadata: { must_set_password: true } }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!r.ok) throw new Error(`admin set password ${r.status}: ${await r.text().catch(() => "")}`);
