@@ -135,13 +135,21 @@ const upsertSnapshot = async (weekStart: string, metrics: unknown): Promise<void
 // The 42 LO accounts were provisioned 2026-08-04; sign-in tracking measures
 // adoption from that date. These service/legacy accounts are not part of it.
 const SIGNIN_LAUNCH = "2026-08-04";
-const SIGNIN_EXCLUDE = new Set(["admin@hometownlend.com", "fey@hometownlend.com"]);
-// Pre-launch accounts + admins who already know the tool — never announced to.
+const SIGNIN_EXCLUDE = new Set([
+  "admin@hometownlend.com",
+  "fey@hometownlend.com",
+  // accounting@ is an admin-only account (no announcement, not an adoption
+  // target); mikeh@ was pulled from the rollout by the owner. Both keep their
+  // accounts but stay out of the "never visited" column.
+  "accounting@hometownlend.com",
+  "mikeh@hometownlend.com",
+]);
+// Everyone above, plus the two accounts that predate the rollout and already
+// know the tool — never announced to.
 const ANNOUNCE_EXCLUDE = new Set([
   ...SIGNIN_EXCLUDE,
   "jamesm@hometownlend.com",
   "aryanj@hometownlend.com",
-  "accounting@hometownlend.com",
 ]);
 
 interface TeamAccount { email: string; name: string; createdAt: string; lastSignInAt: string | null }
