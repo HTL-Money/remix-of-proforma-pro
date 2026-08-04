@@ -18,7 +18,9 @@ const TEAM_NAV = [
   { to: "/targets", label: "Targets", icon: ListChecks, adminOnly: true },
   { to: "/links", label: "Recruit Links", icon: Link2 },
   { to: "/emails", label: "Sent Emails", icon: Mail, adminOnly: true },
-  { to: "/submissions", label: "Submissions", icon: Table2, adminOnly: true },
+  // Submissions is LO-visible: RLS scopes it to their own rows ("own proformas"
+  // policy), so an LO sees exactly the recruits they've touched, nobody else's.
+  { to: "/submissions", label: "Submissions", icon: Table2 },
 ];
 
 // Only ever rendered for team members now — anonymous visitors get no shell

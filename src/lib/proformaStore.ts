@@ -144,3 +144,21 @@ export const deleteProforma = async (id: string): Promise<void> => {
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
   if (error) throw new Error(error.message);
 };
+
+// Admin cleanup helpers for the CRM pages. RLS is the enforcement (only the
+// "admins delete …" policies permit these); the UI additionally hides the
+// buttons from non-admins. `count: "exact"` so a silent RLS no-match (0 rows)
+// is reported as failure rather than a green toast over an intact row.
+export const deleteRecapEmail = async (id: string): Promise<void> => {
+  const supabase = requireSupabase();
+  const { error, count } = await supabase.from("recap_emails").delete({ count: "exact" }).eq("id", id);
+  if (error) throw new Error(error.message);
+  if (!count) throw new Error("Nothing was deleted — you may not have permission.");
+};
+
+export const deleteReferralLink = async (token: string): Promise<void> => {
+  const supabase = requireSupabase();
+  const { error, count } = await supabase.from("referral_links").delete({ count: "exact" }).eq("token", token);
+  if (error) throw new Error(error.message);
+  if (!count) throw new Error("Nothing was deleted — you may not have permission.");
+};

@@ -6,7 +6,7 @@
 // recap, send-recap resolves the token and fires the LO's 90-day HTL5
 // sourcing claim — same first-sender-wins rules as a direct send.
 import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Copy, Link2, Loader2, Plus, Send } from "lucide-react";
+import { Check, CheckCircle2, Copy, Link2, Loader2, Plus, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,9 +14,9 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { bpsToSplit } from "@/lib/bps";
 import { calculate, defaultState, fmtUSD } from "@/lib/proforma";
-import { recordDirectSend } from "@/lib/proformaStore";
+import { deleteReferralLink, recordDirectSend } from "@/lib/proformaStore";
 import { isValidEmail } from "@/lib/recapEmail";
-import { CANONICAL_ORIGIN, buildReferralUrl } from "@/lib/referral";
+import { buildReferralUrl } from "@/lib/referral";
 import { applyRetrResult } from "@/lib/retrApply";
 import { isCloudConfigured, lookupRetrReport, normalizeNmls } from "@/lib/retrReportStore";
 import { sendFullRecap } from "@/lib/sendFullRecap";
@@ -52,10 +52,29 @@ interface SendReceipt {
 
 const RecruitLinks = () => {
   const configured = isCloudConfigured();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [mode, setMode] = useState<"share" | "send">("share");
   const [rows, setRows] = useState<LinkRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Admin-only two-tap delete for messed-up links (wrong recruit email, tests).
+  // Deleting a link never claws back a claim already recorded via it — that
+  // history lives in lo_sourcing; this only stops FUTURE uses of the URL.
+  const [deleteArmToken, setDeleteArmToken] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteLink = async (row: LinkRow) => {
+    setDeleting(true);
+    try {
+      await deleteReferralLink(row.token);
+      setRows(rs => rs.filter(r => r.token !== row.token));
+      toast({ title: "Link deleted", description: `The link for ${row.recruitEmail} no longer works.` });
+    } catch (e) {
+      toast({ title: "Couldn't delete", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setDeleting(false);
+      setDeleteArmToken(null);
+    }
+  };
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -74,10 +93,7 @@ const RecruitLinks = () => {
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  // CANONICAL_ORIGIN, not window.location.origin: the app also answers on the
-  // Vercel deployment URL, and a PURL built from wherever the LO happens to be
-  // signed in would hand the recruit a *.vercel.app link.
-  const purl = (token: string) => buildReferralUrl(CANONICAL_ORIGIN, token);
+  const purl = (token: string) => buildReferralUrl(window.location.origin, token);
 
   const load = async () => {
     try {
@@ -427,13 +443,14 @@ const RecruitLinks = () => {
                     <th className="py-3 px-2 font-semibold">Created</th>
                     <th className="py-3 px-2 font-semibold">Uses</th>
                     <th className="py-3 px-4 font-semibold text-right">Last Used</th>
+                    {isAdmin === true && <th className="py-3 px-2" aria-label="Actions" />}
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={6} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
+                    <tr><td colSpan={7} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
                   ) : rows.length === 0 ? (
-                    <tr><td colSpan={6} className="py-10 text-center text-white/65">No recruit links yet — create the first one above.</td></tr>
+                    <tr><td colSpan={7} className="py-10 text-center text-white/65">No recruit links yet — create the first one above.</td></tr>
                   ) : rows.map(r => (
                     <tr key={r.token} className={`border-b border-white/[0.07] hover:bg-white/[0.05] ${r.token === justCreated ? "bg-white/[0.06]" : ""}`}>
                       <td className="py-3 px-4">
@@ -452,6 +469,26 @@ const RecruitLinks = () => {
                       <td className="px-4 text-right text-white/65 whitespace-nowrap">
                         {r.lastUsedAt ? new Date(r.lastUsedAt).toLocaleString() : "—"}
                       </td>
+                      {isAdmin === true && (
+                        <td className="px-2 text-right whitespace-nowrap">
+                          {deleteArmToken === r.token ? (
+                            <Button variant="destructive" size="sm" disabled={deleting} onClick={() => handleDeleteLink(r)}>
+                              Confirm
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={deleting}
+                              onClick={() => setDeleteArmToken(r.token)}
+                              className="text-destructive hover:bg-destructive/10"
+                              aria-label={`Delete link for ${r.recruitEmail}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

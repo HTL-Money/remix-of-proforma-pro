@@ -16,7 +16,6 @@ import Submissions from "./pages/Submissions.tsx";
 import RecruitLinks from "./pages/RecruitLinks.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import RecapView from "./pages/RecapView.tsx";
-import ResetPassword from "./pages/ResetPassword.tsx";
 
 const queryClient = new QueryClient();
 
@@ -73,9 +72,6 @@ const App = () => (
                   OUTSIDE the team AppShell (no sidebar/chrome). Self-contained:
                   reads its data from the link, no auth, no DB. */}
               <Route path="/r" element={<RecapView />} />
-              {/* Password recovery, also outside the shell: someone who can't get
-                  in shouldn't be looking at team navigation. */}
-              <Route path="/reset" element={<ResetPassword />} />
               <Route
                 path="*"
                 element={
@@ -85,7 +81,9 @@ const App = () => (
                       <Route path="/calculator" element={<Index />} />
                       <Route path="/targets" element={<RequireAuth><RequireAdmin><Targets /></RequireAdmin></RequireAuth>} />
                       <Route path="/emails" element={<RequireAuth><RequireAdmin><SentEmails /></RequireAdmin></RequireAuth>} />
-                      <Route path="/submissions" element={<RequireAuth><RequireAdmin><Submissions /></RequireAdmin></RequireAuth>} />
+                      {/* Not RequireAdmin: LOs get this page too, scoped by RLS
+                          to the pro formas they created ("own proformas"). */}
+                      <Route path="/submissions" element={<RequireAuth><Submissions /></RequireAuth>} />
                       <Route path="/links" element={<RequireAuth><RecruitLinks /></RequireAuth>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
