@@ -6,7 +6,8 @@
 // This is the "back end" the recruit never sees: who they are (name, NMLS,
 // email, production) and which LO holds their 90-day HTL5 claim. RLS does the
 // real enforcement: anon has no select on `proformas`, `lo_sourcing` is
-// select-only for authenticated, and `lo_sourcing_directory` exposes exactly
+// select-only for authenticated, and `team_directory` (a trigger-synced table,
+// never a view over auth.users) exposes exactly
 // id+email of team members so a claim reads as a person, not a uuid.
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -95,7 +96,7 @@ const Submissions = () => {
             let emailById: Record<string, string> = {};
             if (sourcerIds.length > 0) {
               const { data: dir } = await sb
-                .from("lo_sourcing_directory")
+                .from("team_directory")
                 .select("id, email")
                 .in("id", sourcerIds);
               emailById = Object.fromEntries((dir ?? []).map((d: Record<string, unknown>) => [String(d.id), String(d.email ?? "")]));

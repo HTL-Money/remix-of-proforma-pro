@@ -98,7 +98,7 @@ const RecruitLinks = () => {
       // Resolve creator uuids → emails via the narrow team directory view.
       const ids = [...new Set(mapped.map(m => m.createdBy))];
       if (ids.length > 0) {
-        const { data: dir } = await sb.from("lo_sourcing_directory").select("id, email").in("id", ids);
+        const { data: dir } = await sb.from("team_directory").select("id, email").in("id", ids);
         const byId = Object.fromEntries((dir ?? []).map((d: Record<string, unknown>) => [String(d.id), String(d.email ?? "")]));
         for (const m of mapped) m.createdByEmail = byId[m.createdBy] || null;
       }
@@ -174,7 +174,7 @@ const RecruitLinks = () => {
       const mine = user?.id && String(data.sourced_by) === user.id;
       if (mine || expires.getTime() <= Date.now()) return;
       let holder = String(data.sourced_by).slice(0, 8);
-      const { data: dir } = await sb.from("lo_sourcing_directory").select("email").eq("id", data.sourced_by).maybeSingle();
+      const { data: dir } = await sb.from("team_directory").select("email").eq("id", data.sourced_by).maybeSingle();
       if (dir?.email) holder = String(dir.email);
       setClaimWarning(`Already claimed by ${holder} until ${expires.toLocaleDateString()} — sending still works, but it won't transfer credit to you.`);
     } catch {
