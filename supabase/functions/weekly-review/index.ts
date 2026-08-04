@@ -421,6 +421,18 @@ const announceHtml = (firstName: string, email: string, password: string): strin
 
 // ---- Handler -----------------------------------------------------------------
 
+/** Gate for the actions that send mail with caller-influenced content or to
+ *  anyone other than the admin. `verify_jwt` only proves the caller has the
+ *  public anon key, which ships in the browser bundle — so it is not an
+ *  authorization signal. Length-then-constant-time compare. */
+const adminKeyOk = (given: unknown): boolean => {
+  const want = Deno.env.get("ADMIN_TASK_KEY");
+  if (!want || typeof given !== "string" || given.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= given.charCodeAt(i) ^ want.charCodeAt(i);
+  return diff === 0;
+};
+
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return json(405, { error: "POST only" });
@@ -465,8 +477,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   if (body.action === "signinReport") {
-    // The 72-hour adoption report (and re-runnable any time). Anon-callable is
-    // acceptable: fixed admin recipient, and the response body carries no data.
+    // Keyed: an open endpoint here means anyone with the public anon key can
+    // email-bomb the admin inbox and hammer the auth admin API. The pg_cron
+    // job that fires this on Fridays passes the key.
+    if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
     let s;
     try {
       s = await signInStatus();
@@ -510,8 +524,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // surface that must NOT be anon-triggerable: the caller has to present the
     // ADMIN_TASK_KEY secret. Recipients come from the auth admin API, never
     // from the request.
-    const gate = Deno.env.get("ADMIN_TASK_KEY");
-    if (!gate || body.key !== gate) return json(403, { error: "Forbidden." });
+    if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
     const password = Deno.env.get("SHARED_TEMP_PASSWORD");
     if (!password) return json(500, { error: "SHARED_TEMP_PASSWORD not configured." });
 
@@ -543,8 +556,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   if (body.action === "notify") {
-    // One-off admin notice. Fixed recipient; forced subject prefix so a
-    // spoofed call is always recognizable as machine-generated.
+    // One-off admin notice. The recipient is fixed, but the BODY is entirely
+    // caller-supplied — anyone holding the public anon key could otherwise
+    // drop arbitrary HTML (fake alerts, phishing links) into the admin inbox
+    // from a trusted internal sender. Keyed, like announce.
+    if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
     const subject = `[ProFarmA] ${typeof body.subject === "string" ? body.subject.slice(0, 150) : "Notice"}`;
     const html = typeof body.html === "string" ? body.html.slice(0, 50_000) : "";
     if (!html) return json(400, { error: "html required" });
