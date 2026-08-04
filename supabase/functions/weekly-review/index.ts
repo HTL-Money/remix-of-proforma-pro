@@ -148,15 +148,20 @@ const SIGNIN_LAUNCH = "2026-08-04";
 // announcement, so "12 of 41 have signed in" always means the same 41 — no
 // service accounts, no admins who never needed the email, and nobody sitting
 // in the never-visited column who was never invited.
-//   admin@ / fey@        — legacy service logins
-//   accounting@          — admin-only account, deliberately not announced
-//   mikeh@               — pulled from the rollout by the owner
-//   jamesm@ / aryanj@    — predate launch day (excluded by date anyway)
+//   admin@ / fey@              — legacy service logins
+//   accounting@               — admin-only account, deliberately not announced
+//   mikeh@ / adrianag@ /
+//   valeriab@                 — pulled from the rollout by the owner. Their
+//                               accounts still exist; they are simply not
+//                               announced to and not counted in adoption.
+//   jamesm@ / aryanj@         — predate launch day (excluded by date anyway)
 const COHORT_EXCLUDE = new Set([
   "admin@hometownlend.com",
   "fey@hometownlend.com",
   "accounting@hometownlend.com",
   "mikeh@hometownlend.com",
+  "adrianag@hometownlend.com",
+  "valeriab@hometownlend.com",
   "jamesm@hometownlend.com",
   "aryanj@hometownlend.com",
 ]);
