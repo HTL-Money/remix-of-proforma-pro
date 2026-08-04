@@ -60,8 +60,9 @@ export const getRetrReport = async (nmls: string): Promise<StoredRetrReport | nu
 
 /**
  * Live API first, then the shared report store. `sharedStore: false` skips
- * the store — anonymous visitors must, since retr_reports RLS is
- * authenticated-only and the query would just fail.
+ * the store — anonymous visitors must, since retr_reports is readable only by
+ * signed-in team members (any role; uploads are admin-only) and the query
+ * would just come back empty.
  */
 export const lookupRetrReport = async (
   nmls: string,

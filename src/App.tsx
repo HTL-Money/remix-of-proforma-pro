@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { LoginGate } from "@/components/LoginGate";
+import { ForcePasswordSetup } from "@/components/ForcePasswordSetup";
 import { AppShell } from "@/components/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SpeedInsights } from "@vercel/speed-insights/react";
@@ -16,6 +17,7 @@ import Submissions from "./pages/Submissions.tsx";
 import RecruitLinks from "./pages/RecruitLinks.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import RecapView from "./pages/RecapView.tsx";
+import ResetPassword from "./pages/ResetPassword.tsx";
 
 const queryClient = new QueryClient();
 
@@ -30,19 +32,47 @@ const RequireAuth = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// Admin pages on top of RequireAuth: a signed-in LO who types /targets is
+// sent to their own workspace instead. The database enforces the same split
+// (is_admin() RLS), so this redirect is UX, not the security boundary.
+const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
+  const { isAdmin } = useAuth();
+  if (isAdmin === null) return <div className="min-h-screen hero-bg" />; // still resolving — don't bounce an admin
+  if (!isAdmin) return <Navigate to="/links" replace />;
+  return <>{children}</>;
+};
+
 // "/" used to be the calculator, and shared links like /?nmls=123 still point
 // there — keep them working by forwarding to /calculator with the same params.
 // A signed-out visitor lands on the calculator itself (no login wall); a
 // signed-in team member lands on the dashboard.
 const Home = () => {
   const [params] = useSearchParams();
-  const { authRequired, loading, user } = useAuth();
+  const { authRequired, loading, user, isAdmin } = useAuth();
   // ?ref= is a recruit PURL — always land it on the calculator (even for a
   // signed-in team member) so the referral flow is deterministic.
   if (params.get("nmls") != null || params.get("ref") != null) return <Navigate to={`/calculator?${params.toString()}`} replace />;
   if (authRequired && loading) return <div className="min-h-screen hero-bg" />;
   if (authRequired && !user) return <Index />;
+  // The dashboard reads admin-gated tables (targets, recap_emails), so a
+  // signed-in LO's home is their own workspace instead.
+  if (isAdmin === null) return <div className="min-h-screen hero-bg" />;
+  if (!isAdmin) return <Navigate to="/links" replace />;
   return <Dashboard />;
+};
+
+// An account still on its issued temporary password gets one screen and nothing
+// else. This wraps the whole team area rather than sitting inside a route, so
+// there is no URL to type past it.
+//
+// Deliberately does NOT wrap /r or /reset: a recruit viewing a hosted recap has
+// no account at all, and someone arriving on a recovery link is already in the
+// middle of setting a password.
+const PasswordGate = ({ children }: { children: React.ReactNode }) => {
+  const { authRequired, loading, user, mustSetPassword } = useAuth();
+  if (!authRequired || loading || !user) return <>{children}</>;
+  if (mustSetPassword) return <ForcePasswordSetup />;
+  return <>{children}</>;
 };
 
 const App = () => (
@@ -58,21 +88,30 @@ const App = () => (
                   OUTSIDE the team AppShell (no sidebar/chrome). Self-contained:
                   reads its data from the link, no auth, no DB. */}
               <Route path="/r" element={<RecapView />} />
+              {/* Password recovery, also outside the shell: someone who can't get
+                  in shouldn't be looking at team navigation. Every reset email
+                  links here, so losing this route silently 404s the entire
+                  self-service reset flow — which is exactly what happened once. */}
+              <Route path="/reset" element={<ResetPassword />} />
               <Route
                 path="*"
                 element={
+                  <PasswordGate>
                   <AppShell>
                     <Routes>
                       <Route path="/" element={<Home />} />
                       <Route path="/calculator" element={<Index />} />
-                      <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
-                      <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
+                      <Route path="/targets" element={<RequireAuth><RequireAdmin><Targets /></RequireAdmin></RequireAuth>} />
+                      <Route path="/emails" element={<RequireAuth><RequireAdmin><SentEmails /></RequireAdmin></RequireAuth>} />
+                      {/* Not RequireAdmin: LOs get this page too, scoped by RLS
+                          to the pro formas they created ("own proformas"). */}
                       <Route path="/submissions" element={<RequireAuth><Submissions /></RequireAuth>} />
                       <Route path="/links" element={<RequireAuth><RecruitLinks /></RequireAuth>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppShell>
+                  </PasswordGate>
                 }
               />
             </Routes>

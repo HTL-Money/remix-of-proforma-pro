@@ -6,7 +6,7 @@
 // recap, send-recap resolves the token and fires the LO's 90-day HTL5
 // sourcing claim — same first-sender-wins rules as a direct send.
 import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Copy, Link2, Loader2, Plus, Send } from "lucide-react";
+import { Check, CheckCircle2, Copy, Link2, Loader2, Plus, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { bpsToSplit } from "@/lib/bps";
 import { calculate, defaultState, fmtUSD } from "@/lib/proforma";
-import { recordDirectSend } from "@/lib/proformaStore";
+import { deleteReferralLink, recordDirectSend } from "@/lib/proformaStore";
 import { isValidEmail } from "@/lib/recapEmail";
 import { buildReferralUrl } from "@/lib/referral";
 import { applyRetrResult } from "@/lib/retrApply";
@@ -52,10 +52,29 @@ interface SendReceipt {
 
 const RecruitLinks = () => {
   const configured = isCloudConfigured();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [mode, setMode] = useState<"share" | "send">("share");
   const [rows, setRows] = useState<LinkRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Admin-only two-tap delete for messed-up links (wrong recruit email, tests).
+  // Deleting a link never claws back a claim already recorded via it — that
+  // history lives in lo_sourcing; this only stops FUTURE uses of the URL.
+  const [deleteArmToken, setDeleteArmToken] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteLink = async (row: LinkRow) => {
+    setDeleting(true);
+    try {
+      await deleteReferralLink(row.token);
+      setRows(rs => rs.filter(r => r.token !== row.token));
+      toast({ title: "Link deleted", description: `The link for ${row.recruitEmail} no longer works.` });
+    } catch (e) {
+      toast({ title: "Couldn't delete", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setDeleting(false);
+      setDeleteArmToken(null);
+    }
+  };
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -98,7 +117,7 @@ const RecruitLinks = () => {
       // Resolve creator uuids → emails via the narrow team directory view.
       const ids = [...new Set(mapped.map(m => m.createdBy))];
       if (ids.length > 0) {
-        const { data: dir } = await sb.from("lo_sourcing_directory").select("id, email").in("id", ids);
+        const { data: dir } = await sb.from("team_directory").select("id, email").in("id", ids);
         const byId = Object.fromEntries((dir ?? []).map((d: Record<string, unknown>) => [String(d.id), String(d.email ?? "")]));
         for (const m of mapped) m.createdByEmail = byId[m.createdBy] || null;
       }
@@ -174,7 +193,7 @@ const RecruitLinks = () => {
       const mine = user?.id && String(data.sourced_by) === user.id;
       if (mine || expires.getTime() <= Date.now()) return;
       let holder = String(data.sourced_by).slice(0, 8);
-      const { data: dir } = await sb.from("lo_sourcing_directory").select("email").eq("id", data.sourced_by).maybeSingle();
+      const { data: dir } = await sb.from("team_directory").select("email").eq("id", data.sourced_by).maybeSingle();
       if (dir?.email) holder = String(dir.email);
       setClaimWarning(`Already claimed by ${holder} until ${expires.toLocaleDateString()} — sending still works, but it won't transfer credit to you.`);
     } catch {
@@ -424,13 +443,14 @@ const RecruitLinks = () => {
                     <th className="py-3 px-2 font-semibold">Created</th>
                     <th className="py-3 px-2 font-semibold">Uses</th>
                     <th className="py-3 px-4 font-semibold text-right">Last Used</th>
+                    {isAdmin === true && <th className="py-3 px-2" aria-label="Actions" />}
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={6} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
+                    <tr><td colSpan={7} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
                   ) : rows.length === 0 ? (
-                    <tr><td colSpan={6} className="py-10 text-center text-white/65">No recruit links yet — create the first one above.</td></tr>
+                    <tr><td colSpan={7} className="py-10 text-center text-white/65">No recruit links yet — create the first one above.</td></tr>
                   ) : rows.map(r => (
                     <tr key={r.token} className={`border-b border-white/[0.07] hover:bg-white/[0.05] ${r.token === justCreated ? "bg-white/[0.06]" : ""}`}>
                       <td className="py-3 px-4">
@@ -449,6 +469,26 @@ const RecruitLinks = () => {
                       <td className="px-4 text-right text-white/65 whitespace-nowrap">
                         {r.lastUsedAt ? new Date(r.lastUsedAt).toLocaleString() : "—"}
                       </td>
+                      {isAdmin === true && (
+                        <td className="px-2 text-right whitespace-nowrap">
+                          {deleteArmToken === r.token ? (
+                            <Button variant="destructive" size="sm" disabled={deleting} onClick={() => handleDeleteLink(r)}>
+                              Confirm
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={deleting}
+                              onClick={() => setDeleteArmToken(r.token)}
+                              className="text-destructive hover:bg-destructive/10"
+                              aria-label={`Delete link for ${r.recruitEmail}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

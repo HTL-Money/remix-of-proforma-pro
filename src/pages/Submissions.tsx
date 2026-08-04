@@ -6,12 +6,16 @@
 // This is the "back end" the recruit never sees: who they are (name, NMLS,
 // email, production) and which LO holds their 90-day HTL5 claim. RLS does the
 // real enforcement: anon has no select on `proformas`, `lo_sourcing` is
-// select-only for authenticated, and `lo_sourcing_directory` exposes exactly
+// select-only for authenticated, and `team_directory` (a trigger-synced table,
+// never a view over auth.users) exposes exactly
 // id+email of team members so a claim reads as a person, not a uuid.
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 import { fmtPct, fmtUSD } from "@/lib/proforma";
+import { deleteProforma } from "@/lib/proformaStore";
 import { isCloudConfigured } from "@/lib/retrReportStore";
 import { requireSupabase } from "@/lib/supabaseClient";
 
@@ -48,9 +52,27 @@ const daysLeft = (expiresAt: string, nowMs: number): number =>
 
 const Submissions = () => {
   const configured = isCloudConfigured();
+  const { isAdmin } = useAuth();
   const [rows, setRows] = useState<SubmissionRow[]>([]);
   const [claims, setClaims] = useState<Record<string, SourcingClaim>>({});
   const [loading, setLoading] = useState(true);
+  // Two-tap delete, same as CloudSave: first tap arms, second confirms.
+  const [deleteArmId, setDeleteArmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async (row: SubmissionRow) => {
+    setDeleting(true);
+    try {
+      await deleteProforma(row.id);
+      setRows(rs => rs.filter(r => r.id !== row.id));
+      toast({ title: "Deleted", description: `"${row.name}" was removed.` });
+    } catch (e) {
+      toast({ title: "Couldn't delete", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setDeleting(false);
+      setDeleteArmId(null);
+    }
+  };
 
   useEffect(() => {
     if (!configured) { setLoading(false); return; }
@@ -95,7 +117,7 @@ const Submissions = () => {
             let emailById: Record<string, string> = {};
             if (sourcerIds.length > 0) {
               const { data: dir } = await sb
-                .from("lo_sourcing_directory")
+                .from("team_directory")
                 .select("id, email")
                 .in("id", sourcerIds);
               emailById = Object.fromEntries((dir ?? []).map((d: Record<string, unknown>) => [String(d.id), String(d.email ?? "")]));
@@ -151,8 +173,9 @@ const Submissions = () => {
       <div>
         <h1 className="font-display font-bold text-2xl text-white">Submissions</h1>
         <p className="text-sm text-white/65 mt-0.5">
-          Every pro forma saved or submitted — recruit contact, derived payroll economics, and the
-          HTL5 sourcing claim (90-day window). Internal only — none of this is shown to the loan officer.
+          {isAdmin === true
+            ? "Every pro forma saved or submitted — recruit contact, derived payroll economics, and the HTL5 sourcing claim (90-day window). Internal only — none of this is shown to the recruit."
+            : "Your pro formas — every recruit you've sent one to or who came through your link, with their HTL5 claim status. Internal only — none of this is shown to the recruit."}
         </p>
       </div>
 
@@ -177,13 +200,14 @@ const Submissions = () => {
                   <th className="py-3 px-2 font-semibold">Derived Holdback</th>
                   <th className="py-3 px-2 font-semibold">Final LO Net</th>
                   <th className="py-3 px-4 font-semibold text-right">Updated</th>
+                  {isAdmin === true && <th className="py-3 px-2" aria-label="Actions" />}
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
+                  <tr><td colSpan={12} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
                 ) : rows.length === 0 ? (
-                  <tr><td colSpan={11} className="py-10 text-center text-white/65">No pro formas yet.</td></tr>
+                  <tr><td colSpan={12} className="py-10 text-center text-white/65">No pro formas yet.</td></tr>
                 ) : rows.map(r => (
                   <tr key={r.id} className="border-b border-white/[0.07] hover:bg-white/[0.05]">
                     <td className="py-3 px-4 font-medium text-white">
@@ -207,6 +231,28 @@ const Submissions = () => {
                     <td className="px-2 tabular-nums" style={{ color: "hsl(var(--accent))" }}>{pct(r.derivedHoldbackPct)}</td>
                     <td className="px-2 tabular-nums" style={{ color: "hsl(var(--success))" }}>{usd(r.finalLoNet)}</td>
                     <td className="px-4 text-right text-white/65 whitespace-nowrap">{new Date(r.at).toLocaleString()}</td>
+                    {/* Admin-only cleanup (tests, messed-up sends). RLS is the
+                        real boundary — hiding the button is just honest UI. */}
+                    {isAdmin === true && (
+                      <td className="px-2 text-right whitespace-nowrap">
+                        {deleteArmId === r.id ? (
+                          <Button variant="destructive" size="sm" disabled={deleting} onClick={() => handleDelete(r)}>
+                            Confirm
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={deleting}
+                            onClick={() => setDeleteArmId(r.id)}
+                            className="text-destructive hover:bg-destructive/10"
+                            aria-label={`Delete ${r.name}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

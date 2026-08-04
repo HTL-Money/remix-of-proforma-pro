@@ -1,8 +1,10 @@
 // Read-only history of every recap email sent, from the recap_emails audit
 // table (written by the send-recap edge function with the service role).
 import { useEffect, useState } from "react";
-import { ImageIcon, Loader2 } from "lucide-react";
+import { ImageIcon, Loader2, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
+import { deleteRecapEmail } from "@/lib/proformaStore";
 import { isCloudConfigured } from "@/lib/retrReportStore";
 import { requireSupabase } from "@/lib/supabaseClient";
 
@@ -19,6 +21,24 @@ const SentEmails = () => {
   const configured = isCloudConfigured();
   const [rows, setRows] = useState<SentEmail[]>([]);
   const [loading, setLoading] = useState(true);
+  // Two-tap delete (arm → confirm), same pattern as CloudSave/Submissions.
+  // This page is already admin-only by route, so no isAdmin check here.
+  const [deleteArmId, setDeleteArmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async (row: SentEmail) => {
+    setDeleting(true);
+    try {
+      await deleteRecapEmail(row.id);
+      setRows(rs => rs.filter(r => r.id !== row.id));
+      toast({ title: "Deleted", description: `Record of the email to ${row.sentTo} was removed.` });
+    } catch (e) {
+      toast({ title: "Couldn't delete", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setDeleting(false);
+      setDeleteArmId(null);
+    }
+  };
 
   useEffect(() => {
     if (!configured) { setLoading(false); return; }
@@ -72,13 +92,14 @@ const SentEmails = () => {
                   <th className="py-3 px-2 font-semibold">Loan Officer</th>
                   <th className="py-3 px-2 font-semibold">Chart</th>
                   <th className="py-3 px-4 font-semibold text-right">When</th>
+                  <th className="py-3 px-2" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={5} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
+                  <tr><td colSpan={6} className="py-10 text-center text-white/65"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>
                 ) : rows.length === 0 ? (
-                  <tr><td colSpan={5} className="py-10 text-center text-white/65">No recap emails sent yet.</td></tr>
+                  <tr><td colSpan={6} className="py-10 text-center text-white/65">No recap emails sent yet.</td></tr>
                 ) : rows.map(r => (
                   <tr key={r.id} className="border-b border-white/[0.07] hover:bg-white/[0.05]">
                     <td className="py-3 px-4 font-medium text-white">{r.sentTo}</td>
@@ -90,6 +111,24 @@ const SentEmails = () => {
                         : <span className="text-xs text-white/65">Text</span>}
                     </td>
                     <td className="px-4 text-right text-white/65 whitespace-nowrap">{new Date(r.at).toLocaleString()}</td>
+                    <td className="px-2 text-right whitespace-nowrap">
+                      {deleteArmId === r.id ? (
+                        <Button variant="destructive" size="sm" disabled={deleting} onClick={() => handleDelete(r)}>
+                          Confirm
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={deleting}
+                          onClick={() => setDeleteArmId(r.id)}
+                          className="text-destructive hover:bg-destructive/10"
+                          aria-label={`Delete record of email to ${r.sentTo}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

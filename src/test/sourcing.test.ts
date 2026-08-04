@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE } from "../../supabase/functions/send-recap/sourcing";
-import { REFERRAL_TOKEN_RE as CLIENT_RE, buildReferralUrl } from "@/lib/referral";
+import { REFERRAL_TOKEN_RE as CLIENT_RE, buildReferralUrl, CANONICAL_ORIGIN } from "@/lib/referral";
 
 const SENDER_A = "11111111-1111-1111-1111-111111111111";
 const SENDER_B = "22222222-2222-2222-2222-222222222222";
@@ -89,5 +89,18 @@ describe("buildReferralUrl — the PURL an LO hands out", () => {
   it("lands on / with ?ref= so Home forwards it to the calculator", () => {
     expect(buildReferralUrl("https://proforma.hometownlend.com", "0123456789abcdef"))
       .toBe("https://proforma.hometownlend.com/?ref=0123456789abcdef");
+  });
+
+  it("tolerates a trailing slash on the origin instead of emitting a double slash", () => {
+    expect(buildReferralUrl("https://htlrecruit.broker/", "0123456789abcdef"))
+      .toBe("https://htlrecruit.broker/?ref=0123456789abcdef");
+  });
+
+  it("defaults the canonical origin to the real domain, never a deployment URL", () => {
+    // A PURL is recruit-facing. The app also answers on *.vercel.app, so building
+    // one from wherever the LO signed in would put the wrong host in front of a
+    // recruit; RecruitLinks passes CANONICAL_ORIGIN for exactly this reason.
+    expect(CANONICAL_ORIGIN).toBe("https://htlrecruit.broker");
+    expect(CANONICAL_ORIGIN).not.toMatch(/vercel\.app/);
   });
 });
