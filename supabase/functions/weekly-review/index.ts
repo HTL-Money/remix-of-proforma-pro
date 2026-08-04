@@ -2,8 +2,9 @@
 //
 // Two-phase design so an AI session can write the narrative between phases:
 //   { action: "collect" }                          → computed metrics JSON
-//   { action: "send", narrative?, actionsTaken? }  → emails the report to the
-//     admin + inserts the metrics_snapshots row
+//   { action: "send", narrative?, actionsTaken?, cadence? }  → emails the
+//     report to the admin; cadence "daily" (the 21-day launch monitoring
+//     window) skips the snapshot write so trend rows stay Monday-only
 //   { action: "notify", subject, html }            → one-off admin notice
 //     (e.g. the 72-hour sign-in report). Recipient is ALWAYS the fixed admin
 //     address — never caller-controlled — so the anon-reachable surface can
@@ -313,7 +314,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
-  let body: { action?: unknown; narrative?: unknown; actionsTaken?: unknown; subject?: unknown; html?: unknown };
+  let body: { action?: unknown; narrative?: unknown; actionsTaken?: unknown; subject?: unknown; html?: unknown; cadence?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -330,15 +331,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const actionsTaken = Array.isArray(body.actionsTaken)
       ? body.actionsTaken.filter((a): a is string => typeof a === "string").slice(0, 20)
       : [];
+    // cadence "daily" = the launch-window monitoring report: same tables and
+    // narrative, but a distinct subject and NO snapshot write — snapshots stay
+    // Monday-only so week-over-week trend lines compare like with like.
+    const daily = body.cadence === "daily";
     const metrics = await collectMetrics();
     const html = renderReport(metrics, narrative, actionsTaken);
+    const today = new Date().toISOString().slice(0, 10);
     try {
-      await sendAdminEmail(`ProFarmA Weekly Review — week of ${metrics.weekStart}`, html);
+      await sendAdminEmail(
+        daily
+          ? `ProFarmA Daily Check-In — ${today} (rolling 7 days)`
+          : `ProFarmA Weekly Review — week of ${metrics.weekStart}`,
+        html,
+      );
     } catch (e) {
       console.error("weekly review send failed", e);
       return json(502, { error: "Report email failed to send." });
     }
-    await upsertSnapshot(metrics.weekStart, metrics);
+    if (!daily) await upsertSnapshot(metrics.weekStart, metrics);
     return json(200, { ok: true });
   }
 
