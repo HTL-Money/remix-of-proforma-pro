@@ -78,6 +78,13 @@ export interface CeilingData {
  *  (no BPS entered) — mirrors prepareChartData's eligibility exactly. */
 export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
   if (r.currentBps == null || r.current.annual == null) return null;
+  // The template's headings ("Annual funded volume", the annual income
+  // captions) are baked into the artwork, so it can only tell the truth about a
+  // 12-month pull. On a 6-month RETR window calc's "annual" fields hold period
+  // dollars — the HTML body rewords itself for that, a JPEG cannot. Bail and
+  // let the call sites fall back to the chart rather than caption period
+  // figures as annual.
+  if ((r.periodMonths ?? 12) !== 12) return null;
   const safe = (v: number | null | undefined) => (v != null && isFinite(v) ? v : 0);
   const cur = safe(r.current.annual);
   const htl = safe(r.htl.annual);
@@ -99,7 +106,10 @@ export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
     currentBps: `${safe(r.currentBps)} BPS`,
     htlBps: effBps == null ? "—" : `${effBps} BPS`,
     gain: signed(gain),
-    monthlyGain: signed(gain / 12),
+    // Take the monthly figure the payload already carries rather than
+    // re-deriving it — that is the number the email body prints beside this
+    // image, and two independent derivations are two chances to disagree.
+    monthlyGain: signed(r.gain?.monthly ?? gain / 12),
   };
 };
 

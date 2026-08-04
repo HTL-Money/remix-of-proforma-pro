@@ -60,6 +60,7 @@ const getGraphToken = async (cfg: GraphConfig): Promise<string> => {
       client_secret: cfg.clientSecret,
       scope: "https://graph.microsoft.com/.default",
     }),
+    signal: AbortSignal.timeout(20_000),
   });
   if (!resp.ok) throw new Error(`Graph token ${resp.status}: ${await resp.text().catch(() => "")}`);
   const data = await resp.json();
@@ -83,6 +84,7 @@ const sendEmailTo = async (to: string, subject: string, html: string): Promise<v
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ message, saveToSentItems: true }),
+      signal: AbortSignal.timeout(30_000),
     });
   let resp = await post(await getGraphToken(cfg));
   if (resp.status === 401) {
@@ -188,10 +190,19 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
   return out;
 };
 
+// Launch day only — a closed window, not an open-ended "since". Without the
+// upper bound every account created later joined the cohort silently: it would
+// inflate the "X of 41" denominator, and a re-run of `announce` would mail the
+// shared temporary password to someone who was never part of the rollout.
+const SIGNIN_LAUNCH_END = "2026-08-05";
+
 /** The rollout cohort: accounts provisioned on launch day, minus the
  *  exclusions. Both the announcement and the adoption report use this. */
 const cohort = async (): Promise<TeamAccount[]> =>
-  (await listTeamAccounts()).filter(a => !COHORT_EXCLUDE.has(a.email) && a.createdAt >= SIGNIN_LAUNCH);
+  (await listTeamAccounts()).filter(a =>
+    !COHORT_EXCLUDE.has(a.email) &&
+    a.createdAt >= SIGNIN_LAUNCH &&
+    a.createdAt < SIGNIN_LAUNCH_END);
 
 /** Adoption split across the cohort. */
 const signInStatus = async () => {
@@ -414,7 +425,11 @@ const announceHtml = (firstName: string, email: string, password: string): strin
       attached to you for HTL5 rev share — first sender wins the 90-day claim.
     </p>
     <table style="border-collapse:collapse;font-size:14px;background:#f6f8fa;border-left:3px solid ${NAVY};margin:16px 0;width:100%">
-      <tr><td style="padding:10px 14px 2px;color:#4a4a4a">Site</td><td style="padding:10px 14px 2px"><a href="https://htlrecruit.broker" style="color:${NAVY};font-weight:600">htlrecruit.broker</a></td></tr>
+      <!-- /links, not the bare domain: signed out, "/" is the recruit-facing
+           calculator with no sign-in affordance on it by design, so the bare
+           domain would land 41 people on a page with no way in. /links shows
+           the login gate, and is where they end up after signing in anyway. -->
+      <tr><td style="padding:10px 14px 2px;color:#4a4a4a">Sign in</td><td style="padding:10px 14px 2px"><a href="https://htlrecruit.broker/links" style="color:${NAVY};font-weight:600">htlrecruit.broker/links</a></td></tr>
       <tr><td style="padding:2px 14px;color:#4a4a4a">Email</td><td style="padding:2px 14px;font-weight:600">${escHtml(email)}</td></tr>
       <tr><td style="padding:2px 14px 10px;color:#4a4a4a">Temporary password</td><td style="padding:2px 14px 10px;font-weight:600">${escHtml(password)}</td></tr>
     </table>
@@ -442,10 +457,17 @@ const redactPeople = (m: any) => ({
     ...m.funnel,
     claimsExpiringSoon: (m.funnel.claimsExpiringSoon as unknown[]).length,
   },
+  // Teammate identities are as much PII as recruit ones: drop the leaderboard's
+  // emails and the stale-link owners, keep the shape and the counts.
+  leaderboard: (m.leaderboard as unknown[]).length,
   usageFlags: {
     ...m.usageFlags,
-    staleLinks: (m.usageFlags.staleLinks as { owner: string }[]).map(r => ({ owner: r.owner })),
+    staleLinks: (m.usageFlags.staleLinks as unknown[]).length,
   },
+  // Who has not signed in yet is a roster of names; the counts are harmless.
+  signIns: m.signIns ? { signedIn: m.signIns.signedIn, total: m.signIns.total } : null,
+  // Deliverability and suppression counts are admin-only by audience.
+  emailHealth: undefined,
 });
 
 /** Gate for the actions that send mail with caller-influenced content or to

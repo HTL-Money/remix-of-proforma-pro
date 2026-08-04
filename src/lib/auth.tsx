@@ -46,16 +46,40 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Role is decided server-side (RLS calls the same is_admin() function), so
   // this rpc is display-only: it picks which chrome to draw, never what data
-  // is reachable. Re-resolved whenever the signed-in user changes.
+  // is reachable.
+  //
+  // Three things this has to get right, each of which bit once:
+  //   - Never answer `false` while the session is still resolving. On a cold
+  //     load the effect runs with user still null, and a definite `false` makes
+  //     RequireAdmin redirect a real admin to /links before the session lands.
+  //     `loading` is the difference between "not an admin" and "don't know yet".
+  //   - Key on the user's id, not the user object. onAuthStateChange hands over
+  //     a fresh object on every hourly token refresh, which would re-enter this
+  //     effect and blank out an admin's page mid-work.
+  //   - Treat an rpc failure as unknown, not as demotion. A transient network
+  //     error must not quietly turn an admin into an LO; retry, then leave it
+  //     unresolved rather than answer wrongly.
   useEffect(() => {
-    if (!supabase || !user) { setIsAdmin(supabase === null ? true : false); return; }
+    if (!supabase) { setIsAdmin(true); return; }
+    if (loading) { setIsAdmin(null); return; }
+    if (!user) { setIsAdmin(false); return; }
+
     let cancelled = false;
     setIsAdmin(null);
-    supabase.rpc("is_admin").then(({ data, error }) => {
-      if (!cancelled) setIsAdmin(!error && data === true);
-    });
+    (async () => {
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        const { data, error } = await supabase.rpc("is_admin");
+        if (cancelled) return;
+        if (!error) { setIsAdmin(data === true); return; }
+        console.warn(`is_admin check failed (attempt ${attempt + 1}/3):`, error.message);
+        await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+      }
+      // Still unresolved: admin chrome stays hidden and admin routes keep
+      // waiting, but nobody is misclassified. RLS is the real boundary either
+      // way, so the worst case is a reload.
+    })();
     return () => { cancelled = true; };
-  }, [user]);
+  }, [loading, user?.id]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabase) throw new Error("Supabase is not configured.");

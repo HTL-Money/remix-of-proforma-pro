@@ -55,6 +55,22 @@ describe("prepareCeilingData", () => {
     expect(prepareCeilingData(payload({ currentSplit: null }))).toBeNull();
   });
 
+  it("declines a non-12-month pull, because the artwork's headings are baked as annual", () => {
+    // On a 6-month window calc's "annual" fields hold period dollars. The HTML
+    // body rewords itself; the JPEG cannot, so it must not caption period
+    // figures as annual — fall back to the chart instead.
+    const p = payload();
+    expect(prepareCeilingData({ ...p, periodMonths: 6 })).toBeNull();
+    expect(prepareCeilingData({ ...p, periodMonths: 12 })).not.toBeNull();
+    expect(prepareCeilingData({ ...p, periodMonths: undefined })).not.toBeNull();
+  });
+
+  it("takes the monthly gain from the payload rather than re-deriving it", () => {
+    const p = payload();
+    const d = prepareCeilingData({ ...p, gain: { ...p.gain, monthly: 1234 } })!;
+    expect(d.monthlyGain).toBe(`+${fmtUSD(1234)}`);
+  });
+
   it("guards the effective-BPS division against zero volume", () => {
     const d = prepareCeilingData(payload({ annualVolume: 0, annualFiles: 0 }));
     expect(d).not.toBeNull();
