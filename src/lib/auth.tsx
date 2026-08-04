@@ -12,9 +12,15 @@ interface AuthValue {
    *  it as "wait" (no premature redirect). Without Supabase (local dev, no
    *  auth) everything is admin, matching authRequired=false. */
   isAdmin: boolean | null;
+  /** True while this account is still on the temporary password it was issued.
+   *  Read from app_metadata, which only the service role can write — the same
+   *  flag in user_metadata would be clearable by its own owner via updateUser. */
+  mustSetPassword: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
+  /** Sets a new password AND clears the temp-password flag. */
+  completePasswordSetup: (newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthValue>({
@@ -22,9 +28,11 @@ const AuthContext = createContext<AuthValue>({
   loading: false,
   user: null,
   isAdmin: true,
+  mustSetPassword: false,
   signIn: async () => {},
   signOut: async () => {},
   updatePassword: async () => {},
+  completePasswordSetup: async () => {},
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -100,8 +108,30 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (error) throw error;
   };
 
+  // Provisioning stamps app_metadata.must_set_password on accounts handed a
+  // temporary password. Clearing it needs the service role, so it lives behind
+  // an edge function rather than in the client's reach.
+  const mustSetPassword = user?.app_metadata?.must_set_password === true;
+
+  const completePasswordSetup = async (newPassword: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    // Password first, through updateUser: that path runs the full server policy
+    // including the leaked-password check, which the admin API bypasses. Doing
+    // it admin-side would silently accept a breached password.
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    // Then drop the flag. Separate call, so it can fail on its own — the caller
+    // has to say "your password DID change" rather than show a generic error and
+    // leave someone re-entering a password that already took.
+    const { error: clearError } = await supabase.functions.invoke("clear-password-flag");
+    if (clearError) throw new Error(`FLAG_NOT_CLEARED: ${clearError.message}`);
+    // Refresh so the stale must_set_password claim leaves the session; without
+    // this the gate would still be up on a session that no longer needs it.
+    await supabase.auth.refreshSession();
+  };
+
   return (
-    <AuthContext.Provider value={{ authRequired: supabase !== null, loading, user, isAdmin, signIn, signOut, updatePassword }}>
+    <AuthContext.Provider value={{ authRequired: supabase !== null, loading, user, isAdmin, mustSetPassword, signIn, signOut, updatePassword, completePasswordSetup }}>
       {children}
     </AuthContext.Provider>
   );

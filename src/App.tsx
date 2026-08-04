@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { LoginGate } from "@/components/LoginGate";
+import { ForcePasswordSetup } from "@/components/ForcePasswordSetup";
 import { AppShell } from "@/components/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SpeedInsights } from "@vercel/speed-insights/react";
@@ -16,6 +17,7 @@ import Submissions from "./pages/Submissions.tsx";
 import RecruitLinks from "./pages/RecruitLinks.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import RecapView from "./pages/RecapView.tsx";
+import ResetPassword from "./pages/ResetPassword.tsx";
 
 const queryClient = new QueryClient();
 
@@ -59,6 +61,20 @@ const Home = () => {
   return <Dashboard />;
 };
 
+// An account still on its issued temporary password gets one screen and nothing
+// else. This wraps the whole team area rather than sitting inside a route, so
+// there is no URL to type past it.
+//
+// Deliberately does NOT wrap /r or /reset: a recruit viewing a hosted recap has
+// no account at all, and someone arriving on a recovery link is already in the
+// middle of setting a password.
+const PasswordGate = ({ children }: { children: React.ReactNode }) => {
+  const { authRequired, loading, user, mustSetPassword } = useAuth();
+  if (!authRequired || loading || !user) return <>{children}</>;
+  if (mustSetPassword) return <ForcePasswordSetup />;
+  return <>{children}</>;
+};
+
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
@@ -72,9 +88,15 @@ const App = () => (
                   OUTSIDE the team AppShell (no sidebar/chrome). Self-contained:
                   reads its data from the link, no auth, no DB. */}
               <Route path="/r" element={<RecapView />} />
+              {/* Password recovery, also outside the shell: someone who can't get
+                  in shouldn't be looking at team navigation. Every reset email
+                  links here, so losing this route silently 404s the entire
+                  self-service reset flow — which is exactly what happened once. */}
+              <Route path="/reset" element={<ResetPassword />} />
               <Route
                 path="*"
                 element={
+                  <PasswordGate>
                   <AppShell>
                     <Routes>
                       <Route path="/" element={<Home />} />
@@ -89,6 +111,7 @@ const App = () => (
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </AppShell>
+                  </PasswordGate>
                 }
               />
             </Routes>
