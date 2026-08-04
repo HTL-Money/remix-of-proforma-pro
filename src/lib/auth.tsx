@@ -7,6 +7,11 @@ interface AuthValue {
   authRequired: boolean;
   loading: boolean;
   user: User | null;
+  /** null while the server check is in flight, then the confirmed answer.
+   *  Chrome treats null as "not admin" (nothing flashes); route guards treat
+   *  it as "wait" (no premature redirect). Without Supabase (local dev, no
+   *  auth) everything is admin, matching authRequired=false. */
+  isAdmin: boolean | null;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
@@ -16,6 +21,7 @@ const AuthContext = createContext<AuthValue>({
   authRequired: false,
   loading: false,
   user: null,
+  isAdmin: true,
   signIn: async () => {},
   signOut: async () => {},
   updatePassword: async () => {},
@@ -24,6 +30,7 @@ const AuthContext = createContext<AuthValue>({
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(supabase !== null);
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(supabase === null ? true : null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -36,6 +43,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     });
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // Role is decided server-side (RLS calls the same is_admin() function), so
+  // this rpc is display-only: it picks which chrome to draw, never what data
+  // is reachable. Re-resolved whenever the signed-in user changes.
+  useEffect(() => {
+    if (!supabase || !user) { setIsAdmin(supabase === null ? true : false); return; }
+    let cancelled = false;
+    setIsAdmin(null);
+    supabase.rpc("is_admin").then(({ data, error }) => {
+      if (!cancelled) setIsAdmin(!error && data === true);
+    });
+    return () => { cancelled = true; };
+  }, [user]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabase) throw new Error("Supabase is not configured.");
@@ -57,7 +77,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ authRequired: supabase !== null, loading, user, signIn, signOut, updatePassword }}>
+    <AuthContext.Provider value={{ authRequired: supabase !== null, loading, user, isAdmin, signIn, signOut, updatePassword }}>
       {children}
     </AuthContext.Provider>
   );

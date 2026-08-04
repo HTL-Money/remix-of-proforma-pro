@@ -30,18 +30,32 @@ const RequireAuth = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// Admin pages on top of RequireAuth: a signed-in LO who types /targets is
+// sent to their own workspace instead. The database enforces the same split
+// (is_admin() RLS), so this redirect is UX, not the security boundary.
+const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
+  const { isAdmin } = useAuth();
+  if (isAdmin === null) return <div className="min-h-screen hero-bg" />; // still resolving — don't bounce an admin
+  if (!isAdmin) return <Navigate to="/links" replace />;
+  return <>{children}</>;
+};
+
 // "/" used to be the calculator, and shared links like /?nmls=123 still point
 // there — keep them working by forwarding to /calculator with the same params.
 // A signed-out visitor lands on the calculator itself (no login wall); a
 // signed-in team member lands on the dashboard.
 const Home = () => {
   const [params] = useSearchParams();
-  const { authRequired, loading, user } = useAuth();
+  const { authRequired, loading, user, isAdmin } = useAuth();
   // ?ref= is a recruit PURL — always land it on the calculator (even for a
   // signed-in team member) so the referral flow is deterministic.
   if (params.get("nmls") != null || params.get("ref") != null) return <Navigate to={`/calculator?${params.toString()}`} replace />;
   if (authRequired && loading) return <div className="min-h-screen hero-bg" />;
   if (authRequired && !user) return <Index />;
+  // The dashboard reads admin-gated tables (targets, recap_emails), so a
+  // signed-in LO's home is their own workspace instead.
+  if (isAdmin === null) return <div className="min-h-screen hero-bg" />;
+  if (!isAdmin) return <Navigate to="/links" replace />;
   return <Dashboard />;
 };
 
@@ -65,9 +79,9 @@ const App = () => (
                     <Routes>
                       <Route path="/" element={<Home />} />
                       <Route path="/calculator" element={<Index />} />
-                      <Route path="/targets" element={<RequireAuth><Targets /></RequireAuth>} />
-                      <Route path="/emails" element={<RequireAuth><SentEmails /></RequireAuth>} />
-                      <Route path="/submissions" element={<RequireAuth><Submissions /></RequireAuth>} />
+                      <Route path="/targets" element={<RequireAuth><RequireAdmin><Targets /></RequireAdmin></RequireAuth>} />
+                      <Route path="/emails" element={<RequireAuth><RequireAdmin><SentEmails /></RequireAdmin></RequireAuth>} />
+                      <Route path="/submissions" element={<RequireAuth><RequireAdmin><Submissions /></RequireAdmin></RequireAuth>} />
                       <Route path="/links" element={<RequireAuth><RecruitLinks /></RequireAuth>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />

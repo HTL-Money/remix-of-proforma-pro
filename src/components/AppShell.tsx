@@ -9,21 +9,24 @@ import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
+// adminOnly pages carry the recruiting playbook (targets, everyone's sends,
+// the CRM) — hidden from LO accounts. The database enforces the same split
+// via is_admin() RLS policies; this filter is just matching chrome.
 const TEAM_NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, adminOnly: true },
   { to: "/calculator", label: "Calculator", icon: Calculator },
-  { to: "/targets", label: "Targets", icon: ListChecks },
+  { to: "/targets", label: "Targets", icon: ListChecks, adminOnly: true },
   { to: "/links", label: "Recruit Links", icon: Link2 },
-  { to: "/emails", label: "Sent Emails", icon: Mail },
-  { to: "/submissions", label: "Submissions", icon: Table2 },
+  { to: "/emails", label: "Sent Emails", icon: Mail, adminOnly: true },
+  { to: "/submissions", label: "Submissions", icon: Table2, adminOnly: true },
 ];
 
 // Only ever rendered for team members now — anonymous visitors get no shell
 // at all (see AppShell below), so there's no public nav variant anymore.
 const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
   const location = useLocation();
-  const { user, authRequired, signOut } = useAuth();
-  const items = TEAM_NAV;
+  const { user, authRequired, isAdmin, signOut } = useAuth();
+  const items = TEAM_NAV.filter(item => isAdmin || !item.adminOnly);
   return (
     <div className="flex h-full flex-col">
       <div className="px-5 pt-6 pb-5">

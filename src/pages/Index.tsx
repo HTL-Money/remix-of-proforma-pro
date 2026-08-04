@@ -395,7 +395,7 @@ const Index = () => {
   // query params (the deep-link effect below replaces them), so the token
   // survives the gate and rides along when the recap is sent.
   storeReferralToken(searchParams.get("ref"));
-  const { authRequired, loading: authLoading, user, signOut } = useAuth();
+  const { authRequired, loading: authLoading, user, isAdmin, signOut } = useAuth();
   // Cloud saves, recap email, and the team RETR lookup all touch the
   // database — which RLS restricts to authenticated users. When Supabase
   // isn't configured at all, there's no login concept, so everyone's "team."
@@ -695,7 +695,10 @@ const Index = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {isCloudConfigured() && isTeamMember && (
+              {/* Target LOs + cloud save/load read admin-gated tables
+                  (target_los, proformas select) — LO accounts don't get the
+                  buttons; their persistence path is "Send It Now". */}
+              {isCloudConfigured() && isTeamMember && isAdmin === true && (
                 <Button
                   asChild
                   variant="outline"
@@ -705,7 +708,7 @@ const Index = () => {
                   <Link to="/targets" title="Target loan officers"><ListChecks className="h-4 w-4 mr-1" /> Target LOs</Link>
                 </Button>
               )}
-              {isTeamMember && (
+              {isTeamMember && isAdmin === true && (
                 <CloudSave
                   state={state}
                   onLoad={(loaded) => setState(loaded)}

@@ -61,13 +61,16 @@ const getGraphToken = async (cfg: GraphConfig): Promise<string> => {
   return graphToken.token;
 };
 
-const sendAdminEmail = async (subject: string, html: string): Promise<void> => {
+const sendAdminEmail = (subject: string, html: string): Promise<void> =>
+  sendEmailTo(REVIEW_TO, subject, html);
+
+const sendEmailTo = async (to: string, subject: string, html: string): Promise<void> => {
   const cfg = graphConfig();
   if (!cfg) throw new Error("Graph email is not configured.");
   const message = {
     subject,
     body: { contentType: "HTML", content: html },
-    toRecipients: [{ emailAddress: { address: REVIEW_TO } }],
+    toRecipients: [{ emailAddress: { address: to } }],
   };
   const post = async (token: string) =>
     fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.sender)}/sendMail`, {
@@ -125,6 +128,61 @@ const upsertSnapshot = async (weekStart: string, metrics: unknown): Promise<void
   } catch (e) {
     console.error("snapshot write failed (non-fatal)", e);
   }
+};
+
+// ---- Team accounts (auth admin API) -----------------------------------------
+
+// The 42 LO accounts were provisioned 2026-08-04; sign-in tracking measures
+// adoption from that date. These service/legacy accounts are not part of it.
+const SIGNIN_LAUNCH = "2026-08-04";
+const SIGNIN_EXCLUDE = new Set(["admin@hometownlend.com", "fey@hometownlend.com"]);
+// Pre-launch accounts + admins who already know the tool — never announced to.
+const ANNOUNCE_EXCLUDE = new Set([
+  ...SIGNIN_EXCLUDE,
+  "jamesm@hometownlend.com",
+  "aryanj@hometownlend.com",
+  "accounting@hometownlend.com",
+]);
+
+interface TeamAccount { email: string; name: string; createdAt: string; lastSignInAt: string | null }
+
+const listTeamAccounts = async (): Promise<TeamAccount[]> => {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) return [];
+  const out: TeamAccount[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const r = await fetch(`${url}/auth/v1/admin/users?page=${page}&per_page=100`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) throw new Error(`admin users list ${r.status}`);
+    const data = await r.json() as { users?: { email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string } }[] };
+    const users = data.users ?? [];
+    for (const u of users) {
+      if (!u.email) continue;
+      out.push({
+        email: u.email.toLowerCase(),
+        name: u.user_metadata?.full_name ?? u.email.split("@")[0],
+        createdAt: u.created_at ?? "",
+        lastSignInAt: u.last_sign_in_at ?? null,
+      });
+    }
+    if (users.length < 100) break;
+  }
+  return out;
+};
+
+/** Adoption split for everyone we track (roster minus service accounts). */
+const signInStatus = async () => {
+  const accounts = (await listTeamAccounts()).filter(a => !SIGNIN_EXCLUDE.has(a.email));
+  const signedIn = accounts
+    .filter(a => a.lastSignInAt && a.lastSignInAt >= SIGNIN_LAUNCH)
+    .sort((a, b) => (b.lastSignInAt ?? "").localeCompare(a.lastSignInAt ?? ""));
+  const missing = accounts
+    .filter(a => !a.lastSignInAt || a.lastSignInAt < SIGNIN_LAUNCH)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { total: accounts.length, signedIn, missing };
 };
 
 // ---- Metrics ----------------------------------------------------------------
@@ -238,6 +296,11 @@ const collectMetrics = async () => {
       decksGeneratedThisWeek: (await rest(`recap_presentations?select=recap_hash&created_at=gte.${encodeURIComponent(since)}`)).length,
     },
     history: (snapshots as { week_start: string; metrics: unknown }[]).map(s => ({ week: s.week_start })),
+    // Adoption tracking (21-day launch window and beyond). Best-effort: an
+    // auth-API hiccup must never sink the rest of the report.
+    signIns: await signInStatus()
+      .then(s => ({ signedIn: s.signedIn.length, total: s.total, missing: s.missing.map(a => a.name) }))
+      .catch(e => { console.error("signIns unavailable", e); return null; }),
   };
 };
 
@@ -297,6 +360,9 @@ const renderReport = (m: any, narrative: string, actionsTaken: string[]): string
         Suppressed: <b>${m.emailHealth.suppressed}</b> ·
         Withheld (no gain): <b>${m.emailHealth.negativeGain}</b>
       </div>
+      ${m.signIns ? `<h3 style="color:${NAVY};margin:16px 0 6px">Team sign-ins</h3>
+      <div style="font-size:14px"><b>${m.signIns.signedIn} of ${m.signIns.total}</b> team members have signed in since launch.</div>
+      ${m.signIns.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:4px">Not yet: ${(m.signIns.missing as string[]).map(escHtml).join(", ")}</div>` : ""}` : ""}
       ${expiring ? `<h3 style="color:${NAVY};margin:16px 0 6px">Claims expiring within 14 days</h3><ul style="font-size:13px;margin:4px 0">${expiring}</ul>` : ""}
       ${stale ? `<h3 style="color:${NAVY};margin:16px 0 6px">Never-used links (21+ days)</h3><ul style="font-size:13px;margin:4px 0">${stale}</ul>` : ""}
       <div style="font-size:13px;color:#4a4a4a;margin-top:8px">Gamma decks generated this week: ${m.usageFlags.decksGeneratedThisWeek}</div>
@@ -308,13 +374,50 @@ const renderReport = (m: any, narrative: string, actionsTaken: string[]): string
   </div>`;
 };
 
+// ---- LO announcement ---------------------------------------------------------
+
+const announceHtml = (firstName: string, email: string, password: string): string => `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
+  <div style="background:${NAVY};color:#fff;padding:18px 22px;border-radius:8px 8px 0 0">
+    <div style="font-size:19px;font-weight:700">Hometown Lending — Recruiting Tool</div>
+  </div>
+  <div style="border:1px solid #e3e3e3;border-top:0;border-radius:0 0 8px 8px;padding:22px">
+    <p style="margin:0 0 12px">Hi ${escHtml(firstName)},</p>
+    <p style="margin:0 0 12px">
+      Your sign-in for HTL's new recruiting tool is ready. It builds a personalized
+      pro forma for any loan officer you're talking to — showing them exactly what
+      their numbers look like here — and emails it to them as a polished report
+      with your name attached.
+    </p>
+    <p style="margin:0 0 12px">
+      <b>Why it's worth your time:</b> any recruit you bring through your link is
+      attached to you for HTL5 rev share — first sender wins the 90-day claim.
+    </p>
+    <table style="border-collapse:collapse;font-size:14px;background:#f6f8fa;border-left:3px solid ${NAVY};margin:16px 0;width:100%">
+      <tr><td style="padding:10px 14px 2px;color:#4a4a4a">Site</td><td style="padding:10px 14px 2px"><a href="https://htlrecruit.broker" style="color:${NAVY};font-weight:600">htlrecruit.broker</a></td></tr>
+      <tr><td style="padding:2px 14px;color:#4a4a4a">Email</td><td style="padding:2px 14px;font-weight:600">${escHtml(email)}</td></tr>
+      <tr><td style="padding:2px 14px 10px;color:#4a4a4a">Temporary password</td><td style="padding:2px 14px 10px;font-weight:600">${escHtml(password)}</td></tr>
+    </table>
+    <p style="margin:0 0 12px">
+      <b>First thing after you sign in:</b> use <i>Change password</i> in the
+      sidebar to set your own — this temporary one is shared across the team and
+      will be retired soon.
+    </p>
+    <p style="margin:0 0 12px">
+      Then open <b>Recruit Links</b> to grab your personal link or send a pro
+      forma directly. Questions — reply to this email or grab James.
+    </p>
+    <p style="margin:16px 0 0;color:#4a4a4a">— James Mowery, VP of Sales</p>
+  </div>
+</div>`;
+
 // ---- Handler -----------------------------------------------------------------
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
-  let body: { action?: unknown; narrative?: unknown; actionsTaken?: unknown; subject?: unknown; html?: unknown; cadence?: unknown };
+  let body: { action?: unknown; narrative?: unknown; actionsTaken?: unknown; subject?: unknown; html?: unknown; cadence?: unknown; key?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -353,6 +456,84 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(200, { ok: true });
   }
 
+  if (body.action === "signinReport") {
+    // The 72-hour adoption report (and re-runnable any time). Anon-callable is
+    // acceptable: fixed admin recipient, and the response body carries no data.
+    let s;
+    try {
+      s = await signInStatus();
+    } catch (e) {
+      console.error("signinReport list failed", e);
+      await sendAdminEmail("[ProFarmA] Sign-in report failed", `<p>Could not read the account list: ${escHtml(String(e))}</p>`).catch(() => {});
+      return json(502, { error: "Account list unavailable." });
+    }
+    const fmt = (ts: string | null) => ts ? new Date(ts).toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "medium", timeStyle: "short" }) + " CT" : "—";
+    const inRows = s.signedIn.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 12px">${escHtml(a.email)}</td><td style="padding:4px 0;color:#2f7d5d">${escHtml(fmt(a.lastSignInAt))}</td></tr>`).join("")
+      || `<tr><td colspan="3" style="padding:8px 0;color:#7a7a7a">Nobody yet.</td></tr>`;
+    const outRows = s.missing.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 0">${escHtml(a.email)}</td></tr>`).join("")
+      || `<tr><td colspan="2" style="padding:8px 0;color:#2f7d5d">Everyone has signed in.</td></tr>`;
+    const html = `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a">
+      <div style="background:${NAVY};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+        <div style="font-size:18px;font-weight:700">Sign-In Report</div>
+        <div style="font-size:12px;color:#BEBFC3">Who has visited htlrecruit.broker since launch (${SIGNIN_LAUNCH})</div>
+      </div>
+      <div style="border:1px solid #e3e3e3;border-top:0;border-radius:0 0 8px 8px;padding:20px">
+        <div style="font-size:16px;margin-bottom:14px"><b>${s.signedIn.length} of ${s.total}</b> team members have signed in.</div>
+        <h3 style="color:#2f7d5d;margin:0 0 6px">Signed in (${s.signedIn.length})</h3>
+        <table style="border-collapse:collapse;font-size:13px">${inRows}</table>
+        <h3 style="color:#a33;margin:16px 0 6px">Never visited (${s.missing.length})</h3>
+        <table style="border-collapse:collapse;font-size:13px">${outRows}</table>
+        ${s.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:14px">Suggestion: re-send the announcement to the never-visited list, or mention it at the next team meeting.</div>` : ""}
+      </div>
+    </div>`;
+    try {
+      await sendAdminEmail(`ProFarmA Sign-In Report — ${s.signedIn.length} of ${s.total} on board`, html);
+    } catch (e) {
+      console.error("signinReport send failed", e);
+      return json(502, { error: "Report email failed to send." });
+    }
+    return json(200, { ok: true });
+  }
+
+  if (body.action === "announce") {
+    // Emails every launch-cohort LO their sign-in details INCLUDING the shared
+    // temporary password (owner's explicit choice) — so this action is the one
+    // surface that must NOT be anon-triggerable: the caller has to present the
+    // ADMIN_TASK_KEY secret. Recipients come from the auth admin API, never
+    // from the request.
+    const gate = Deno.env.get("ADMIN_TASK_KEY");
+    if (!gate || body.key !== gate) return json(403, { error: "Forbidden." });
+    const password = Deno.env.get("SHARED_TEMP_PASSWORD");
+    if (!password) return json(500, { error: "SHARED_TEMP_PASSWORD not configured." });
+
+    let accounts: TeamAccount[];
+    try {
+      accounts = (await listTeamAccounts()).filter(a => !ANNOUNCE_EXCLUDE.has(a.email) && a.createdAt >= SIGNIN_LAUNCH);
+    } catch (e) {
+      return json(502, { error: `Account list unavailable: ${e}` });
+    }
+
+    const sent: string[] = [], failed: string[] = [];
+    for (const a of accounts) {
+      const firstName = a.name.split(" ")[0];
+      const html = announceHtml(firstName, a.email, password);
+      try {
+        await sendEmailTo(a.email, "Your HTL Recruiting Tool sign-in is ready", html);
+        sent.push(a.email);
+      } catch (e) {
+        console.error("announce send failed", a.email, e);
+        failed.push(a.email);
+      }
+    }
+    // Receipt to the admin so the send is auditable without checking logs.
+    await sendAdminEmail(
+      `[ProFarmA] Announcement sent — ${sent.length} delivered${failed.length ? `, ${failed.length} FAILED` : ""}`,
+      `<p>Announcement went to ${sent.length} loan officers.</p>${failed.length ? `<p style="color:#a33">Failed: ${failed.map(escHtml).join(", ")}</p>` : ""}`,
+    ).catch(() => {});
+    return json(200, { ok: true, sent: sent.length, failed: failed.length });
+  }
+
   if (body.action === "notify") {
     // One-off admin notice. Fixed recipient; forced subject prefix so a
     // spoofed call is always recognizable as machine-generated.
@@ -368,5 +549,5 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(200, { ok: true });
   }
 
-  return json(400, { error: "action must be 'collect', 'send', or 'notify'." });
+  return json(400, { error: "action must be 'collect', 'send', 'notify', 'signinReport', or 'announce'." });
 });
