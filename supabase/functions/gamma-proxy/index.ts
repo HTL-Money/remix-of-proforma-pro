@@ -21,6 +21,8 @@
 // — treat the first real call as the verification step, same as RETR/
 // Higgsfield needed.
 
+import { buildInputText, hasTeamEconomics, RecapForPrompt } from "./prompt.ts";
+
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
 const CORS = {
@@ -36,46 +38,8 @@ const GAMMA_BASE = "https://public-api.gamma.app/v1.0";
 const FETCH_TIMEOUT_MS = 20_000;
 const HASH_RE = /^[0-9a-f]{16}$/;
 
-const usd = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(
-    isFinite(n) ? n : 0,
-  );
-
-// "You Already Know" — chosen because the earlier persona-review panel found
-// this audience (skeptical, financially sophisticated loan officers) reacts
-// against hype-toned pitches; this reads as "just the math," not a sales
-// pitch. Built from RecapPayload's numbers only — never employee data (there
-// is none in RecapPayload), never the HTL5 sourcing info (that's backend-only
-// and never touches anything sent to the recipient).
-interface RecapForPrompt {
-  loName?: string;
-  current?: { annual?: number | null } | null;
-  htl?: { annual?: number } | null;
-  gain?: { annual?: number | null } | null;
-  volume?: number;
-  files?: number;
-}
-
-const buildInputText = (recap: RecapForPrompt): string => {
-  const name = recap.loName || "you";
-  const current = recap.current?.annual ?? null;
-  const htl = recap.htl?.annual ?? 0;
-  const gain = recap.gain?.annual ?? null;
-  const hasComparison = current != null && gain != null;
-  const gainLine = hasComparison
-    ? `The gap: ${usd(gain ?? 0)} a year — ${usd(current ?? 0)} today vs. ${usd(htl)} at Hometown Lending.`
-    : `Projected annual comp at Hometown Lending: ${usd(htl)}.`;
-  return [
-    `Create a short, restrained, premium mortgage-industry presentation for a loan officer named ${name}.`,
-    `Tone: direct and factual, NOT hype or sales-pitchy — this audience is financially sophisticated and skeptical of hype.`,
-    `Headline concept: "You already know you're leaving money on the table. Here's exactly how much."`,
-    gainLine,
-    `Production: ${recap.files ?? 0} files, ${usd(recap.volume ?? 0)} in annual volume — same production, different split.`,
-    `Close with a low-pressure invitation to a short, no-commitment call — never claim these figures are guaranteed; they are illustrative.`,
-    // Brand/palette guidance intentionally lives in brandInstructions() below,
-    // passed as Gamma's additionalInstructions, so it isn't duplicated here.
-  ].join(" ");
-};
+// Prompt copy (buildInputText / RecapForPrompt / hasTeamEconomics) lives in
+// ./prompt.ts so vitest can cover the recruit-facing wording directly.
 
 interface PresentationRow {
   recap_hash: string;
@@ -157,14 +121,14 @@ const brandInstructions = (logoUrl?: string): string =>
     .filter(Boolean)
     .join(" ");
 
-const submitGammaGeneration = async (apiKey: string, inputText: string): Promise<string> => {
+const submitGammaGeneration = async (apiKey: string, inputText: string, numCards: number): Promise<string> => {
   const themeName = Deno.env.get("GAMMA_THEME_NAME")?.trim() || undefined;
   const logoUrl = Deno.env.get("GAMMA_LOGO_URL")?.trim() || undefined;
   const payload: Record<string, unknown> = {
     inputText,
     textMode: "generate",
     format: "presentation",
-    numCards: 6,
+    numCards,
     additionalInstructions: brandInstructions(logoUrl),
     // The recruit gets the deck as an email ATTACHMENT, not a link, so we ask
     // Gamma to export a PDF alongside the hosted version. PDF because it opens
@@ -268,8 +232,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!recap || typeof recap !== "object") return json(400, { error: "Invalid recap." });
 
     try {
-      const inputText = buildInputText(recap as RecapForPrompt);
-      const generationId = await submitGammaGeneration(apiKey, inputText);
+      const forPrompt = recap as RecapForPrompt;
+      const inputText = buildInputText(forPrompt);
+      // One extra card only when the "Your Team Economics" slide applies.
+      const numCards = hasTeamEconomics(forPrompt) ? 7 : 6;
+      const generationId = await submitGammaGeneration(apiKey, inputText, numCards);
       await upsertRow(supabaseUrl, serviceKey, { recap_hash: hash, status: "processing", gamma_generation_id: generationId });
       return json(200, { status: "processing" });
     } catch (e) {
