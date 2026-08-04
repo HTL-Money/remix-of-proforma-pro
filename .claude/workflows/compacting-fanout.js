@@ -36,7 +36,7 @@ const DIGEST = {
   properties: {
     items: {
       type: 'array',
-      maxItems: 8,                       // a finder that "found 200 things" is noise
+      maxItems: 6,  // a finder that "found 200 things" is noise
       items: {
         type: 'object',
         required: ['key', 'claim', 'severity'],
@@ -62,39 +62,96 @@ const VERDICT = {
 // turn it into an answer.
 const RESERVE = 60_000
 
-const TARGETS = Array.isArray(args?.targets) ? args.targets : []
-const GOAL = args?.goal ?? 'defects a reviewer would insist on fixing'
-if (!TARGETS.length) return { error: 'pass { goal, targets: [...] } as args' }
+// `args` is documented to arrive as a real JSON value, but a caller that
+// stringifies it is a common enough mistake that failing on it wastes a whole
+// launch — the first run of this file died in 30ms for exactly that reason.
+// Coerce instead, and say so, rather than making the caller guess.
+const input = typeof args === 'string'
+  ? (() => { try { return JSON.parse(args) } catch { return null } })()
+  : args
+if (typeof args === 'string' && input) log('args arrived JSON-encoded; parsed it')
 
-const affordable = (need = RESERVE) =>
-  !budget.total || budget.remaining() > need
+const TARGETS = Array.isArray(input?.targets) ? input.targets : []
+const GOAL = input?.goal ?? 'defects a reviewer would insist on fixing'
+if (!TARGETS.length) return { error: 'pass { goal, targets: [...] } as args — got: ' + JSON.stringify(args)?.slice(0, 200) }
+
+// A budget guard alone is NOT a guard. `budget.total` is null unless the user
+// set an explicit token target, and `budget.remaining()` is then Infinity — so
+// on the first real run of this file every check passed and it spent 100 agents
+// and 4M tokens across 65 minutes on a three-target review. The absolute caps
+// below hold regardless of whether a budget exists; the budget check only
+// tightens them. Raise maxAgents deliberately, per task, in the caller's args.
+const MAX_AGENTS = Number(input?.maxAgents) || 15
+const MAX_ROUNDS = Number(input?.maxRounds) || 2
+const MAX_ITEMS_PER_TARGET = Number(input?.maxItemsPerTarget) || 3 // the multiplier: items x targets x rounds
+let spawned = 0
+
+// Hold one slot back for the synthesizer. Without this a cap-filling scan
+// starves the one stage that turns findings into an answer — the dry run spent
+// exactly 15 of 15 on discovery and produced no summary at all.
+const LOOP_CAP = Math.max(1, MAX_AGENTS - 1)
+
+/** True only if BOTH the agent cap and (when one exists) the token budget allow
+ *  another `want` agents. `cap` is LOOP_CAP during discovery, MAX_AGENTS for
+ *  the reserved synthesis slot. */
+const affordable = (want = 1, need = RESERVE, cap = LOOP_CAP) =>
+  spawned + want <= cap && (!budget.total || budget.remaining() > need)
 
 const seen = new Set()
 const confirmed = []
 let dryRounds = 0
 
+// Each target costs one scan plus up to MAX_ITEMS_PER_TARGET verifies, so this
+// is how many targets a round can actually afford.
+const perTarget = 1 + MAX_ITEMS_PER_TARGET
+const covered = new Set()
+
 phase('Scan')
-for (let round = 1; dryRounds < 2 && round <= 4; round++) {
-  if (!affordable(RESERVE * 2)) { log(`budget guard: stopping before round ${round}`); break }
+for (let round = 1; dryRounds < 2 && round <= MAX_ROUNDS; round++) {
+  const slots = LOOP_CAP - spawned
+  if (slots < perTarget || (budget.total && budget.remaining() < RESERVE * 2)) {
+    log(`guard: stopping before round ${round} (${spawned}/${LOOP_CAP} discovery agents spent)`)
+    break
+  }
+  // Take as many targets as the remaining slots afford instead of refusing to
+  // start: a 40-item work-list under a cap of 15 used to return nothing at all.
+  // Round 2 picks up where round 1 stopped, and anything never reached is
+  // reported in `coverage` rather than passed off as "clean".
+  const batch = TARGETS.filter(t => !covered.has(t)).slice(0, Math.floor(slots / perTarget))
+  if (!batch.length) { log(`guard: no affordable targets left before round ${round}`); break }
+  batch.forEach(t => covered.add(t))
+  if (batch.length < TARGETS.length) log(`round ${round}: ${batch.length} of ${TARGETS.length} targets this round`)
 
   // Stage 1 returns digests. Stage 2 sees only the deduped remainder, so the
   // verify cost tracks *new* findings, not cumulative ones.
   const rounds = await pipeline(
-    TARGETS,
-    (t, _orig, i) => agent(
-      `Examine ${typeof t === 'string' ? t : JSON.stringify(t)} for: ${GOAL}.\n` +
-      `Round ${round}. Already reported (do not repeat): ${[...seen].slice(-40).join('; ') || 'nothing yet'}.\n` +
-      `Return at most 8 items. One sentence per claim — no preamble, no restating the file.`,
-      { label: `scan:${i}`, phase: 'Scan', schema: DIGEST },
-    ),
+    batch,
+    (t, _orig, i) => {
+      spawned++
+      return agent(
+        `Examine ${typeof t === 'string' ? t : JSON.stringify(t)} for: ${GOAL}.\n` +
+        `Round ${round}. Already reported (do not repeat): ${[...seen].slice(-40).join('; ') || 'nothing yet'}.\n` +
+        `Return at most ${MAX_ITEMS_PER_TARGET} items — only the ones you would stake your name on. ` +
+        `One sentence per claim; no preamble, no restating the file.`,
+        { label: `scan:${i}`, phase: 'Scan', schema: DIGEST },
+      )
+    },
     async (digest, t, i) => {
       if (!digest?.items?.length) return []
       // Dedupe in plain code against everything ever seen — not against the
       // confirmed list, or rejected findings resurface every round and the
       // loop never converges.
-      const fresh = digest.items.filter(it => it.key && !seen.has(it.key))
-      fresh.forEach(it => seen.add(it.key))
-      if (!fresh.length || !affordable()) return []
+      const all = digest.items.filter(it => it.key && !seen.has(it.key))
+      all.forEach(it => seen.add(it.key))
+      // Truncate to the cap and SAY what was dropped: a silent cut reads as
+      // "nothing else was there".
+      const fresh = all.slice(0, MAX_ITEMS_PER_TARGET)
+      if (all.length > fresh.length) log(`scan:${i} returned ${all.length}; verifying ${fresh.length}, dropped ${all.length - fresh.length}`)
+      if (!fresh.length || !affordable(fresh.length)) {
+        if (fresh.length) log(`guard: skipping ${fresh.length} verifies for scan:${i}`)
+        return []
+      }
+      spawned += fresh.length
       return parallel(fresh.map(it => () =>
         agent(
           `Try to REFUTE this claim about ${typeof t === 'string' ? t : 'the target'}: "${it.claim}"` +
@@ -120,7 +177,7 @@ const brief = confirmed
   .map(f => `[${f.severity}] ${f.claim}${f.where ? ` (${f.where})` : ''} — survived refutation: ${f.why}`)
   .join('\n')
 
-const summary = confirmed.length && affordable(0)
+const summary = confirmed.length && affordable(1, 0, MAX_AGENTS)
   ? await agent(
       `These findings survived adversarial verification for: ${GOAL}\n\n${brief}\n\n` +
       `Give the shortest useful account: what actually matters, what to fix first, and anything the set implies as a pattern.`,
@@ -132,5 +189,13 @@ return {
   confirmed,
   summary,
   spentTokens: budget.spent(),
-  coverage: { targets: TARGETS.length, distinctFindings: seen.size, dryRounds },
+  coverage: {
+    targets: TARGETS.length,
+    targetsExamined: covered.size,
+    targetsNotReached: TARGETS.filter(t => !covered.has(t)),   // never silently imply "clean"
+    distinctFindings: seen.size,
+    dryRounds,
+    agentsSpawned: spawned,
+    agentCap: MAX_AGENTS,
+  },
 }
