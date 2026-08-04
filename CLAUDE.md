@@ -85,3 +85,25 @@ mid-session once. One-shots should unschedule themselves.
   `tools/build-ceiling-template.py` is how placeholders get erased offline.
 - **First sender wins the 90-day HTL5 claim** (`lo_sourcing`), so attribution is
   taken from a verified JWT, never a client-supplied id.
+
+## Excluding someone from the announcement does not change their password
+
+All 42 roster accounts were provisioned with the one shared temporary password.
+Pulling somebody out of `COHORT_EXCLUDE` stops the *email*; it leaves the
+*credential* in place. Found 90 minutes before the launch send: six accounts —
+`accounting@`, `carloss@`, `mojia@` (all **admins**), plus `mikeh@`,
+`adrianag@`, `valeriab@` — still accepted the shared password while being absent
+from the announcement and therefore ungated. The password was about to be mailed
+to 37 inboxes, one outside our domain, so each was an unlocked door with a key in
+transit.
+
+All six were rotated to unique passwords and flagged `must_set_password`.
+
+If you exclude anyone from a credential-bearing send in future, rotate their
+password in the same change. The check that catches this:
+
+    # for every account, does the shared password still authenticate?
+    POST /auth/v1/token?grant_type=password  → 200 means yes
+
+Expect exactly the announced cohort to return 200, and nobody else. Two of the
+six were only caught by sweeping *all* accounts rather than the ones I suspected.
