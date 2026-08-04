@@ -10,6 +10,11 @@
 //     the rollout cohort has signed in, and who never has
 //   { action: "announce", key }                    → the LO rollout email
 //     (sign-in details + shared temp password) to every cohort member
+//   { action: "announce", key, invite }            → the same email to ONE
+//     existing account, with a password minted for that person alone. How a
+//     new hire gets their login without re-mailing the cohort.
+//   { action: "announce", key, previewTo }         → the genuine template to an
+//     admin address only. Changes nothing; for reviewing copy before a send.
 //   { action: "notify", key, subject, html }       → one-off admin notice
 //
 // `verify_jwt` is on, but the anon key it accepts ships in the browser bundle,
@@ -164,9 +169,13 @@ const COHORT_EXCLUDE = new Set([
   "valeriab@hometownlend.com",
   "jamesm@hometownlend.com",
   "aryanj@hometownlend.com",
+  // Rehearsal account, created on launch day and therefore inside the cohort
+  // window by date. Without this line it would be counted in adoption and
+  // mailed the real announcement.
+  "lotest@hometownlend.com",
 ]);
 
-interface TeamAccount { email: string; name: string; createdAt: string; lastSignInAt: string | null }
+interface TeamAccount { id: string; email: string; name: string; createdAt: string; lastSignInAt: string | null }
 
 const listTeamAccounts = async (): Promise<TeamAccount[]> => {
   const url = Deno.env.get("SUPABASE_URL");
@@ -179,11 +188,12 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) throw new Error(`admin users list ${r.status}`);
-    const data = await r.json() as { users?: { email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string } }[] };
+    const data = await r.json() as { users?: { id?: string; email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string } }[] };
     const users = data.users ?? [];
     for (const u of users) {
       if (!u.email) continue;
       out.push({
+        id: u.id ?? "",
         email: u.email.toLowerCase(),
         name: u.user_metadata?.full_name ?? u.email.split("@")[0],
         createdAt: u.created_at ?? "",
@@ -208,6 +218,57 @@ const cohort = async (): Promise<TeamAccount[]> =>
     !COHORT_EXCLUDE.has(a.email) &&
     a.createdAt >= SIGNIN_LAUNCH &&
     a.createdAt < SIGNIN_LAUNCH_END);
+
+/** Looks one account up by address, case-insensitively. Returns the row from
+ *  auth.users — so every later use (who we mail, whose password we set) comes
+ *  from Supabase's own record and not from the caller's string. */
+const findAccount = async (email: string): Promise<TeamAccount | null> => {
+  const want = email.trim().toLowerCase();
+  return (await listTeamAccounts()).find(a => a.email === want) ?? null;
+};
+
+/** The admin roster, read live from the same table `is_admin()` uses, so the
+ *  preview allow-list can never drift from who is actually an admin. */
+const adminEmails = async (): Promise<Set<string>> => {
+  const rows = await rest("app_admins?select=email") as { email?: string }[];
+  const set = new Set(rows.map(r => (r.email ?? "").toLowerCase()).filter(Boolean));
+  set.add(REVIEW_TO.toLowerCase()); // the fixed report recipient always qualifies
+  return set;
+};
+
+// Word-plus-symbol shape rather than raw base64: this password gets read off a
+// screen and typed once. Must satisfy the Auth policy (12+ chars, upper, lower,
+// digit, symbol) and survive the leaked-password check, which random word
+// triples comfortably do.
+const PW_WORDS = [
+  "harbor", "granite", "meadow", "compass", "lantern", "prairie", "summit", "anchor",
+  "copper", "juniper", "canyon", "beacon", "timber", "orchard", "quarry", "ridge",
+];
+const mintPassword = (): string => {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  const word = (i: number) => {
+    const w = PW_WORDS[bytes[i] % PW_WORDS.length];
+    return w[0].toUpperCase() + w.slice(1);
+  };
+  const digits = String(1000 + ((bytes[3] << 8 | bytes[4]) % 9000));
+  const symbol = "!@#$%&?"[bytes[5] % 7];
+  return `${word(0)}-${word(1)}-${word(2)}${digits}${symbol}`;
+};
+
+/** Sets a password on an existing account via the auth admin API. */
+const setPassword = async (id: string, password: string): Promise<void> => {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) throw new Error("Supabase service credentials missing.");
+  const r = await fetch(`${url}/auth/v1/admin/users/${id}`, {
+    method: "PUT",
+    headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ password, email_confirm: true }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok) throw new Error(`admin set password ${r.status}: ${await r.text().catch(() => "")}`);
+};
 
 /** Adoption split across the cohort. */
 const signInStatus = async () => {
@@ -412,7 +473,12 @@ const renderReport = (m: any, narrative: string, actionsTaken: string[]): string
 
 // ---- LO announcement ---------------------------------------------------------
 
-const announceHtml = (firstName: string, email: string, password: string): string => `
+// `shared` distinguishes the launch cohort (everyone got one team-wide temporary
+// password, so the copy has to say so and push them to change it) from a
+// single new hire, who gets a password minted for them alone. Same template
+// either way — one body of copy that can drift from itself is worse than a
+// conditional.
+const announceHtml = (firstName: string, email: string, password: string, shared = true): string => `
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
   <div style="background:${NAVY};color:#fff;padding:18px 22px;border-radius:8px 8px 0 0">
     <div style="font-size:19px;font-weight:700">Hometown Lending — Recruiting Tool</div>
@@ -440,8 +506,13 @@ const announceHtml = (firstName: string, email: string, password: string): strin
     </table>
     <p style="margin:0 0 12px">
       <b>First thing after you sign in:</b> use <i>Change password</i> in the
-      sidebar to set your own — this temporary one is shared across the team and
-      will be retired soon.
+      sidebar to set your own${shared
+        ? " — this temporary one is shared across the team and will be retired soon."
+        : " — this one was generated just for you and is only meant to get you in the door."}
+    </p>
+    <p style="margin:0 0 12px;font-size:13px;color:#4a4a4a">
+      Locked out later? <b>Forgot your password?</b> on the sign-in page emails you
+      a reset link — you never have to wait on anyone for it.
     </p>
     <p style="margin:0 0 12px">
       Then open <b>Recruit Links</b> to grab your personal link or send a pro
@@ -585,6 +656,75 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // ADMIN_TASK_KEY secret. Recipients come from the auth admin API, never
     // from the request.
     if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
+
+    const invite = typeof body.invite === "string" ? body.invite : null;
+    const previewTo = typeof body.previewTo === "string" ? body.previewTo : null;
+    // Three distinct blast radii share this action. Refuse rather than guess
+    // which one a caller with both fields set meant — the wrong guess either
+    // mails 39 people or resets a real password.
+    if (invite && previewTo) return json(400, { error: "Set at most one of 'invite' or 'previewTo'." });
+
+    // ---- Preview: the genuine template to an admin, nothing else touched ----
+    if (previewTo) {
+      let allowed: Set<string>;
+      try {
+        allowed = await adminEmails();
+      } catch (e) {
+        return json(502, { error: `Admin roster unavailable: ${e}` });
+      }
+      const to = previewTo.trim().toLowerCase();
+      // Admin-only, so this can never become a way to mail the announcement —
+      // and the temporary password inside it — to an arbitrary address.
+      if (!allowed.has(to)) return json(403, { error: "Preview recipient must be an admin." });
+      const shared = Deno.env.get("SHARED_TEMP_PASSWORD");
+      if (!shared) return json(500, { error: "SHARED_TEMP_PASSWORD not configured." });
+      try {
+        await sendEmailTo(to, "[Preview] Your HTL Recruiting Tool sign-in is ready", announceHtml("James", to, shared));
+      } catch (e) {
+        console.error("announce preview failed", e);
+        return json(502, { error: "Preview failed to send." });
+      }
+      return json(200, { ok: true, preview: to });
+    }
+
+    // ---- Invite: one new hire, with a password minted for them alone --------
+    if (invite) {
+      let account: TeamAccount | null;
+      try {
+        account = await findAccount(invite);
+      } catch (e) {
+        return json(502, { error: `Account lookup failed: ${e}` });
+      }
+      // The account has to exist first: this action invites, it does not
+      // provision. Creating logins is a deliberate, separate act.
+      if (!account || !account.id) return json(404, { error: "No account for that address — create it first." });
+
+      const fresh = mintPassword();
+      try {
+        await setPassword(account.id, fresh);
+      } catch (e) {
+        console.error("invite password set failed", e);
+        return json(502, { error: "Could not set a temporary password." });
+      }
+      try {
+        // account.email, never `invite` — the address is Supabase's record of
+        // the account, so a typo'd or spoofed input cannot redirect the mail.
+        await sendEmailTo(account.email, "Your HTL Recruiting Tool sign-in is ready",
+          announceHtml(account.name.split(" ")[0], account.email, fresh, false));
+      } catch (e) {
+        console.error("invite send failed", account.email, e);
+        // The password was already changed, so say so plainly: the account is
+        // now holding a credential nobody received.
+        return json(502, { error: "Password was reset but the email failed to send — resend or reset again." });
+      }
+      await sendAdminEmail(
+        `[ProFarmA] Invite sent — ${account.email}`,
+        `<p>${escHtml(account.email)} was emailed sign-in details with a freshly generated temporary password.</p>`,
+      ).catch(() => {});
+      return json(200, { ok: true, invited: account.email });
+    }
+
+    // ---- Default: the launch cohort, shared temporary password --------------
     const password = Deno.env.get("SHARED_TEMP_PASSWORD");
     if (!password) return json(500, { error: "SHARED_TEMP_PASSWORD not configured." });
 
