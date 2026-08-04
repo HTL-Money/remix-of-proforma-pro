@@ -31,7 +31,9 @@ const graphConfig = (): GraphConfig | null => {
   const tenantId = Deno.env.get("GRAPH_TENANT_ID");
   const clientId = Deno.env.get("GRAPH_CLIENT_ID");
   const clientSecret = Deno.env.get("GRAPH_CLIENT_SECRET");
-  const sender = Deno.env.get("RECAP_SENDER");
+  // ANNOUNCE_SENDER (jamesm@) first: account emails should come from the person
+  // who runs the rollout, not whichever mailbox the recap pipeline uses.
+  const sender = Deno.env.get("ANNOUNCE_SENDER") || Deno.env.get("RECAP_SENDER");
   return tenantId && clientId && clientSecret && sender ? { tenantId, clientId, clientSecret, sender } : null;
 };
 

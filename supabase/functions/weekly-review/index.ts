@@ -48,7 +48,11 @@ const graphConfig = (): GraphConfig | null => {
   const tenantId = Deno.env.get("GRAPH_TENANT_ID");
   const clientId = Deno.env.get("GRAPH_CLIENT_ID");
   const clientSecret = Deno.env.get("GRAPH_CLIENT_SECRET");
-  const sender = Deno.env.get("RECAP_SENDER");
+  // Everything this function sends is signed "James Mowery, Director of
+  // Sales", so it must also COME from his mailbox — the announcement went out
+  // from aryanj@ (RECAP_SENDER) in rehearsal and the owner caught it. The
+  // Graph app has tenant-wide Mail.Send, so the sender is just config.
+  const sender = Deno.env.get("ANNOUNCE_SENDER") || Deno.env.get("RECAP_SENDER");
   return tenantId && clientId && clientSecret && sender ? { tenantId, clientId, clientSecret, sender } : null;
 };
 
