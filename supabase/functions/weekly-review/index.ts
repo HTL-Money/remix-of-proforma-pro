@@ -164,6 +164,11 @@ const SIGNIN_LAUNCH = "2026-08-04";
 //                               accounts still exist; they are simply not
 //                               announced to and not counted in adoption.
 //   jamesm@ / aryanj@         — predate launch day (excluded by date anyway)
+//   carloss@ / mojia@         — admins; they get the admin invite (personal
+//                               password), not the LO announcement. Owner's
+//                               call — otherwise they'd receive both, and the
+//                               invite would invalidate the shared password
+//                               minutes after the announcement handed it over.
 const COHORT_EXCLUDE = new Set([
   "admin@hometownlend.com",
   "fey@hometownlend.com",
@@ -173,6 +178,8 @@ const COHORT_EXCLUDE = new Set([
   "valeriab@hometownlend.com",
   "jamesm@hometownlend.com",
   "aryanj@hometownlend.com",
+  "carloss@hometownlend.com",
+  "mojia@hometownlend.com",
   // Rehearsal account, created on launch day and therefore inside the cohort
   // window by date. Without this line it would be counted in adoption and
   // mailed the real announcement.
