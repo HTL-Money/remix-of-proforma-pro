@@ -89,9 +89,24 @@ export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
   const cur = safe(r.current.annual);
   const htl = safe(r.htl.annual);
   const vol = safe(r.volume);
-  // Effective BPS on the HTL side: net ÷ volume, so the two BPS boxes compare
-  // like-for-like against the BPS the recruit entered at the gate.
-  const effBps = vol > 0 ? Math.round((htl / vol) * 10_000) : null;
+  // GROSS split BPS on the HTL side — the comp rate, on the same basis as the
+  // number the recruit typed at the gate. Their entered BPS is what they are paid
+  // before their own platform's fees, so netting fees out of only our side made
+  // the comparison unfair by the fee drag (~15 BPS) AND landed on a figure that
+  // reads as the wrong split band: at 2.75% the net of a 90% split is ~233, while
+  // 85% of 2.75% is ~234. That collision cost an afternoon of "the math is wrong".
+  // The dollar boxes still carry the net, so the fees remain visible.
+  //
+  // Derived from the buckets rather than a hardcoded 2.75, so it stays true for a
+  // mixed broker/correspondent mix and for whatever rate is charged on
+  // correspondent — 3.25% x 90% for a $48M+ LO.
+  // toFixed before rounding because these land on exact halves that binary floats
+  // miss: 2.75% x 90% is 247.5 BPS, which evaluates to 247.4999… and would round
+  // DOWN to 247 — a number no one can reconcile against "90% of 2.75%".
+  const grossRevenue = (r.buckets ?? []).reduce((sum, b) => sum + b.volume * (b.compPct / 100), 0);
+  const grossSplitBps = vol > 0
+    ? Math.round(Number(((grossRevenue * (r.loSplit / 100) / vol) * 10_000).toFixed(6)))
+    : null;
   const volume = fmtUSD(vol, { compact: true });
   const gain = htl - cur;
   // Signed, because a recruit already paid above the HTL grid must not be shown
@@ -104,7 +119,7 @@ export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
     volume,
     htlVolume: volume,
     currentBps: `${safe(r.currentBps)} BPS`,
-    htlBps: effBps == null ? "—" : `${effBps} BPS`,
+    htlBps: grossSplitBps == null ? "—" : `${grossSplitBps} BPS`,
     gain: signed(gain),
     // Take the monthly figure the payload already carries rather than
     // re-deriving it — that is the number the email body prints beside this

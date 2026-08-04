@@ -16,9 +16,16 @@ import {
 // allocateFiles is not exported; exercise it indirectly through calculate()/calculateBrokerOnly()
 // via bucket fileCount, which is populated straight from allocateFiles() each call.
 
+// Correspondent ("core") is now ACTIVE by default, so the broker-only scenario —
+// which most goldens below are written against — has to be asked for explicitly.
+// Stating it beats inheriting it: these cases are testing the broker-only path on
+// purpose, and they should not silently change meaning the next time a default moves.
+const brokerOnlyBuckets = () =>
+  defaultBuckets().map(b => (b.channel === "Correspondent" ? { ...b, active: false } : b));
+
 const baseState = (overrides: Partial<ModelState> = {}): ModelState => ({
   ...defaultState(),
-  buckets: defaultBuckets(),
+  buckets: brokerOnlyBuckets(),
   ...overrides,
 });
 
@@ -951,6 +958,60 @@ describe("HTL LO split tiers", () => {
   it("puts a volume sitting exactly on a boundary in the UPPER band (owner's stated rule)", () => {
     expect(tierForAnnualVolume(24_000_000).loPct).toBe(85);
     expect(tierForAnnualVolume(48_000_000).loPct).toBe(90);
+  });
+});
+
+describe("correspondent core is the DEFAULT path, at 3.25%", () => {
+  // An untouched pro forma must already quote core, so the number an LO reads on
+  // screen is the number the recruit receives. This used to require toggling the
+  // channel, which meant a fresh form under-quoted every recruit by the broker/core
+  // spread. Deliberately builds from defaultState() alone — no bucket override —
+  // because the default itself is what is under test.
+  const untouched = (overrides: Partial<ModelState> = {}) =>
+    calculate({ ...defaultState(), annualVolume: 30_000_000, annualFiles: 100, ...overrides });
+
+  it("ships both correspondent buckets active at 3.25%", () => {
+    const corr = defaultBuckets().filter(b => b.channel === "Correspondent");
+    expect(corr).toHaveLength(2);
+    corr.forEach(b => {
+      expect(b.active).toBe(true);
+      expect(b.compPct).toBe(3.25);
+      expect(b.perFileFee).toBe(CORR_FEE);
+    });
+  });
+
+  it("routes VA+Conv to core QM and Non-QM to core Non-QM, leaving FHA on Broker at the 2.75% cap", () => {
+    const calc = untouched(); // default mix 20/15/55/10
+    expect(fileCountOf(calc, "broker_qm")).toBe(20);   // FHA only
+    expect(fileCountOf(calc, "corr_qm")).toBe(70);     // VA 15 + Conv 55
+    expect(fileCountOf(calc, "corr_nonqm")).toBe(10);
+    expect(fileCountOf(calc, "broker_nonqm")).toBe(0);
+    const rate = (k: string) => calc.buckets.find(b => b.bucket.key === k)?.bucket.compPct;
+    expect(rate("broker_qm")).toBe(2.75);
+    expect(rate("corr_qm")).toBe(3.25);
+    expect(rate("corr_nonqm")).toBe(3.25);
+  });
+
+  it("pays the volume-derived band on whatever rate is charged — 3.25% x 85% here", () => {
+    const calc = untouched();
+    // 6M FHA @2.75% + 21M VA/Conv @3.25% + 3M Non-QM @3.25% = $945,000 gross.
+    expect(calc.totals.grossRevenue).toBeCloseTo(945_000, 2);
+    expect(calc.loSplitPct).toBe(85);
+    expect(calc.totals.loGrossSplit).toBeCloseTo(945_000 * 0.85, 2);
+    // Fees follow the channel: 20 broker files at $650, 80 core files at $250.
+    expect(calc.totals.channelFees).toBeCloseTo(20 * QM_FEE + 80 * CORR_FEE, 2);
+    expect(calc.finalLoNetComp).toBeCloseTo(945_000 * 0.85 - (20 * QM_FEE + 80 * CORR_FEE), 2);
+  });
+
+  it("beats the broker-only scenario, which stays available for the comparison card", () => {
+    const s = { ...defaultState(), annualVolume: 30_000_000, annualFiles: 100 };
+    expect(calculate(s).finalLoNetComp).toBeGreaterThan(calculateBrokerOnly(s).finalLoNetComp);
+  });
+
+  it("still honours the $48M band on core: 3.25% x 90%", () => {
+    const calc = untouched({ annualVolume: 60_000_000 });
+    expect(calc.loSplitPct).toBe(90);
+    expect(calc.totals.loGrossSplit).toBeCloseTo(calc.totals.grossRevenue * 0.9, 2);
   });
 });
 

@@ -16,7 +16,7 @@ import { bpsToSplit } from "@/lib/bps";
 import { calculate, defaultState, fmtUSD } from "@/lib/proforma";
 import { recordDirectSend } from "@/lib/proformaStore";
 import { isValidEmail } from "@/lib/recapEmail";
-import { buildReferralUrl } from "@/lib/referral";
+import { CANONICAL_ORIGIN, buildReferralUrl } from "@/lib/referral";
 import { applyRetrResult } from "@/lib/retrApply";
 import { isCloudConfigured, lookupRetrReport, normalizeNmls } from "@/lib/retrReportStore";
 import { sendFullRecap } from "@/lib/sendFullRecap";
@@ -74,7 +74,10 @@ const RecruitLinks = () => {
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  const purl = (token: string) => buildReferralUrl(window.location.origin, token);
+  // CANONICAL_ORIGIN, not window.location.origin: the app also answers on the
+  // Vercel deployment URL, and a PURL built from wherever the LO happens to be
+  // signed in would hand the recruit a *.vercel.app link.
+  const purl = (token: string) => buildReferralUrl(CANONICAL_ORIGIN, token);
 
   const load = async () => {
     try {

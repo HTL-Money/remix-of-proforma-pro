@@ -3,6 +3,7 @@ import { buildRecapPayload } from "@/lib/recapEmail";
 import { calculate, defaultState, fmtUSD } from "@/lib/proforma";
 import { prepareCeilingData, renderCeilingVisualPng } from "@/lib/ceilingVisual";
 import type { ModelState } from "@/lib/proforma";
+import type { RecapPayload } from "../../supabase/functions/send-recap/template";
 
 const goldenState = (): ModelState => ({
   ...defaultState(),
@@ -44,11 +45,45 @@ describe("prepareCeilingData", () => {
     expect(d.monthlyGain.startsWith("−")).toBe(true);
   });
 
-  it("computes the HTL side as EFFECTIVE BPS — net ÷ volume, like-for-like with the entered BPS", () => {
+  it("computes the HTL side as GROSS split BPS — the comp rate, same basis as the entered BPS", () => {
     const p = payload();
     const d = prepareCeilingData(p)!;
-    const expected = Math.round((p.htl.annual / p.volume) * 10_000);
-    expect(d.htlBps).toBe(`${expected} BPS`);
+    const gross = p.buckets.reduce((s, b) => s + b.volume * (b.compPct / 100), 0);
+    expect(d.htlBps).toBe(`${Math.round((gross * (p.loSplit / 100) / p.volume) * 10_000)} BPS`);
+  });
+
+  it("does not net our fees out of one side only — that misread as the wrong split band", () => {
+    // Aryan's real numbers: $61,696,374 over 142 broker files at 2.75%, 90% band.
+    // Gross split is 247.5 BPS. Netting the $650/file fees gave 232.5, which sits
+    // almost exactly on 85% of 2.75% (233.8) — so the graphic looked like it had
+    // applied the wrong tier when the tier was right all along.
+    const p: RecapPayload = {
+      ...payload(),
+      volume: 61_696_374,
+      files: 142,
+      loSplit: 90,
+      currentBps: 175,
+      current: { annual: 61_696_374 * 0.0175, monthly: (61_696_374 * 0.0175) / 12 },
+      buckets: [{ label: "Broker QM", files: 142, volume: 61_696_374, compPct: 2.75, loNet: 0 }],
+    };
+    const d = prepareCeilingData(p)!;
+    expect(d.htlBps).toBe("248 BPS");
+    expect(d.htlBps).not.toBe("233 BPS");
+  });
+
+  it("weights the gross across a mixed broker/correspondent mix at whatever rate each charges", () => {
+    // 6M of FHA on Broker at 2.75% + 24M routed to correspondent core at 3.25%,
+    // on the 90% band: (165,000 + 780,000) x 0.90 / 30M = 283.5 BPS.
+    const p: RecapPayload = {
+      ...payload(),
+      volume: 30_000_000,
+      loSplit: 90,
+      buckets: [
+        { label: "Broker QM", files: 20, volume: 6_000_000, compPct: 2.75, loNet: 0 },
+        { label: "Correspondent QM", files: 80, volume: 24_000_000, compPct: 3.25, loNet: 0 },
+      ],
+    };
+    expect(prepareCeilingData(p)!.htlBps).toBe("284 BPS");
   });
 
   it("mirrors the chart's eligibility: no BPS entered → null → email falls back to text cells", () => {

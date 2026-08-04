@@ -103,11 +103,17 @@ export const QM_FEE = 650;       // Broker QM processing
 export const NONQM_FEE = 950;    // Broker Non-QM processing
 export const CORR_FEE = 250;     // Correspondent funding fee (QM or Non-QM)
 
+// Correspondent ("core") starts ACTIVE at 3.25%. It is the default path an LO
+// quotes, so a pro forma that has never been touched must already reflect it —
+// otherwise the LO reads a broker-only number off the screen while the recruit's
+// email shows a different, higher one. FHA still stays Broker at the 2.75% cap
+// (see allocateFiles), and calculateBrokerOnly() keeps the broker-only scenario
+// available for the side-by-side comparison card.
 export const defaultBuckets = (): Bucket[] => [
-  { key: "broker_qm",    label: "Broker QM",            channel: "Broker",        loanType: "QM",     active: true,  fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: QM_FEE },
-  { key: "broker_nonqm", label: "Broker Non-QM",        channel: "Broker",        loanType: "Non-QM", active: true,  fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: NONQM_FEE },
-  { key: "corr_qm",      label: "Correspondent QM",     channel: "Correspondent", loanType: "QM",     active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: CORR_FEE },
-  { key: "corr_nonqm",   label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: false, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: CORR_FEE },
+  { key: "broker_qm",    label: "Broker QM",            channel: "Broker",        loanType: "QM",     active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: QM_FEE },
+  { key: "broker_nonqm", label: "Broker Non-QM",        channel: "Broker",        loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 2.75, perFileFee: NONQM_FEE },
+  { key: "corr_qm",      label: "Correspondent QM",     channel: "Correspondent", loanType: "QM",     active: true, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: CORR_FEE },
+  { key: "corr_nonqm",   label: "Correspondent Non-QM", channel: "Correspondent", loanType: "Non-QM", active: true, fileCount: 0, volumePct: 0, compPct: 3.25, perFileFee: CORR_FEE },
 ];
 
 export const defaultEmployees = (): Employee[] => [];

@@ -60,7 +60,12 @@ describe("renderRecapHtml", () => {
   });
 
   it("shows the full content: production, buckets, economics, gain", () => {
-    for (const s of ["Production", "Production Buckets", "LO Economics", "Your Gain at Hometown Lending", "$633,250", "NMLS 123456"]) {
+    // $770,250 is the golden net for this scenario now that correspondent core
+    // is active by default: $945,000 gross (6M FHA @2.75% broker + 21M VA/Conv
+    // and 3M Non-QM @3.25% core) x the 85% band, less $33,000 of per-file fees
+    // (20 broker @$650 + 80 core @$250). It was $633,250 when every file was
+    // quoted broker-only.
+    for (const s of ["Production", "Production Buckets", "LO Economics", "Your Gain at Hometown Lending", "$770,250", "NMLS 123456"]) {
       expect(html).toContain(s);
     }
   });
