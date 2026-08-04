@@ -1,18 +1,24 @@
 // Supabase Edge Function: the Monday weekly review.
 //
 // Two-phase design so an AI session can write the narrative between phases:
-//   { action: "collect" }                          → computed metrics JSON
+//   { action: "collect", key? }                    → computed metrics JSON;
+//     without the key, recruit emails and NMLS numbers are redacted out
 //   { action: "send", narrative?, actionsTaken?, cadence? }  → emails the
 //     report to the admin; cadence "daily" (the 21-day launch monitoring
 //     window) skips the snapshot write so trend rows stay Monday-only
-//   { action: "notify", subject, html }            → one-off admin notice
-//     (e.g. the 72-hour sign-in report). Recipient is ALWAYS the fixed admin
-//     address — never caller-controlled — so the anon-reachable surface can
-//     at worst send the admin an unwanted email, never spam anyone else.
+//   { action: "signinReport", key }                → adoption report: who in
+//     the rollout cohort has signed in, and who never has
+//   { action: "announce", key }                    → the LO rollout email
+//     (sign-in details + shared temp password) to every cohort member
+//   { action: "notify", key, subject, html }       → one-off admin notice
 //
-// Recipient: WEEKLY_REVIEW_TO secret, default jamesm@hometownlend.com.
-// Email health numbers are included — this report is admin-only by audience;
-// if distribution ever widens, that section must be split out.
+// `verify_jwt` is on, but the anon key it accepts ships in the browser bundle,
+// so it is NOT an authorization signal: every action that sends mail with
+// caller-supplied content, or to anyone other than the admin, additionally
+// requires ADMIN_TASK_KEY (see adminKeyOk). Admin recipient: WEEKLY_REVIEW_TO
+// secret, default jamesm@hometownlend.com. Email health numbers make the
+// weekly report admin-only by audience; if distribution ever widens, that
+// section must be split out.
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -135,19 +141,20 @@ const upsertSnapshot = async (weekStart: string, metrics: unknown): Promise<void
 // The 42 LO accounts were provisioned 2026-08-04; sign-in tracking measures
 // adoption from that date. These service/legacy accounts are not part of it.
 const SIGNIN_LAUNCH = "2026-08-04";
-const SIGNIN_EXCLUDE = new Set([
+// The rollout cohort is defined once: accounts created on launch day, minus
+// these. Adoption is measured against exactly the people who got the
+// announcement, so "12 of 41 have signed in" always means the same 41 — no
+// service accounts, no admins who never needed the email, and nobody sitting
+// in the never-visited column who was never invited.
+//   admin@ / fey@        — legacy service logins
+//   accounting@          — admin-only account, deliberately not announced
+//   mikeh@               — pulled from the rollout by the owner
+//   jamesm@ / aryanj@    — predate launch day (excluded by date anyway)
+const COHORT_EXCLUDE = new Set([
   "admin@hometownlend.com",
   "fey@hometownlend.com",
-  // accounting@ is an admin-only account (no announcement, not an adoption
-  // target); mikeh@ was pulled from the rollout by the owner. Both keep their
-  // accounts but stay out of the "never visited" column.
   "accounting@hometownlend.com",
   "mikeh@hometownlend.com",
-]);
-// Everyone above, plus the two accounts that predate the rollout and already
-// know the tool — never announced to.
-const ANNOUNCE_EXCLUDE = new Set([
-  ...SIGNIN_EXCLUDE,
   "jamesm@hometownlend.com",
   "aryanj@hometownlend.com",
 ]);
@@ -181,9 +188,14 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
   return out;
 };
 
-/** Adoption split for everyone we track (roster minus service accounts). */
+/** The rollout cohort: accounts provisioned on launch day, minus the
+ *  exclusions. Both the announcement and the adoption report use this. */
+const cohort = async (): Promise<TeamAccount[]> =>
+  (await listTeamAccounts()).filter(a => !COHORT_EXCLUDE.has(a.email) && a.createdAt >= SIGNIN_LAUNCH);
+
+/** Adoption split across the cohort. */
 const signInStatus = async () => {
-  const accounts = (await listTeamAccounts()).filter(a => !SIGNIN_EXCLUDE.has(a.email));
+  const accounts = await cohort();
   const signedIn = accounts
     .filter(a => a.lastSignInAt && a.lastSignInAt >= SIGNIN_LAUNCH)
     .sort((a, b) => (b.lastSignInAt ?? "").localeCompare(a.lastSignInAt ?? ""));
@@ -421,6 +433,21 @@ const announceHtml = (firstName: string, email: string, password: string): strin
 
 // ---- Handler -----------------------------------------------------------------
 
+/** Strips recruit-identifying fields from a metrics bundle, leaving the counts
+ *  and the team-side names a narrative needs. Used for unkeyed `collect`. */
+// deno-lint-ignore no-explicit-any
+const redactPeople = (m: any) => ({
+  ...m,
+  funnel: {
+    ...m.funnel,
+    claimsExpiringSoon: (m.funnel.claimsExpiringSoon as unknown[]).length,
+  },
+  usageFlags: {
+    ...m.usageFlags,
+    staleLinks: (m.usageFlags.staleLinks as { owner: string }[]).map(r => ({ owner: r.owner })),
+  },
+});
+
 /** Gate for the actions that send mail with caller-influenced content or to
  *  anyone other than the admin. `verify_jwt` only proves the caller has the
  *  public anon key, which ships in the browser bundle — so it is not an
@@ -445,8 +472,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   if (body.action === "collect") {
+    // Unkeyed callers get the numbers but not the people. `verify_jwt` only
+    // proves possession of the public anon key (it ships in the browser
+    // bundle), so an unkeyed response must not carry recruit emails or NMLS
+    // numbers. The Monday/daily routines write their narrative from counts and
+    // team names, and `send` recomputes metrics server-side — so the emailed
+    // report still contains the full detail either way.
     const metrics = await collectMetrics();
-    return json(200, { ok: true, metrics });
+    return json(200, { ok: true, metrics: adminKeyOk(body.key) ? metrics : redactPeople(metrics) });
   }
 
   if (body.action === "send") {
@@ -530,7 +563,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     let accounts: TeamAccount[];
     try {
-      accounts = (await listTeamAccounts()).filter(a => !ANNOUNCE_EXCLUDE.has(a.email) && a.createdAt >= SIGNIN_LAUNCH);
+      accounts = await cohort();
     } catch (e) {
       return json(502, { error: `Account list unavailable: ${e}` });
     }
