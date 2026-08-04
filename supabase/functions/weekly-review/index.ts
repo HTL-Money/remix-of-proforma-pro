@@ -415,7 +415,7 @@ const announceHtml = (firstName: string, email: string, password: string): strin
       Then open <b>Recruit Links</b> to grab your personal link or send a pro
       forma directly. Questions — reply to this email or grab James.
     </p>
-    <p style="margin:16px 0 0;color:#4a4a4a">— James Mowery, VP of Sales</p>
+    <p style="margin:16px 0 0;color:#4a4a4a">— James Mowery, Director of Sales</p>
   </div>
 </div>`;
 
