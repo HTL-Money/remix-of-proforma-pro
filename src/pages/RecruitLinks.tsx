@@ -6,14 +6,20 @@
 // recap, send-recap resolves the token and fires the LO's 90-day HTL5
 // sourcing claim — same first-sender-wins rules as a direct send.
 import { useEffect, useState } from "react";
-import { Check, Copy, Link2, Loader2, Plus } from "lucide-react";
+import { Check, CheckCircle2, Copy, Link2, Loader2, Plus, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
+import { bpsToSplit } from "@/lib/bps";
+import { calculate, defaultState, fmtUSD } from "@/lib/proforma";
+import { recordDirectSend } from "@/lib/proformaStore";
 import { isValidEmail } from "@/lib/recapEmail";
 import { buildReferralUrl } from "@/lib/referral";
-import { isCloudConfigured } from "@/lib/retrReportStore";
+import { applyRetrResult } from "@/lib/retrApply";
+import { isCloudConfigured, lookupRetrReport, normalizeNmls } from "@/lib/retrReportStore";
+import { sendFullRecap } from "@/lib/sendFullRecap";
 import { requireSupabase } from "@/lib/supabaseClient";
 
 interface LinkRow {
@@ -36,13 +42,33 @@ const copyToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 
+/** What the LO sees after a successful direct send — a receipt, not a form. */
+interface SendReceipt {
+  to: string;
+  recruitName: string | null;
+  finalLoNet: number;
+  gainAnnual: number | null;
+}
+
 const RecruitLinks = () => {
   const configured = isCloudConfigured();
+  const { user } = useAuth();
+  const [mode, setMode] = useState<"share" | "send">("share");
   const [rows, setRows] = useState<LinkRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  // "Send It Now" form state
+  const [sendNmls, setSendNmls] = useState("");
+  const [sendEmail, setSendEmail] = useState("");
+  const [sendName, setSendName] = useState("");
+  const [sendBps, setSendBps] = useState("");
+  const [sending, setSending] = useState(false);
+  const [receipt, setReceipt] = useState<SendReceipt | null>(null);
+  // Non-blocking heads-up when the entered NMLS already carries someone
+  // else's unexpired HTL5 claim — teaches first-sender-wins where it matters.
+  const [claimWarning, setClaimWarning] = useState<string | null>(null);
   // Token of the just-created link — highlights its row and drives the
   // "created" success state on the form.
   const [justCreated, setJustCreated] = useState<string | null>(null);
@@ -133,14 +159,93 @@ const RecruitLinks = () => {
     }
   };
 
+  /** On NMLS blur: if someone else already holds an unexpired claim on this
+   *  recruit, say so — informational only, the send still works (the server's
+   *  first-sender-wins rule simply won't transfer credit). */
+  const checkExistingClaim = async () => {
+    setClaimWarning(null);
+    const nmls = normalizeNmls(sendNmls);
+    if (!nmls) return;
+    try {
+      const sb = requireSupabase();
+      const { data } = await sb.from("lo_sourcing").select("sourced_by, expires_at").eq("nmls", nmls).maybeSingle();
+      if (!data) return;
+      const expires = new Date(String(data.expires_at));
+      const mine = user?.id && String(data.sourced_by) === user.id;
+      if (mine || expires.getTime() <= Date.now()) return;
+      let holder = String(data.sourced_by).slice(0, 8);
+      const { data: dir } = await sb.from("lo_sourcing_directory").select("email").eq("id", data.sourced_by).maybeSingle();
+      if (dir?.email) holder = String(dir.email);
+      setClaimWarning(`Already claimed by ${holder} until ${expires.toLocaleDateString()} — sending still works, but it won't transfer credit to you.`);
+    } catch {
+      // best-effort — a lookup hiccup never blocks the form
+    }
+  };
+
+  const sendNow = async () => {
+    const nmls = normalizeNmls(sendNmls);
+    const to = sendEmail.trim();
+    if (!nmls) {
+      toast({ title: "Enter the recruit's NMLS number", description: "Digits only — e.g. 123456.", variant: "destructive" });
+      return;
+    }
+    if (!isValidEmail(to)) {
+      toast({ title: "Enter the recruit's email", description: "That doesn't look like a valid email address.", variant: "destructive" });
+      return;
+    }
+    setSending(true);
+    try {
+      // Live production pull — a direct send is only worth sending with real
+      // numbers. No data → point the LO at Share a Link so the recruit can
+      // enter production themselves.
+      const report = await lookupRetrReport(nmls, { sharedStore: true });
+      if (!report) {
+        toast({
+          title: "No production data found for that NMLS",
+          description: "Use \"Share a Link\" instead — the recruit can enter their production themselves.",
+          variant: "destructive",
+        });
+        return;
+      }
+      let state = applyRetrResult(defaultState(), report.parsed);
+      state = {
+        ...state,
+        recruitName: sendName.trim() || state.recruitName,
+        currentSplit: bpsToSplit(sendBps) ?? state.currentSplit,
+      };
+      const calc = calculate(state);
+      const displayName = state.recruitName || `NMLS ${nmls}`;
+      try {
+        await recordDirectSend(displayName, state, to);
+      } catch (e) {
+        console.warn("Direct-send record not stored:", e);
+      }
+      // The signed-in session authenticates this call — verifiedSenderId
+      // credits the HTL5 claim and BCCs this LO automatically, no token needed.
+      await sendFullRecap(displayName, state, calc, to);
+      setReceipt({
+        to,
+        recruitName: state.recruitName || null,
+        finalLoNet: calc.finalLoNetComp,
+        gainAnnual: calc.diffAnnual,
+      });
+      setSendNmls(""); setSendEmail(""); setSendName(""); setSendBps("");
+      setClaimWarning(null);
+      toast({ title: "Recap sent", description: `On its way to ${to} — you're BCC'd.` });
+    } catch (e) {
+      toast({ title: "Couldn't send the recap", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-5">
       <div>
         <h1 className="font-display font-bold text-2xl text-white">Recruit Links</h1>
         <p className="text-sm text-white/65 mt-0.5">
-          Create a personalized link for a recruit. When they run their numbers and email themselves
-          the recap through your link, the 90-day HTL5 sourcing claim is yours — first link or send
-          to reach them wins, same as always.
+          Share a personalized link, or send the full recap yourself right now. Either way, the
+          90-day HTL5 sourcing claim is yours — first link or send to reach them wins, same as always.
         </p>
       </div>
 
@@ -150,6 +255,118 @@ const RecruitLinks = () => {
         </div>
       ) : (
         <>
+          <div className="flex gap-2">
+            <Button
+              variant={mode === "share" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("share")}
+            >
+              <Link2 className="h-3.5 w-3.5 mr-1" /> Share a Link
+            </Button>
+            <Button
+              variant={mode === "send" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setMode("send")}
+            >
+              <Send className="h-3.5 w-3.5 mr-1" /> Send It Now
+            </Button>
+          </div>
+
+          {mode === "send" && (
+            <section className="glass-panel p-5">
+              {receipt ? (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-white/90">
+                    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" style={{ color: "hsl(var(--success))" }} />
+                    <span>
+                      Full recap sent to <span className="font-medium">{receipt.to}</span>
+                      {receipt.recruitName ? <> for <span className="font-medium">{receipt.recruitName}</span></> : null} — you're
+                      BCC'd, and the 90-day claim is recorded. See <span className="font-medium">Submissions</span> for the record.
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-6 text-sm">
+                    <div>
+                      <div className="text-white/50 text-xs uppercase tracking-wider">Final LO Net (modeled)</div>
+                      <div className="text-lg font-semibold" style={{ color: "hsl(var(--success))" }}>{fmtUSD(receipt.finalLoNet)}</div>
+                    </div>
+                    {receipt.gainAnnual != null && (
+                      <div>
+                        <div className="text-white/50 text-xs uppercase tracking-wider">Gain vs Current</div>
+                        <div className="text-lg font-semibold text-white/90">+{fmtUSD(receipt.gainAnnual)}</div>
+                      </div>
+                    )}
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setReceipt(null)}>
+                    <Send className="h-3.5 w-3.5 mr-1" /> Send another
+                  </Button>
+                </div>
+              ) : (
+                <form
+                  className="space-y-3"
+                  onSubmit={e => { e.preventDefault(); sendNow(); }}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-white/80">Recruit's NMLS</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={sendNmls}
+                        onChange={e => setSendNmls(e.target.value)}
+                        onBlur={checkExistingClaim}
+                        placeholder="e.g. 123456"
+                        disabled={sending}
+                        className="bg-white text-foreground"
+                      />
+                      {claimWarning && <p className="text-xs" style={{ color: "hsl(var(--warning))" }}>⚠️ {claimWarning}</p>}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-white/80">Recruit's email</Label>
+                      <Input
+                        type="email"
+                        inputMode="email"
+                        value={sendEmail}
+                        onChange={e => setSendEmail(e.target.value)}
+                        placeholder="recruit@example.com"
+                        disabled={sending}
+                        className="bg-white text-foreground"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-white/80">Recruit's name (optional)</Label>
+                      <Input
+                        value={sendName}
+                        onChange={e => setSendName(e.target.value)}
+                        placeholder="Jane Smith"
+                        disabled={sending}
+                        className="bg-white text-foreground"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-white/80">Their current comp in BPS (optional)</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={sendBps}
+                        onChange={e => setSendBps(e.target.value)}
+                        placeholder="e.g. 200 — powers the side-by-side"
+                        disabled={sending}
+                        className="bg-white text-foreground"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-white/50">
+                    Pulls their live production, builds the full recap (visual, Word report, deck),
+                    and emails it to them immediately. You're automatically BCC'd and credited.
+                  </p>
+                  <Button type="submit" disabled={sending} className="gold-accent text-accent-foreground hover:opacity-90">
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
+                    {sending ? "Sending…" : "Generate & Send"}
+                  </Button>
+                </form>
+              )}
+            </section>
+          )}
+
+          {mode === "share" && (
           <section className="glass-panel p-5">
             <form
               className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end"
@@ -193,7 +410,9 @@ const RecruitLinks = () => {
               </div>
             )}
           </section>
+          )}
 
+          {mode === "share" && (
           <section className="glass-panel p-0 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -236,6 +455,7 @@ const RecruitLinks = () => {
               </table>
             </div>
           </section>
+          )}
         </>
       )}
     </div>

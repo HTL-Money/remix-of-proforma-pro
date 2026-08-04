@@ -191,6 +191,9 @@ const Submissions = () => {
                       {r.source === "public" && (
                         <span className="ml-2 text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 bg-white/10 text-white/70">self-serve</span>
                       )}
+                      {r.source === "lo_direct_send" && (
+                        <span className="ml-2 text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 bg-success/20 text-white/80">direct send</span>
+                      )}
                     </td>
                     <td className="px-2 text-white/65 tabular-nums">{r.nmls ?? "—"}</td>
                     <td className="px-2 text-white/85">{r.recruitEmail ?? "—"}</td>
