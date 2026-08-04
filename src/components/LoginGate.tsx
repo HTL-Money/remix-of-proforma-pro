@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
+import { supabase } from "@/lib/supabaseClient";
+import { CANONICAL_ORIGIN } from "@/lib/referral";
 import { signInErrorMessage } from "@/lib/password";
 
 export const LoginGate = () => {
@@ -12,6 +14,7 @@ export const LoginGate = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const submit = async () => {
     if (!email.trim() || !password) {
@@ -25,6 +28,29 @@ export const LoginGate = () => {
       toast({ title: "Sign-in failed", description: signInErrorMessage(e), variant: "destructive" });
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Self-service reset so nobody waits on an administrator to get back in.
+  // The confirmation is deliberately identical whether or not the address has an
+  // account — otherwise this form doubles as a way to discover who works here.
+  // Any failure is reported the same way for the same reason; the real error goes
+  // to the console for us, not to the visitor.
+  const sendReset = async () => {
+    const addr = email.trim();
+    if (!addr) { toast({ title: "Enter your email address first" }); return; }
+    if (!supabase) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(addr, {
+        redirectTo: `${CANONICAL_ORIGIN}/reset`,
+      });
+      if (error) console.warn("Password reset request failed:", error.message);
+    } catch (e) {
+      console.warn("Password reset request threw:", e);
+    } finally {
+      setBusy(false);
+      setResetSent(true);
     }
   };
 
@@ -81,9 +107,21 @@ export const LoginGate = () => {
             {busy ? "Signing in…" : "Sign In"}
           </Button>
         </form>
-        <p className="text-xs text-primary-foreground/60">
-          Accounts are managed by your administrator in the Supabase dashboard.
-        </p>
+        {resetSent ? (
+          <p className="text-xs text-primary-foreground/75" role="status">
+            If that address has an account, a reset link is on its way. The link is
+            single-use and expires, so use it soon.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={sendReset}
+            disabled={busy}
+            className="text-xs text-primary-foreground/70 underline underline-offset-2 hover:text-primary-foreground disabled:opacity-50"
+          >
+            Forgot your password?
+          </button>
+        )}
       </div>
     </div>
   );
