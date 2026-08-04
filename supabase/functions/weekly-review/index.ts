@@ -516,10 +516,10 @@ const announceHtml = (firstName: string, email: string, password: string, shared
       <tr><td style="padding:2px 14px 10px;color:#4a4a4a">Temporary password</td><td style="padding:2px 14px 10px;font-weight:600">${escHtml(password)}</td></tr>
     </table>
     <p style="margin:0 0 12px">
-      <b>First thing after you sign in:</b> use <i>Change password</i> in the
-      sidebar to set your own${shared
-        ? " — this temporary one is shared across the team and will be retired soon."
-        : " — this one was generated just for you and is only meant to get you in the door."}
+      <b>The moment you sign in, you'll be asked to set your own password.</b>
+      That's one screen, then you're in${shared
+        ? " — the password below is shared across the whole team, so it stops being yours the second anyone else uses it."
+        : " — the password below was generated just for you and is only meant to get you in the door."}
     </p>
     <p style="margin:0 0 12px;font-size:13px;color:#4a4a4a">
       Locked out later? <b>Forgot your password?</b> on the sign-in page emails you
