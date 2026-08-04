@@ -8,10 +8,16 @@
 // already provisioned and proven, and SMTP AUTH would need a new basic-auth
 // credential that modern M365 tenants disable by default.
 //
-// Supabase POSTs { user, email_data } and signs the request. The recipient is
-// taken from Supabase's payload and never from anything caller-controlled, so
-// the worst a forged call can do is mail a real user a link that will not work
-// (the token in it must match what Auth issued).
+// Supabase POSTs { user, email_data } and SIGNS the request; this function
+// verifies that signature and rejects anything else with a 401.
+//
+// The earlier version did not, on the reasoning that a forged call could only
+// mail a real user a dud link. That reasoning was wrong: the recipient comes out
+// of the request body, so an unsigned endpoint let anyone on the internet send
+// hometownlend.com-branded mail, with our HTML and our logo, to any address they
+// liked. The token being useless does not matter when the payload is the attack.
+// Verified by forging a call with a bogus token: it returned 200 and Graph sent
+// the mail. Hence standard-webhooks verification below, failing closed.
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -22,6 +28,66 @@ const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").re
 
 const NAVY = "#13294B";
 const SITE = Deno.env.get("APP_ORIGIN") || "https://htlrecruit.broker";
+
+// ---- Webhook signature (standard-webhooks, as Supabase Auth sends it) --------
+//
+// Auth signs with the secret configured as `hook_send_email_secrets`, stored in
+// the form `v1,whsec_<base64>`; the signing key is the decoded bytes after
+// `whsec_`. The signed payload is `{id}.{timestamp}.{rawBody}` and the
+// `webhook-signature` header carries one or more space-separated `v1,<b64sig>`
+// entries (more than one during a secret rotation).
+
+/** Constant-time compare, so a wrong signature can't be narrowed byte by byte. */
+const sameSecret = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+};
+
+const signingKey = (): Uint8Array | null => {
+  const raw = Deno.env.get("SEND_EMAIL_HOOK_SECRET");
+  if (!raw) return null;
+  // Tolerate the secret being pasted with or without the `v1,whsec_` wrapper —
+  // the config value carries it, a bare base64 key does not.
+  const b64 = raw.replace(/^v1,/, "").replace(/^whsec_/, "");
+  try {
+    return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  } catch {
+    console.error("SEND_EMAIL_HOOK_SECRET is not valid base64");
+    return null;
+  }
+};
+
+/** True when `body` carries a signature Auth could have produced for it. */
+const signatureValid = async (req: Request, body: string): Promise<boolean> => {
+  const key = signingKey();
+  if (!key) return false; // fail closed — never skip the check
+  const id = req.headers.get("webhook-id");
+  const ts = req.headers.get("webhook-timestamp");
+  const header = req.headers.get("webhook-signature");
+  if (!id || !ts || !header) return false;
+
+  // Reject stale timestamps so a captured request can't be replayed later.
+  const skew = Math.abs(Date.now() / 1000 - Number(ts));
+  if (!Number.isFinite(skew) || skew > 300) {
+    console.error("webhook timestamp outside tolerance", ts);
+    return false;
+  }
+
+  const mac = await crypto.subtle.importKey(
+    "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", mac, new TextEncoder().encode(`${id}.${ts}.${body}`));
+  const expected = btoa(String.fromCharCode(...new Uint8Array(sig)));
+
+  // Any one of the offered signatures matching is enough; that is what makes a
+  // secret rotation possible without dropping mail mid-flight.
+  return header.split(" ").some(part => {
+    const [version, value] = part.split(",");
+    return version === "v1" && value != null && sameSecret(value, expected);
+  });
+};
 
 // ---- Graph send (same shape as weekly-review / send-recap) -------------------
 
@@ -140,12 +206,32 @@ const render = (action: string, link: string): { subject: string; html: string }
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
+  // Read the body ONCE, as text: the HMAC is computed over the exact bytes Auth
+  // signed, and a Request body cannot be consumed twice. Parsing comes after.
+  let raw: string;
+  try {
+    raw = await req.text();
+  } catch {
+    return json(400, { error: "Unreadable body." });
+  }
+
+  if (Deno.env.get("SEND_EMAIL_HOOK_SECRET") === undefined) {
+    // Refuse rather than send unverified. A missing secret is a deployment
+    // mistake, and treating it as "skip the check" is how this hole reopens.
+    console.error("SEND_EMAIL_HOOK_SECRET is not set — refusing to send");
+    return json(500, { error: "Hook secret not configured." });
+  }
+  if (!(await signatureValid(req, raw))) {
+    console.error("rejected unsigned or mis-signed hook call");
+    return json(401, { error: "Invalid signature." });
+  }
+
   let body: {
     user?: { email?: string };
     email_data?: { token_hash?: string; redirect_to?: string; email_action_type?: string };
   };
   try {
-    body = await req.json();
+    body = JSON.parse(raw);
   } catch {
     return json(400, { error: "Invalid JSON body." });
   }
