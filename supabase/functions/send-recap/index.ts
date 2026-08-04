@@ -821,6 +821,11 @@ Deno.serve(async (req: Request) => {
   let senderEmail: string | null = null;
   if (senderId && supabaseUrl && serviceKey) {
     senderEmail = await lookupUserEmail(supabaseUrl, serviceKey, senderId);
+  } else if (referralCreatorId && supabaseUrl && serviceKey) {
+    // Recruit self-served through an LO's PURL — no signed-in sender, but the
+    // referring LO still gets a copy of what was sent to their recruit (owner
+    // rule: both parties receive the email on every path).
+    senderEmail = await lookupUserEmail(supabaseUrl, serviceKey, referralCreatorId);
   }
   // Never BCC an address that's already the primary recipient (e.g. a test
   // send straight to marketing, or someone emailing their own recap) — that

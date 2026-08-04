@@ -6,14 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { ModelState, Calc } from "@/lib/proforma";
-import { buildRecapPayload, sendRecap, isValidEmail } from "@/lib/recapEmail";
+import { isValidEmail } from "@/lib/recapEmail";
 import { getReferralToken } from "@/lib/referral";
-import { renderRecapChartPng } from "@/lib/recapChart";
-import { renderCeilingVisualPng } from "@/lib/ceilingVisual";
-import { buildRecapDocxBase64 } from "@/lib/recapDocx";
+import { sendFullRecap } from "@/lib/sendFullRecap";
 import { submitPublicProforma } from "@/lib/proformaStore";
-import { hashRecap } from "@/lib/recapLink";
-import { enqueueRecapPresentation } from "@/lib/gammaPresentation";
 
 // Aryan's live Microsoft Bookings page. The per-recruit cinematic video will
 // live on the hosted recap page (Part K) — never embedded inline here.
@@ -53,7 +49,6 @@ export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCt
     setSending(true);
     const name = state.recruitName || "Untitled Pro Forma";
     try {
-      const payload = buildRecapPayload(name, state, calc);
       // PURL the visitor arrived through, if any — the CRM link between this
       // submission and the LO who gets the HTL5 sourcing claim for it.
       const referralToken = getReferralToken();
@@ -64,26 +59,9 @@ export const PublicRecapCta = ({ state, calc, prominent = false }: PublicRecapCt
       } catch (e) {
         console.warn("Public submission not stored:", e);
       }
-      // The "Your ceiling just moved" visual is the email body; the classic
-      // chart is the fallback when the artwork can't render. Both best-effort.
-      const chartPng = (await renderCeilingVisualPng(payload)) ?? renderRecapChartPng(payload);
-      // Word report: best-effort (returns null rather than throws) — a
-      // rendering hiccup never blocks the email. The presentation (Gamma) is
-      // the single deliverable in the email body now — no separate graphic.
-      const docx = await buildRecapDocxBase64(payload);
-      // Start the Gamma deck BEFORE sending: the recruit receives it as an
-      // attachment, so send-recap has to be able to wait for this exact
-      // generation. Awaited (not fire-and-forget) only so the row exists
-      // before the send begins; the generation itself still runs async and
-      // is polled server-side. A failure here is non-fatal — the email then
-      // goes out without the attachment rather than not at all.
-      const presentationHash = hashRecap(payload);
-      try {
-        await enqueueRecapPresentation(presentationHash, payload);
-      } catch (e) {
-        console.warn("Presentation could not be queued; sending without it:", e);
-      }
-      await sendRecap(to, payload, chartPng ?? undefined, { docx, presentationHash, referralToken });
+      // Full artifact pipeline (ceiling visual → Word report → Gamma deck →
+      // send) lives in sendFullRecap, shared with the team's direct-send flow.
+      await sendFullRecap(name, state, calc, to, { referralToken });
       toast({ title: "Recap sent", description: `The full recap is on its way to ${to}.` });
       setStep("sent");
     } catch (e) {

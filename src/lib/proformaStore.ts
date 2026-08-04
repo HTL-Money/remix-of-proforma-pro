@@ -101,6 +101,23 @@ export const submitPublicProforma = async (name: string, state: ModelState, recr
   if (error) throw new Error(error.message);
 };
 
+/** Team-side "Send It Now": a signed-in LO pushed a recap straight to a
+ *  recruit from /links. Recorded like a public submission (recruit contact +
+ *  economics columns) but tagged with its own source so /submissions can
+ *  distinguish how each row arrived. No snapshot — this isn't a working
+ *  document the LO iterates on; it's a send receipt. */
+export const recordDirectSend = async (name: string, state: ModelState, recruitEmail: string): Promise<void> => {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from(TABLE).insert({
+    name,
+    data: state,
+    source: "lo_direct_send",
+    recruit_email: recruitEmail.trim() || null,
+    ...economicsColumns(state),
+  });
+  if (error) throw new Error(error.message);
+};
+
 export const updateProforma = async (id: string, name: string, state: ModelState): Promise<void> => {
   const supabase = requireSupabase();
   const { error } = await supabase
