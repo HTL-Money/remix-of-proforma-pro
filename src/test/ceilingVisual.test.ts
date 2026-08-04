@@ -27,7 +27,21 @@ describe("prepareCeilingData", () => {
     expect(d!.currentIncome).toBe(fmtUSD(p.current.annual!));
     expect(d!.htlIncome).toBe(fmtUSD(p.htl.annual));
     expect(d!.currentBps).toBe("200 BPS");
-    expect(d!.gain).toBe(fmtUSD(p.htl.annual - p.current.annual!));
+    expect(d!.gain).toBe(`+${fmtUSD(p.htl.annual - p.current.annual!)}`);
+  });
+
+  it("restates the annual gain per month for the template's fourth box", () => {
+    const p = payload();
+    const d = prepareCeilingData(p)!;
+    expect(d.monthlyGain).toBe(`+${fmtUSD((p.htl.annual - p.current.annual!) / 12)}`);
+  });
+
+  it("signs a negative gain so an over-paid recruit is never shown a bare number that reads as a raise", () => {
+    // 900 BPS today is far above the HTL grid. send-recap suppresses these
+    // sends outright, but the visual must still be honest if one renders.
+    const d = prepareCeilingData(payload({ currentSplit: 9.0 }))!;
+    expect(d.gain.startsWith("−")).toBe(true);
+    expect(d.monthlyGain.startsWith("−")).toBe(true);
   });
 
   it("computes the HTL side as EFFECTIVE BPS — net ÷ volume, like-for-like with the entered BPS", () => {

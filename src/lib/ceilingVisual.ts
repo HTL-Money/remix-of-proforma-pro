@@ -1,9 +1,16 @@
 // "Your ceiling just moved." — the full-body comparison visual for the recap
-// email. The artwork at /email/ceiling-blank.png is the owner's TEMPLATE and
-// is never modified: headline, column headings, captions, the gold gain
-// bubble, the mountain, and the disclaimer are all baked into the file. This
-// module only drops the recruit's NUMBERS (RETR-fed) into the template's
-// empty value boxes on an in-memory canvas copy — nothing else is drawn.
+// email: the recruit's pay today on the left, what the same production earns
+// at Hometown Lending on the right. The artwork at /email/ceiling-template.jpg
+// is the owner's TEMPLATE and is never modified: headline, column headings,
+// captions, the gold gain bubble, the mountains, and the disclaimer are all
+// baked into the file. This module only drops the recruit's NUMBERS (RETR-fed)
+// into the template's empty value boxes on an in-memory canvas copy — nothing
+// else is drawn.
+//
+// JPEG, not PNG: the artwork is photographic (brushed-gold and low-poly
+// gradients), where PNG cost 2.7 MB against 440 KB for a visually identical
+// q92 JPEG. Only the template's encoding changed — the rendered email image
+// this module returns is still PNG.
 //
 // Same contract as recapChart.ts: pure function of the RecapPayload, client-
 // side canvas, returns base64 PNG (no "data:" prefix) or null, never throws,
@@ -13,7 +20,7 @@ import type { RecapPayload } from "../../supabase/functions/send-recap/template"
 import { FONT, fillTextFit } from "@/lib/recapChart";
 import { fmtUSD } from "@/lib/proforma";
 
-export const CEILING_SRC = "/email/ceiling-blank.png";
+export const CEILING_SRC = "/email/ceiling-template.jpg";
 export const CEILING_WIDTH = 600; // CSS px — matches the email's 600px container
 
 // The true gold amber of the template's right column, and the dark ink used
@@ -23,27 +30,35 @@ const INK_ON_GOLD = "#231a05";
 const WHITE = "#f2f2f2";
 
 // send-recap/index.ts caps chartPng at MAX_CHART_B64_CHARS = 2_000_000 b64
-// chars (~1.5 MB decoded). Keep a safety margin; if a render overshoots we
-// step the scale down rather than get 400'd at send time.
-const MAX_B64_CHARS = 1_900_000;
+// chars and rejects anything larger with a 400, so stay under that here and
+// step the scale down rather than fail at send time.
+//
+// This artwork is photographic, so its PNG is heavy: measured in Chromium at
+// 600 CSS px wide, the rungs come out at 4.11M (2x), 2.58M (1.5x), 1.92M
+// (1.25x) and 1.31M (1x) b64 chars. Only the bottom two fit, and the margin
+// below is set to admit 1.25x — a sharper image on high-DPI screens — while
+// staying clear of the function's hard limit. Overshooting is harmless: the
+// ladder just falls through to 1x.
+const MAX_B64_CHARS = 1_950_000;
 const SCALE_LADDER = [2, 1.5, 1.25, 1];
 
 // ── Value slots ──────────────────────────────────────────────────────────
 // One entry per number the template expects, as FRACTIONS of the artwork's
 // width/height so the same table works at any render scale. These are the
-// empty box interiors of the committed template; when the owner exports a
-// new template from Gamma, this table is the ONLY thing to recalibrate.
-// `fill` (optional) repaints the slot's interior first — needed only if a
-// template ships with placeholder text baked inside the boxes.
-interface Slot { x: number; y: number; w: number; h: number; color: string; fill?: string }
+// empty box interiors of the committed template; when the owner exports a new
+// template, this table is the ONLY thing to recalibrate. Measured off the
+// 2160x3840 master by detecting each box's text band, so a value lands on the
+// same baseline the placeholder occupied.
+interface Slot { x: number; y: number; w: number; h: number; color: string }
 const SLOTS: Record<keyof CeilingData, Slot> = {
-  gain:          { x: 0.550,  y: 0.2661, w: 0.400, h: 0.0367, color: INK_ON_GOLD },
-  currentIncome: { x: 0.0583, y: 0.5138, w: 0.400, h: 0.0569, color: WHITE },
-  htlIncome:     { x: 0.5417, y: 0.5138, w: 0.400, h: 0.0569, color: GOLD },
-  volume:        { x: 0.0583, y: 0.6330, w: 0.400, h: 0.0569, color: WHITE },
-  htlVolume:     { x: 0.5417, y: 0.6330, w: 0.400, h: 0.0569, color: GOLD },
-  currentBps:    { x: 0.0583, y: 0.7523, w: 0.400, h: 0.0569, color: WHITE },
-  htlBps:        { x: 0.5417, y: 0.7523, w: 0.400, h: 0.0569, color: GOLD },
+  gain:          { x: 0.57870, y: 0.16302, w: 0.35880, h: 0.02786, color: INK_ON_GOLD },
+  currentIncome: { x: 0.11898, y: 0.73438, w: 0.24352, h: 0.01615, color: WHITE },
+  volume:        { x: 0.11898, y: 0.78125, w: 0.24352, h: 0.01745, color: WHITE },
+  currentBps:    { x: 0.11898, y: 0.82812, w: 0.24352, h: 0.01667, color: WHITE },
+  htlIncome:     { x: 0.58426, y: 0.62448, w: 0.33611, h: 0.02318, color: GOLD },
+  htlVolume:     { x: 0.58426, y: 0.68854, w: 0.33611, h: 0.02370, color: GOLD },
+  htlBps:        { x: 0.58426, y: 0.75156, w: 0.33611, h: 0.02448, color: GOLD },
+  monthlyGain:   { x: 0.58426, y: 0.81406, w: 0.33611, h: 0.02318, color: GOLD },
 };
 
 export interface CeilingData {
@@ -54,6 +69,9 @@ export interface CeilingData {
   currentBps: string;
   htlBps: string;
   gain: string;
+  /** The annual gain restated per month — the template's fourth right-hand
+   *  box, which shipped bordered but empty. */
+  monthlyGain: string;
 }
 
 /** Pure data prep, unit-testable without canvas. Null = no comparison
@@ -68,6 +86,11 @@ export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
   // like-for-like against the BPS the recruit entered at the gate.
   const effBps = vol > 0 ? Math.round((htl / vol) * 10_000) : null;
   const volume = fmtUSD(vol, { compact: true });
+  const gain = htl - cur;
+  // Signed, because a recruit already paid above the HTL grid must not be shown
+  // a bare number that reads as a raise. (send-recap suppresses those sends
+  // outright; the visual still has to be honest if one ever renders.)
+  const signed = (v: number) => `${v >= 0 ? "+" : "−"}${fmtUSD(Math.abs(v))}`;
   return {
     currentIncome: fmtUSD(cur),
     htlIncome: fmtUSD(htl),
@@ -75,7 +98,8 @@ export const prepareCeilingData = (r: RecapPayload): CeilingData | null => {
     htlVolume: volume,
     currentBps: `${safe(r.currentBps)} BPS`,
     htlBps: effBps == null ? "—" : `${effBps} BPS`,
-    gain: fmtUSD(htl - cur),
+    gain: signed(gain),
+    monthlyGain: signed(gain / 12),
   };
 };
 
@@ -123,18 +147,18 @@ export const renderCeilingVisualPng = async (r: RecapPayload): Promise<string | 
       ctx.drawImage(art, 0, 0, W, H);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.font = `bold 26px ${FONT}`;
 
-      // Numbers only — everything else is baked into the template.
+      // Numbers only — everything else is baked into the template. Each slot
+      // is the text band the placeholder occupied, and the boxes are not all
+      // one size (the gold gain bubble is much larger than a left-column box),
+      // so the type size comes from the slot's own height rather than a single
+      // constant: digits and "$" span about 0.78 em, hence the 1.28 factor.
+      // fillTextFit still shrinks anything too wide for its box.
       for (const key of Object.keys(SLOTS) as Array<keyof CeilingData>) {
         const s = SLOTS[key];
         const x = s.x * W, y = s.y * H, w = s.w * W, h = s.h * H;
-        if (s.fill) {
-          ctx.fillStyle = s.fill;
-          ctx.fillRect(x, y, w, h);
-        }
         ctx.fillStyle = s.color;
-        fillTextFit(ctx, data[key], x + w / 2, y + h / 2, "bold", 26, w - 28);
+        fillTextFit(ctx, data[key], x + w / 2, y + h / 2, "bold", Math.round(h * 1.28), w - 16);
       }
 
       const url = canvas.toDataURL("image/png");
