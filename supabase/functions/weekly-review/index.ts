@@ -475,8 +475,8 @@ const renderReport = (m: any, narrative: string, actionsTaken: string[]): string
         Withheld (no gain): <b>${m.emailHealth.negativeGain}</b>
       </div>
       ${m.signIns ? `<h3 style="color:${NAVY};margin:16px 0 6px">Team sign-ins</h3>
-      <div style="font-size:14px"><b>${m.signIns.signedIn} of ${m.signIns.total}</b> team members have signed in since launch.</div>
-      ${m.signIns.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:4px">Not yet: ${(m.signIns.missing as string[]).map(escHtml).join(", ")}</div>` : ""}` : ""}
+      <div style="font-size:14px"><b>${m.signIns.signedIn} of ${m.signIns.total}</b> have set their own password.</div>
+      ${m.signIns.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:4px">Still on the temporary one: ${(m.signIns.missing as string[]).map(escHtml).join(", ")}</div>` : ""}` : ""}
       ${expiring ? `<h3 style="color:${NAVY};margin:16px 0 6px">Claims expiring within 14 days</h3><ul style="font-size:13px;margin:4px 0">${expiring}</ul>` : ""}
       ${stale ? `<h3 style="color:${NAVY};margin:16px 0 6px">Never-used links (21+ days)</h3><ul style="font-size:13px;margin:4px 0">${stale}</ul>` : ""}
       <div style="font-size:13px;color:#4a4a4a;margin-top:8px">Gamma decks generated this week: ${m.usageFlags.decksGeneratedThisWeek}</div>
@@ -687,25 +687,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a">
       <div style="background:${NAVY};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:18px;font-weight:700">Sign-In Report</div>
-        <div style="font-size:12px;color:#BEBFC3">Who has visited htlrecruit.broker since launch (${SIGNIN_LAUNCH})</div>
+        <div style="font-size:18px;font-weight:700">Pro Forma Adoption</div>
+        <div style="font-size:12px;color:#BEBFC3">Measured by who has set their own password — not by sign-ins</div>
       </div>
       <div style="border:1px solid #e3e3e3;border-top:0;border-radius:0 0 8px 8px;padding:20px">
-        <div style="font-size:16px;margin-bottom:14px"><b>${s.signedIn.length} of ${s.total}</b> team members have signed in.</div>
-        <h3 style="color:#2f7d5d;margin:0 0 6px">Signed in (${s.signedIn.length})</h3>
-        <table style="border-collapse:collapse;font-size:13px">${inRows}</table>
-        <h3 style="color:#a33;margin:16px 0 6px">Never visited (${s.missing.length})</h3>
-        <table style="border-collapse:collapse;font-size:13px">${outRows}</table>
-        ${s.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:14px">Suggestion: re-send the announcement to the never-visited list, or mention it at the next team meeting.</div>` : ""}
+        <div style="font-size:16px;margin-bottom:4px"><b>${s.activated.length} of ${s.total}</b> are fully set up (${pct}%).</div>
+        <div style="font-size:13px;color:#4a4a4a;margin-bottom:16px">
+          ${s.pending.length} still on the temporary password — ${s.openedButStalled.length} opened it and stopped at the
+          password screen, ${s.neverOpened.length} have not opened it at all. Each gets an automatic daily reminder
+          until they finish, and drops off this list the moment they do.
+        </div>
+        <h3 style="color:#a33;margin:0 0 6px">Still need to set a password (${s.pending.length})</h3>
+        <table style="border-collapse:collapse;font-size:13px;width:100%">${pendRows}</table>
+        <h3 style="color:#2f7d5d;margin:20px 0 6px">Done (${s.activated.length})</h3>
+        <table style="border-collapse:collapse;font-size:13px">${doneRows}</table>
       </div>
     </div>`;
     try {
-      await sendAdminEmail(`ProFarmA Sign-In Report — ${s.signedIn.length} of ${s.total} on board`, html);
+      await sendAdminEmail(`ProFarmA Adoption — ${s.activated.length} of ${s.total} set up, ${s.pending.length} outstanding`, html);
     } catch (e) {
       console.error("signinReport send failed", e);
       return json(502, { error: "Report email failed to send." });
     }
-    return json(200, { ok: true });
+    return json(200, { ok: true, activated: s.activated.length, pending: s.pending.length });
   }
 
   if (body.action === "announce") {
