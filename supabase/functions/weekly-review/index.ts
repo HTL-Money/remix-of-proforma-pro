@@ -6,8 +6,8 @@
 //   { action: "send", narrative?, actionsTaken?, cadence? }  → emails the
 //     report to the admin; cadence "daily" (the 21-day launch monitoring
 //     window) skips the snapshot write so trend rows stay Monday-only
-//   { action: "signinReport", key }                → adoption report: who in
-//     the rollout cohort has signed in, and who never has
+//   { action: "signinReport", key }                → adoption report: who has
+//     set their own password and who is still on the temporary one
 //   { action: "announce", key }                    → the LO rollout email
 //     (sign-in details + shared temp password) to every cohort member
 //   { action: "announce", key, invite }            → the same email to ONE
@@ -15,6 +15,9 @@
 //     new hire gets their login without re-mailing the cohort.
 //   { action: "announce", key, previewTo }         → the genuine template to an
 //     admin address only. Changes nothing; for reviewing copy before a send.
+//   { action: "remind", key, dryRun? }             → the daily nudge to everyone
+//     still holding a temporary password. Carries no password. Recipients are
+//     derived from adoption state, so it stops for each person automatically.
 //   { action: "notify", key, subject, html }       → one-off admin notice
 //
 // `verify_jwt` is on, but the anon key it accepts ships in the browser bundle,
@@ -24,6 +27,8 @@
 // secret, default jamesm@hometownlend.com. Email health numbers make the
 // weekly report admin-only by audience; if distribution ever widens, that
 // section must be split out.
+
+import { splitAdoption, type Adoption, type TeamAccount } from "./adoption.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -186,7 +191,8 @@ const COHORT_EXCLUDE = new Set([
   "lotest@hometownlend.com",
 ]);
 
-interface TeamAccount { id: string; email: string; name: string; createdAt: string; lastSignInAt: string | null }
+// TeamAccount, ANNOUNCED_AT and splitAdoption live in ./adoption.ts so they can
+// be unit-tested without a Deno runtime (same split as send-recap/sourcing.ts).
 
 const listTeamAccounts = async (): Promise<TeamAccount[]> => {
   const url = Deno.env.get("SUPABASE_URL");
@@ -199,7 +205,7 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) throw new Error(`admin users list ${r.status}`);
-    const data = await r.json() as { users?: { id?: string; email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string } }[] };
+    const data = await r.json() as { users?: { id?: string; email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string }; app_metadata?: { must_set_password?: unknown } }[] };
     const users = data.users ?? [];
     for (const u of users) {
       if (!u.email) continue;
@@ -209,6 +215,9 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
         name: u.user_metadata?.full_name ?? u.email.split("@")[0],
         createdAt: u.created_at ?? "",
         lastSignInAt: u.last_sign_in_at ?? null,
+        // Strict === true, matching the client gate in src/lib/auth.tsx: a
+        // stray "false" string or a 1 must not read as "still pending".
+        mustSetPassword: u.app_metadata?.must_set_password === true,
       });
     }
     if (users.length < 100) break;
@@ -268,6 +277,12 @@ const mintPassword = (): string => {
 };
 
 /** Sets a password on an existing account via the auth admin API. */
+/** Sets a password on an existing account via the auth admin API, and stamps
+ *  the flag the client gate reads. A minted password is still a password
+ *  someone else generated and sent over email, so the invite path has to force
+ *  a change exactly like the shared-password rollout did — otherwise every new
+ *  hire after launch day quietly arrives ungated while the original cohort is
+ *  gated, which is the kind of gap nobody notices until it matters. */
 const setPassword = async (id: string, password: string): Promise<void> => {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -275,23 +290,14 @@ const setPassword = async (id: string, password: string): Promise<void> => {
   const r = await fetch(`${url}/auth/v1/admin/users/${id}`, {
     method: "PUT",
     headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ password, email_confirm: true }),
+    body: JSON.stringify({ password, email_confirm: true, app_metadata: { must_set_password: true } }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!r.ok) throw new Error(`admin set password ${r.status}: ${await r.text().catch(() => "")}`);
 };
 
 /** Adoption split across the cohort. */
-const signInStatus = async () => {
-  const accounts = await cohort();
-  const signedIn = accounts
-    .filter(a => a.lastSignInAt && a.lastSignInAt >= SIGNIN_LAUNCH)
-    .sort((a, b) => (b.lastSignInAt ?? "").localeCompare(a.lastSignInAt ?? ""));
-  const missing = accounts
-    .filter(a => !a.lastSignInAt || a.lastSignInAt < SIGNIN_LAUNCH)
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return { total: accounts.length, signedIn, missing };
-};
+const adoptionStatus = async (): Promise<Adoption> => splitAdoption(await cohort());
 
 // ---- Metrics ----------------------------------------------------------------
 
@@ -406,8 +412,8 @@ const collectMetrics = async () => {
     history: (snapshots as { week_start: string; metrics: unknown }[]).map(s => ({ week: s.week_start })),
     // Adoption tracking (21-day launch window and beyond). Best-effort: an
     // auth-API hiccup must never sink the rest of the report.
-    signIns: await signInStatus()
-      .then(s => ({ signedIn: s.signedIn.length, total: s.total, missing: s.missing.map(a => a.name) }))
+    signIns: await adoptionStatus()
+      .then(s => ({ signedIn: s.activated.length, total: s.total, missing: s.pending.map(a => a.name) }))
       .catch(e => { console.error("signIns unavailable", e); return null; }),
   };
 };
@@ -469,8 +475,8 @@ const renderReport = (m: any, narrative: string, actionsTaken: string[]): string
         Withheld (no gain): <b>${m.emailHealth.negativeGain}</b>
       </div>
       ${m.signIns ? `<h3 style="color:${NAVY};margin:16px 0 6px">Team sign-ins</h3>
-      <div style="font-size:14px"><b>${m.signIns.signedIn} of ${m.signIns.total}</b> team members have signed in since launch.</div>
-      ${m.signIns.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:4px">Not yet: ${(m.signIns.missing as string[]).map(escHtml).join(", ")}</div>` : ""}` : ""}
+      <div style="font-size:14px"><b>${m.signIns.signedIn} of ${m.signIns.total}</b> have set their own password.</div>
+      ${m.signIns.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:4px">Still on the temporary one: ${(m.signIns.missing as string[]).map(escHtml).join(", ")}</div>` : ""}` : ""}
       ${expiring ? `<h3 style="color:${NAVY};margin:16px 0 6px">Claims expiring within 14 days</h3><ul style="font-size:13px;margin:4px 0">${expiring}</ul>` : ""}
       ${stale ? `<h3 style="color:${NAVY};margin:16px 0 6px">Never-used links (21+ days)</h3><ul style="font-size:13px;margin:4px 0">${stale}</ul>` : ""}
       <div style="font-size:13px;color:#4a4a4a;margin-top:8px">Gamma decks generated this week: ${m.usageFlags.decksGeneratedThisWeek}</div>
@@ -528,6 +534,40 @@ const announceHtml = (firstName: string, email: string, password: string, shared
     <p style="margin:0 0 12px">
       Then open <b>Recruit Links</b> to grab your personal link or send a pro
       forma directly. Questions — reply to this email or grab James.
+    </p>
+    <p style="margin:16px 0 0;color:#4a4a4a">— James Mowery, Director of Sales</p>
+  </div>
+</div>`;
+
+/** The daily nudge to someone still on the temporary password.
+ *
+ *  Deliberately carries NO password. They already hold one, and a credential
+ *  repeated in a daily email is a standing liability — if they've lost it,
+ *  "Forgot your password?" is the safe path and it's right there on the
+ *  sign-in page. Short on purpose: this arrives every morning until they act,
+ *  so it has to stay easy to ignore-then-do rather than feel like a scolding. */
+const remindHtml = (firstName: string): string => `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
+  <div style="background:${NAVY};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+    <div style="font-size:18px;font-weight:700">Two minutes to finish setting up</div>
+  </div>
+  <div style="border:1px solid #e3e3e3;border-top:0;border-radius:0 0 8px 8px;padding:20px">
+    <p style="margin:0 0 12px">Hi ${escHtml(firstName)},</p>
+    <p style="margin:0 0 12px">
+      Your Hometown Lending recruiting tool account is ready, but it still has the
+      temporary password we sent you. Sign in, pick your own password, and you're done.
+    </p>
+    <p style="margin:16px 0">
+      <a href="https://htlrecruit.broker/links" style="background:${NAVY};color:#fff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600;display:inline-block">Finish setting up</a>
+    </p>
+    <p style="margin:0 0 12px">
+      Once you're in, it builds a personalized pro forma for any loan officer you're
+      recruiting — their real numbers at HTL — and emails it to them with your name on it.
+      Anyone who comes through your link is attached to you for HTL5 rev share.
+    </p>
+    <p style="margin:0;font-size:12px;color:#7a7a7a">
+      Lost the temporary password? Use <b>Forgot your password?</b> on the sign-in page.
+      You'll stop getting this note as soon as you've set your own.
     </p>
     <p style="margin:16px 0 0;color:#4a4a4a">— James Mowery, Director of Sales</p>
   </div>
@@ -625,39 +665,51 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
     let s;
     try {
-      s = await signInStatus();
+      s = await adoptionStatus();
     } catch (e) {
       console.error("signinReport list failed", e);
-      await sendAdminEmail("[ProFarmA] Sign-in report failed", `<p>Could not read the account list: ${escHtml(String(e))}</p>`).catch(() => {});
+      await sendAdminEmail("[ProFarmA] Adoption report failed", `<p>Could not read the account list: ${escHtml(String(e))}</p>`).catch(() => {});
       return json(502, { error: "Account list unavailable." });
     }
     const fmt = (ts: string | null) => ts ? new Date(ts).toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "medium", timeStyle: "short" }) + " CT" : "—";
-    const inRows = s.signedIn.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 12px">${escHtml(a.email)}</td><td style="padding:4px 0;color:#2f7d5d">${escHtml(fmt(a.lastSignInAt))}</td></tr>`).join("")
+    // The chase list leads, numbered, because it is the part the owner acts on
+    // — built to be lifted straight out of the email rather than retyped.
+    const pendRows = s.pending.map((a, i) => `<tr>
+        <td style="padding:4px 8px 4px 0;color:#9a9a9a">${i + 1}</td>
+        <td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td>
+        <td style="padding:4px 12px 4px 0"><a href="mailto:${escHtml(a.email)}" style="color:${NAVY}">${escHtml(a.email)}</a></td>
+        <td style="padding:4px 0;color:${a.opened ? "#b06a00" : "#a33"}">${a.opened ? "opened it, stalled" : "never opened"}</td>
+      </tr>`).join("")
+      || `<tr><td colspan="4" style="padding:8px 0;color:#2f7d5d">Everyone has set their own password.</td></tr>`;
+    const doneRows = s.activated.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 12px">${escHtml(a.email)}</td><td style="padding:4px 0;color:#2f7d5d">${escHtml(fmt(a.lastSignInAt))}</td></tr>`).join("")
       || `<tr><td colspan="3" style="padding:8px 0;color:#7a7a7a">Nobody yet.</td></tr>`;
-    const outRows = s.missing.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 0">${escHtml(a.email)}</td></tr>`).join("")
-      || `<tr><td colspan="2" style="padding:8px 0;color:#2f7d5d">Everyone has signed in.</td></tr>`;
+    const pct = s.total ? Math.round((s.activated.length / s.total) * 100) : 0;
     const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a">
       <div style="background:${NAVY};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <div style="font-size:18px;font-weight:700">Sign-In Report</div>
-        <div style="font-size:12px;color:#BEBFC3">Who has visited htlrecruit.broker since launch (${SIGNIN_LAUNCH})</div>
+        <div style="font-size:18px;font-weight:700">Pro Forma Adoption</div>
+        <div style="font-size:12px;color:#BEBFC3">Measured by who has set their own password — not by sign-ins</div>
       </div>
       <div style="border:1px solid #e3e3e3;border-top:0;border-radius:0 0 8px 8px;padding:20px">
-        <div style="font-size:16px;margin-bottom:14px"><b>${s.signedIn.length} of ${s.total}</b> team members have signed in.</div>
-        <h3 style="color:#2f7d5d;margin:0 0 6px">Signed in (${s.signedIn.length})</h3>
-        <table style="border-collapse:collapse;font-size:13px">${inRows}</table>
-        <h3 style="color:#a33;margin:16px 0 6px">Never visited (${s.missing.length})</h3>
-        <table style="border-collapse:collapse;font-size:13px">${outRows}</table>
-        ${s.missing.length ? `<div style="font-size:13px;color:#4a4a4a;margin-top:14px">Suggestion: re-send the announcement to the never-visited list, or mention it at the next team meeting.</div>` : ""}
+        <div style="font-size:16px;margin-bottom:4px"><b>${s.activated.length} of ${s.total}</b> are fully set up (${pct}%).</div>
+        <div style="font-size:13px;color:#4a4a4a;margin-bottom:16px">
+          ${s.pending.length} still on the temporary password — ${s.openedButStalled.length} opened it and stopped at the
+          password screen, ${s.neverOpened.length} have not opened it at all. Each gets an automatic daily reminder
+          until they finish, and drops off this list the moment they do.
+        </div>
+        <h3 style="color:#a33;margin:0 0 6px">Still need to set a password (${s.pending.length})</h3>
+        <table style="border-collapse:collapse;font-size:13px;width:100%">${pendRows}</table>
+        <h3 style="color:#2f7d5d;margin:20px 0 6px">Done (${s.activated.length})</h3>
+        <table style="border-collapse:collapse;font-size:13px">${doneRows}</table>
       </div>
     </div>`;
     try {
-      await sendAdminEmail(`ProFarmA Sign-In Report — ${s.signedIn.length} of ${s.total} on board`, html);
+      await sendAdminEmail(`ProFarmA Adoption — ${s.activated.length} of ${s.total} set up, ${s.pending.length} outstanding`, html);
     } catch (e) {
       console.error("signinReport send failed", e);
       return json(502, { error: "Report email failed to send." });
     }
-    return json(200, { ok: true });
+    return json(200, { ok: true, activated: s.activated.length, pending: s.pending.length });
   }
 
   if (body.action === "announce") {
@@ -766,6 +818,47 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(200, { ok: true, sent: sent.length, failed: failed.length });
   }
 
+  if (body.action === "remind") {
+    // Same key as announce: this mails a slice of the team on a schedule, so
+    // it must never be reachable with the public anon key alone.
+    if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
+
+    let s;
+    try {
+      s = await adoptionStatus();
+    } catch (e) {
+      console.error("remind list failed", e);
+      return json(502, { error: `Account list unavailable: ${e}` });
+    }
+
+    // Recipients are derived, never supplied. Anyone who has set their own
+    // password is simply not in `pending`, so the reminder stops on its own —
+    // there is no separate opt-out list that could drift out of sync.
+    const targets = s.pending;
+    if (body.dryRun === true) {
+      return json(200, { ok: true, dryRun: true, wouldEmail: targets.length, recipients: targets.map(a => a.email) });
+    }
+
+    const sent: string[] = [], failed: string[] = [];
+    for (const a of targets) {
+      try {
+        await sendEmailTo(a.email, "Finish setting up your Pro Forma sign-in", remindHtml(a.name.split(" ")[0]));
+        sent.push(a.email);
+      } catch (e) {
+        console.error("remind send failed", a.email, e);
+        failed.push(a.email);
+      }
+    }
+    if (sent.length || failed.length) {
+      await sendAdminEmail(
+        `[ProFarmA] Daily reminder — ${sent.length} nudged${failed.length ? `, ${failed.length} FAILED` : ""}`,
+        `<p>Reminded ${sent.length} of ${s.total} who still hold the temporary password.</p>` +
+        `${failed.length ? `<p style="color:#a33">Failed: ${failed.map(escHtml).join(", ")}</p>` : ""}`,
+      ).catch(() => {});
+    }
+    return json(200, { ok: true, sent: sent.length, failed: failed.length });
+  }
+
   if (body.action === "notify") {
     // One-off admin notice. The recipient is fixed, but the BODY is entirely
     // caller-supplied — anyone holding the public anon key could otherwise
@@ -784,5 +877,5 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(200, { ok: true });
   }
 
-  return json(400, { error: "action must be 'collect', 'send', 'notify', 'signinReport', or 'announce'." });
+  return json(400, { error: "action must be 'collect', 'send', 'notify', 'signinReport', 'announce', or 'remind'." });
 });
