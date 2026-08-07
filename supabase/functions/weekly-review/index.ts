@@ -6,8 +6,8 @@
 //   { action: "send", narrative?, actionsTaken?, cadence? }  → emails the
 //     report to the admin; cadence "daily" (the 21-day launch monitoring
 //     window) skips the snapshot write so trend rows stay Monday-only
-//   { action: "signinReport", key }                → adoption report: who in
-//     the rollout cohort has signed in, and who never has
+//   { action: "signinReport", key }                → adoption report: who has
+//     set their own password and who is still on the temporary one
 //   { action: "announce", key }                    → the LO rollout email
 //     (sign-in details + shared temp password) to every cohort member
 //   { action: "announce", key, invite }            → the same email to ONE
@@ -15,6 +15,9 @@
 //     new hire gets their login without re-mailing the cohort.
 //   { action: "announce", key, previewTo }         → the genuine template to an
 //     admin address only. Changes nothing; for reviewing copy before a send.
+//   { action: "remind", key, dryRun? }             → the daily nudge to everyone
+//     still holding a temporary password. Carries no password. Recipients are
+//     derived from adoption state, so it stops for each person automatically.
 //   { action: "notify", key, subject, html }       → one-off admin notice
 //
 // `verify_jwt` is on, but the anon key it accepts ships in the browser bundle,
@@ -152,6 +155,13 @@ const upsertSnapshot = async (weekStart: string, metrics: unknown): Promise<void
 // The 42 LO accounts were provisioned 2026-08-04; sign-in tracking measures
 // adoption from that date. These service/legacy accounts are not part of it.
 const SIGNIN_LAUNCH = "2026-08-04";
+// The instant the announcement actually left, not the calendar day it left on.
+// That distinction is the whole point: provisioning ran a scripted sign-in
+// against every account at 13:06Z to prove the shared password worked, two
+// hours BEFORE this timestamp. Comparing against the date alone counted all 19
+// of those as adopted and reported full uptake to the owner, who correctly
+// refused to believe it. Anything at or after this is a real human arriving.
+const ANNOUNCED_AT = "2026-08-04T15:05:00Z";
 // The rollout cohort is defined once: accounts created on launch day, minus
 // these. Adoption is measured against exactly the people who got the
 // announcement, so "12 of 41 have signed in" always means the same 41 — no
@@ -186,7 +196,18 @@ const COHORT_EXCLUDE = new Set([
   "lotest@hometownlend.com",
 ]);
 
-interface TeamAccount { id: string; email: string; name: string; createdAt: string; lastSignInAt: string | null }
+export interface TeamAccount {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
+  lastSignInAt: string | null;
+  /** Still holding the password we generated and emailed them. This — not
+   *  last_sign_in_at — is what adoption means: it can only be cleared by the
+   *  person choosing their own password through the gate, so no admin
+   *  operation or scripted sign-in can forge it. */
+  mustSetPassword: boolean;
+}
 
 const listTeamAccounts = async (): Promise<TeamAccount[]> => {
   const url = Deno.env.get("SUPABASE_URL");
@@ -199,7 +220,7 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) throw new Error(`admin users list ${r.status}`);
-    const data = await r.json() as { users?: { id?: string; email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string } }[] };
+    const data = await r.json() as { users?: { id?: string; email?: string; created_at?: string; last_sign_in_at?: string | null; user_metadata?: { full_name?: string }; app_metadata?: { must_set_password?: unknown } }[] };
     const users = data.users ?? [];
     for (const u of users) {
       if (!u.email) continue;
@@ -209,6 +230,9 @@ const listTeamAccounts = async (): Promise<TeamAccount[]> => {
         name: u.user_metadata?.full_name ?? u.email.split("@")[0],
         createdAt: u.created_at ?? "",
         lastSignInAt: u.last_sign_in_at ?? null,
+        // Strict === true, matching the client gate in src/lib/auth.tsx: a
+        // stray "false" string or a 1 must not read as "still pending".
+        mustSetPassword: u.app_metadata?.must_set_password === true,
       });
     }
     if (users.length < 100) break;
@@ -288,16 +312,30 @@ const setPassword = async (id: string, password: string): Promise<void> => {
 };
 
 /** Adoption split across the cohort. */
-const signInStatus = async () => {
-  const accounts = await cohort();
-  const signedIn = accounts
-    .filter(a => a.lastSignInAt && a.lastSignInAt >= SIGNIN_LAUNCH)
+/** Splits the cohort into people who finished onboarding and people who have
+ *  not. `signinReport`, `remind`, and the weekly `collect` all read this, so
+ *  none of them can disagree about who is where. */
+export const splitAdoption = (accounts: TeamAccount[]) => {
+  const activated = accounts
+    .filter(a => !a.mustSetPassword)
     .sort((a, b) => (b.lastSignInAt ?? "").localeCompare(a.lastSignInAt ?? ""));
-  const missing = accounts
-    .filter(a => !a.lastSignInAt || a.lastSignInAt < SIGNIN_LAUNCH)
+  // "Opened it" means a sign-in at or after ANNOUNCED_AT. Splitting pending
+  // this way separates two different problems: someone who never saw the
+  // email, and someone who saw it, showed up, and stalled at the gate.
+  const pending = accounts
+    .filter(a => a.mustSetPassword)
+    .map(a => ({ ...a, opened: !!a.lastSignInAt && a.lastSignInAt >= ANNOUNCED_AT }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  return { total: accounts.length, signedIn, missing };
+  return {
+    total: accounts.length,
+    activated,
+    pending,
+    openedButStalled: pending.filter(a => a.opened),
+    neverOpened: pending.filter(a => !a.opened),
+  };
 };
+
+const adoptionStatus = async () => splitAdoption(await cohort());
 
 // ---- Metrics ----------------------------------------------------------------
 
@@ -412,8 +450,8 @@ const collectMetrics = async () => {
     history: (snapshots as { week_start: string; metrics: unknown }[]).map(s => ({ week: s.week_start })),
     // Adoption tracking (21-day launch window and beyond). Best-effort: an
     // auth-API hiccup must never sink the rest of the report.
-    signIns: await signInStatus()
-      .then(s => ({ signedIn: s.signedIn.length, total: s.total, missing: s.missing.map(a => a.name) }))
+    signIns: await adoptionStatus()
+      .then(s => ({ signedIn: s.activated.length, total: s.total, missing: s.pending.map(a => a.name) }))
       .catch(e => { console.error("signIns unavailable", e); return null; }),
   };
 };
@@ -539,6 +577,40 @@ const announceHtml = (firstName: string, email: string, password: string, shared
   </div>
 </div>`;
 
+/** The daily nudge to someone still on the temporary password.
+ *
+ *  Deliberately carries NO password. They already hold one, and a credential
+ *  repeated in a daily email is a standing liability — if they've lost it,
+ *  "Forgot your password?" is the safe path and it's right there on the
+ *  sign-in page. Short on purpose: this arrives every morning until they act,
+ *  so it has to stay easy to ignore-then-do rather than feel like a scolding. */
+const remindHtml = (firstName: string): string => `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
+  <div style="background:${NAVY};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
+    <div style="font-size:18px;font-weight:700">Two minutes to finish setting up</div>
+  </div>
+  <div style="border:1px solid #e3e3e3;border-top:0;border-radius:0 0 8px 8px;padding:20px">
+    <p style="margin:0 0 12px">Hi ${escHtml(firstName)},</p>
+    <p style="margin:0 0 12px">
+      Your Hometown Lending recruiting tool account is ready, but it still has the
+      temporary password we sent you. Sign in, pick your own password, and you're done.
+    </p>
+    <p style="margin:16px 0">
+      <a href="https://htlrecruit.broker/links" style="background:${NAVY};color:#fff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600;display:inline-block">Finish setting up</a>
+    </p>
+    <p style="margin:0 0 12px">
+      Once you're in, it builds a personalized pro forma for any loan officer you're
+      recruiting — their real numbers at HTL — and emails it to them with your name on it.
+      Anyone who comes through your link is attached to you for HTL5 rev share.
+    </p>
+    <p style="margin:0;font-size:12px;color:#7a7a7a">
+      Lost the temporary password? Use <b>Forgot your password?</b> on the sign-in page.
+      You'll stop getting this note as soon as you've set your own.
+    </p>
+    <p style="margin:16px 0 0;color:#4a4a4a">— James Mowery, Director of Sales</p>
+  </div>
+</div>`;
+
 // ---- Handler -----------------------------------------------------------------
 
 /** Strips recruit-identifying fields from a metrics bundle, leaving the counts
@@ -631,17 +703,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
     let s;
     try {
-      s = await signInStatus();
+      s = await adoptionStatus();
     } catch (e) {
       console.error("signinReport list failed", e);
-      await sendAdminEmail("[ProFarmA] Sign-in report failed", `<p>Could not read the account list: ${escHtml(String(e))}</p>`).catch(() => {});
+      await sendAdminEmail("[ProFarmA] Adoption report failed", `<p>Could not read the account list: ${escHtml(String(e))}</p>`).catch(() => {});
       return json(502, { error: "Account list unavailable." });
     }
     const fmt = (ts: string | null) => ts ? new Date(ts).toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "medium", timeStyle: "short" }) + " CT" : "—";
-    const inRows = s.signedIn.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 12px">${escHtml(a.email)}</td><td style="padding:4px 0;color:#2f7d5d">${escHtml(fmt(a.lastSignInAt))}</td></tr>`).join("")
+    // The chase list leads, numbered, because it is the part the owner acts on
+    // — built to be lifted straight out of the email rather than retyped.
+    const pendRows = s.pending.map((a, i) => `<tr>
+        <td style="padding:4px 8px 4px 0;color:#9a9a9a">${i + 1}</td>
+        <td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td>
+        <td style="padding:4px 12px 4px 0"><a href="mailto:${escHtml(a.email)}" style="color:${NAVY}">${escHtml(a.email)}</a></td>
+        <td style="padding:4px 0;color:${a.opened ? "#b06a00" : "#a33"}">${a.opened ? "opened it, stalled" : "never opened"}</td>
+      </tr>`).join("")
+      || `<tr><td colspan="4" style="padding:8px 0;color:#2f7d5d">Everyone has set their own password.</td></tr>`;
+    const doneRows = s.activated.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 12px">${escHtml(a.email)}</td><td style="padding:4px 0;color:#2f7d5d">${escHtml(fmt(a.lastSignInAt))}</td></tr>`).join("")
       || `<tr><td colspan="3" style="padding:8px 0;color:#7a7a7a">Nobody yet.</td></tr>`;
-    const outRows = s.missing.map(a => `<tr><td style="padding:4px 12px 4px 0">${escHtml(a.name)}</td><td style="padding:4px 0">${escHtml(a.email)}</td></tr>`).join("")
-      || `<tr><td colspan="2" style="padding:8px 0;color:#2f7d5d">Everyone has signed in.</td></tr>`;
+    const pct = s.total ? Math.round((s.activated.length / s.total) * 100) : 0;
     const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a">
       <div style="background:${NAVY};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
@@ -772,6 +852,47 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(200, { ok: true, sent: sent.length, failed: failed.length });
   }
 
+  if (body.action === "remind") {
+    // Same key as announce: this mails a slice of the team on a schedule, so
+    // it must never be reachable with the public anon key alone.
+    if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
+
+    let s;
+    try {
+      s = await adoptionStatus();
+    } catch (e) {
+      console.error("remind list failed", e);
+      return json(502, { error: `Account list unavailable: ${e}` });
+    }
+
+    // Recipients are derived, never supplied. Anyone who has set their own
+    // password is simply not in `pending`, so the reminder stops on its own —
+    // there is no separate opt-out list that could drift out of sync.
+    const targets = s.pending;
+    if (body.dryRun === true) {
+      return json(200, { ok: true, dryRun: true, wouldEmail: targets.length, recipients: targets.map(a => a.email) });
+    }
+
+    const sent: string[] = [], failed: string[] = [];
+    for (const a of targets) {
+      try {
+        await sendEmailTo(a.email, "Finish setting up your Pro Forma sign-in", remindHtml(a.name.split(" ")[0]));
+        sent.push(a.email);
+      } catch (e) {
+        console.error("remind send failed", a.email, e);
+        failed.push(a.email);
+      }
+    }
+    if (sent.length || failed.length) {
+      await sendAdminEmail(
+        `[ProFarmA] Daily reminder — ${sent.length} nudged${failed.length ? `, ${failed.length} FAILED` : ""}`,
+        `<p>Reminded ${sent.length} of ${s.total} who still hold the temporary password.</p>` +
+        `${failed.length ? `<p style="color:#a33">Failed: ${failed.map(escHtml).join(", ")}</p>` : ""}`,
+      ).catch(() => {});
+    }
+    return json(200, { ok: true, sent: sent.length, failed: failed.length });
+  }
+
   if (body.action === "notify") {
     // One-off admin notice. The recipient is fixed, but the BODY is entirely
     // caller-supplied — anyone holding the public anon key could otherwise
@@ -790,5 +911,5 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(200, { ok: true });
   }
 
-  return json(400, { error: "action must be 'collect', 'send', 'notify', 'signinReport', or 'announce'." });
+  return json(400, { error: "action must be 'collect', 'send', 'notify', 'signinReport', 'announce', or 'remind'." });
 });
