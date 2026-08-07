@@ -28,6 +28,8 @@
 // weekly report admin-only by audience; if distribution ever widens, that
 // section must be split out.
 
+import { splitAdoption, type Adoption, type TeamAccount } from "./adoption.ts";
+
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
 const CORS = {
@@ -155,13 +157,6 @@ const upsertSnapshot = async (weekStart: string, metrics: unknown): Promise<void
 // The 42 LO accounts were provisioned 2026-08-04; sign-in tracking measures
 // adoption from that date. These service/legacy accounts are not part of it.
 const SIGNIN_LAUNCH = "2026-08-04";
-// The instant the announcement actually left, not the calendar day it left on.
-// That distinction is the whole point: provisioning ran a scripted sign-in
-// against every account at 13:06Z to prove the shared password worked, two
-// hours BEFORE this timestamp. Comparing against the date alone counted all 19
-// of those as adopted and reported full uptake to the owner, who correctly
-// refused to believe it. Anything at or after this is a real human arriving.
-const ANNOUNCED_AT = "2026-08-04T15:05:00Z";
 // The rollout cohort is defined once: accounts created on launch day, minus
 // these. Adoption is measured against exactly the people who got the
 // announcement, so "12 of 41 have signed in" always means the same 41 — no
@@ -196,18 +191,8 @@ const COHORT_EXCLUDE = new Set([
   "lotest@hometownlend.com",
 ]);
 
-export interface TeamAccount {
-  id: string;
-  email: string;
-  name: string;
-  createdAt: string;
-  lastSignInAt: string | null;
-  /** Still holding the password we generated and emailed them. This — not
-   *  last_sign_in_at — is what adoption means: it can only be cleared by the
-   *  person choosing their own password through the gate, so no admin
-   *  operation or scripted sign-in can forge it. */
-  mustSetPassword: boolean;
-}
+// TeamAccount, ANNOUNCED_AT and splitAdoption live in ./adoption.ts so they can
+// be unit-tested without a Deno runtime (same split as send-recap/sourcing.ts).
 
 const listTeamAccounts = async (): Promise<TeamAccount[]> => {
   const url = Deno.env.get("SUPABASE_URL");
@@ -312,30 +297,7 @@ const setPassword = async (id: string, password: string): Promise<void> => {
 };
 
 /** Adoption split across the cohort. */
-/** Splits the cohort into people who finished onboarding and people who have
- *  not. `signinReport`, `remind`, and the weekly `collect` all read this, so
- *  none of them can disagree about who is where. */
-export const splitAdoption = (accounts: TeamAccount[]) => {
-  const activated = accounts
-    .filter(a => !a.mustSetPassword)
-    .sort((a, b) => (b.lastSignInAt ?? "").localeCompare(a.lastSignInAt ?? ""));
-  // "Opened it" means a sign-in at or after ANNOUNCED_AT. Splitting pending
-  // this way separates two different problems: someone who never saw the
-  // email, and someone who saw it, showed up, and stalled at the gate.
-  const pending = accounts
-    .filter(a => a.mustSetPassword)
-    .map(a => ({ ...a, opened: !!a.lastSignInAt && a.lastSignInAt >= ANNOUNCED_AT }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return {
-    total: accounts.length,
-    activated,
-    pending,
-    openedButStalled: pending.filter(a => a.opened),
-    neverOpened: pending.filter(a => !a.opened),
-  };
-};
-
-const adoptionStatus = async () => splitAdoption(await cohort());
+const adoptionStatus = async (): Promise<Adoption> => splitAdoption(await cohort());
 
 // ---- Metrics ----------------------------------------------------------------
 
