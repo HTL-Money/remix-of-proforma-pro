@@ -170,7 +170,10 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
               alignment: AlignmentType.CENTER,
               children: [
                 new TextRun({
-                  text: `Projection based on ${usd(r.volume)} annual volume, ${num(r.files)} files at a ${r.loSplit}/${100 - Number(r.loSplit)} split — the loan officer keeps ${r.loSplit}% of gross commission and Hometown Lending keeps ${100 - Number(r.loSplit)}%. Split bands are set by monthly funded volume: up to $2M/month is 80/20, $2M–$4M is 85/15, and above $4M is 90/10.${r.selfReported ? " Production figures were self-reported and have not been verified against RETR records." : ""} All figures are illustrative — not an offer of employment or compensation.`,
+                  // Broken into short sentences and second person on purpose:
+                  // the recruit reads this, not an underwriter. Same facts,
+                  // same order — only the run-on is gone.
+                  text: `Based on ${usd(r.volume)} annual volume and ${num(r.files)} files at a ${r.loSplit}/${100 - Number(r.loSplit)} split: you keep ${r.loSplit}% of gross commission, Hometown Lending keeps ${100 - Number(r.loSplit)}%. Bands are set by monthly funded volume — up to $2M/month is 80/20, $2M–$4M is 85/15, above $4M is 90/10.${r.selfReported ? " These production figures were entered by hand, not pulled from RETR records." : ""} All figures are illustrative, not an offer of employment or compensation.`,
                   italics: true,
                   color: GRAY,
                   size: 18,

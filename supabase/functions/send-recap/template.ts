@@ -30,6 +30,12 @@ export interface RecapPayload {
     finalLoNetComp: number;
   };
   proformaId?: string;
+  /** One personalized opening paragraph, written per recruit. Carries NO
+   *  figures by construction — every number in this email is rendered from the
+   *  fields above, so the comp claims stay deterministic and reviewable.
+   *  Generated best-effort (see narrativePrompt.ts + index.ts); absent whenever
+   *  generation failed, timed out, or produced text that broke the rules. */
+  narrative?: string;
   /** Months the production figures cover (the RETR pull window). 12 = a true
    *  year. Optional for backward-compat with older payloads → defaults to 12. */
   periodMonths?: number;
@@ -246,6 +252,16 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
       </div>
     </td></tr>`;
 
+  // The personalized opening. Escaped like any other untrusted string — it is
+  // model output, so it is treated as data, never as markup. Rendered above
+  // every figure so it reads as the framing, not as a caption on the math.
+  const narrativeBlock = r.narrative
+    ? `
+    <tr><td style="padding:22px 24px 0 24px;">
+      <div style="color:${GRAY_DARK};font-size:15px;line-height:1.65;">${esc(r.narrative)}</div>
+    </td></tr>`
+    : "";
+
   // Closing block: names the attached PDF so the recruit knows the file in
   // their client IS the deliverable. Rendered only when a PDF actually rode
   // along, so the email can never promise an attachment that isn't there.
@@ -256,8 +272,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         <tr><td style="padding:18px 20px;">
           <div style="color:${NAVY};font-size:15px;font-weight:800;">Documented Pro Forma</div>
           <div style="color:${GRAY_MID};font-size:13px;margin-top:6px;line-height:1.6;">
-            Attached to this email as <strong style="color:${NAVY};">${esc(opts.documentedProformaName)}</strong> — the full
-            breakdown of the numbers above, yours to keep and review on your own time.
+            It's attached as <strong style="color:${NAVY};">${esc(opts.documentedProformaName)}</strong> — the same
+            numbers as above, in full, yours to keep.
           </div>
         </td></tr>
       </table>
@@ -328,6 +344,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         </td></tr>
 
         ${presentationHero}
+        ${narrativeBlock}
 
         ${comparisonSection}
 
@@ -346,7 +363,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
           </table>
           ${
             r.selfReported
-              ? `<div style="color:${GRAY_MID};font-size:11px;margin-top:8px;">Production figures were self-reported by the recipient and have not been verified against RETR records.</div>`
+              ? `<div style="color:${GRAY_MID};font-size:11px;margin-top:8px;">These production figures were entered by hand, not pulled from RETR records.</div>`
               : ""
           }
         </td></tr>

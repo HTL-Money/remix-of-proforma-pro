@@ -23,6 +23,7 @@
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
 import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
+import { SYSTEM_PROMPT, buildNarrativePrompt, validateNarrative } from "./narrativePrompt.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -324,6 +325,69 @@ const toBase64 = (bytes: Uint8Array): string => {
  * null as "send the email without the attachment" — a recap email going out
  * plain is always better than no email at all.
  */
+/** Writes the one personalized opening paragraph via the Claude API.
+ *
+ *  Best-effort by design, and the failure mode is deliberately boring: every
+ *  problem — no API key, HTTP error, timeout, malformed response, or text that
+ *  breaks the no-figures rule — returns null, and the email renders without the
+ *  paragraph. Nothing downstream depends on it, because every number in the
+ *  recap comes from the validated payload instead.
+ *
+ *  ANTHROPIC_API_KEY unset is the normal "feature off" state, not an error, so
+ *  it doesn't log. */
+const generateNarrative = async (recap: RecapPayload): Promise<string | null> => {
+  const key = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!key) return null;
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: Deno.env.get("NARRATIVE_MODEL") || "claude-sonnet-5",
+        max_tokens: 300,
+        system: SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: buildNarrativePrompt({
+            loName: recap.loName,
+            volume: recap.volume,
+            files: recap.files,
+            // Team payroll is what makes the summary a three-way split rather
+            // than a two-way one; same trigger the Gamma deck uses.
+            hasTeam: (recap.totals?.brokerPaidTotal ?? 0) > 0,
+            selfReported: recap.selfReported === true,
+          }),
+        }],
+      }),
+      // Short on purpose: this rides in front of a send the recruit is waiting
+      // on. Better a plain email now than a personalized one a minute late.
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!resp.ok) {
+      console.error("narrative http", resp.status, await resp.text().catch(() => ""));
+      return null;
+    }
+    const data = await resp.json() as { content?: { type?: string; text?: string }[] };
+    const text = (data.content ?? [])
+      .filter(b => b?.type === "text")
+      .map(b => b.text ?? "")
+      .join("")
+      .trim();
+    // validateNarrative is the enforcement, not the prompt. A model that
+    // ignores the brief gets dropped rather than printed.
+    const ok = validateNarrative(text);
+    if (!ok) console.error("narrative rejected by validator", JSON.stringify(text).slice(0, 200));
+    return ok;
+  } catch (e) {
+    console.error("narrative failed", e);
+    return null;
+  }
+};
+
 const fetchDocumentedProforma = async (
   supabaseUrl: string,
   serviceKey: string,
@@ -804,7 +868,13 @@ Deno.serve(async (req: Request) => {
     pdf = (await fetchDocumentedProforma(supabaseUrl, serviceKey, presentationHash)) ?? undefined;
   }
 
-  const html = renderRecapHtml(recap, {
+  // One personalized opening paragraph. Best-effort, exactly like the chart,
+  // the GIF, the docx and the Gamma PDF above: a model hiccup must never keep a
+  // recap from reaching a recruit, so every failure path just leaves it out.
+  // It carries no figures by construction — see narrativePrompt.ts.
+  const narrative = await generateNarrative(recap);
+
+  const html = renderRecapHtml({ ...recap, ...(narrative ? { narrative } : {}) }, {
     ...(chartPng ? { chartCid: CHART_CID } : {}),
     bookingUrl,
     appOrigin,

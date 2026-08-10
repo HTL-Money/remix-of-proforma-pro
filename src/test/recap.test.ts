@@ -261,3 +261,45 @@ describe("isValidEmail", () => {
     expect(isValidEmail("")).toBe(false);
   });
 });
+
+describe("renderRecapHtml — the personalized opening paragraph", () => {
+  const payload = () => {
+    const s = goldenState();
+    return buildRecapPayload("Jane — 90%", s, calculate(s));
+  };
+
+  it("renders the paragraph when present", () => {
+    const html = renderRecapHtml(
+      { ...payload(), narrative: "You are already producing at a level most desks never reach." },
+      {},
+    );
+    expect(html).toContain("You are already producing at a level most desks never reach.");
+  });
+
+  it("omits the block entirely when absent — no empty box, no stray padding", () => {
+    const html = renderRecapHtml(payload(), {});
+    expect(html).not.toContain("font-size:15px;line-height:1.65");
+  });
+
+  // This text is model output. It is data, never markup.
+  it("escapes HTML so generated text cannot inject markup into the email", () => {
+    const html = renderRecapHtml(
+      { ...payload(), narrative: '<script>alert(1)</script> & "quoted"' },
+      {},
+    );
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&amp;");
+  });
+
+  // The whole point of keeping figures out of the paragraph: adding it must not
+  // be able to move a single number in the email.
+  it("leaves every figure in the email untouched", () => {
+    const p = payload();
+    const withNarrative = renderRecapHtml({ ...p, narrative: "A plain opening line." }, {});
+    const without = renderRecapHtml(p, {});
+    const figures = (html: string) => html.match(/\$[\d,]+/g) ?? [];
+    expect(figures(withNarrative)).toEqual(figures(without));
+    expect(figures(without).length).toBeGreaterThan(0);
+  });
+});
