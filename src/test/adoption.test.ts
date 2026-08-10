@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { splitAdoption, type TeamAccount } from "../../supabase/functions/weekly-review/adoption";
+import {
+  COHORT_EXCLUDE,
+  COHORT_INCLUDE,
+  inCohort,
+  splitAdoption,
+  type TeamAccount,
+} from "../../supabase/functions/weekly-review/adoption";
 
 // The announcement actually left at 15:05Z on 2026-08-04. Provisioning had
 // already run a scripted sign-in against every account at 13:06Z that morning
@@ -100,5 +106,48 @@ describe("splitAdoption — who the daily reminder reaches", () => {
       acct({ email: "b@x.com", name: "Bob" }),
     ]);
     expect(s.pending.map(a => a.name)).toEqual(["Alice", "Bob", "Carol"]);
+  });
+});
+
+describe("inCohort — who the rollout actually covers", () => {
+  const at = (createdAt: string, email = "someone@hometownlend.com"): TeamAccount =>
+    ({ ...acct({ email }), createdAt });
+
+  it("takes accounts provisioned on launch day", () => {
+    expect(inCohort(at("2026-08-04T02:00:00Z"))).toBe(true);
+  });
+
+  // The window is closed, not an open-ended "since". Left open, every later
+  // signup joined silently: it inflates the denominator and drops people who
+  // were never invited into the never-opened column.
+  it("leaves out accounts created before or after launch day", () => {
+    expect(inCohort(at("2026-08-03T23:59:00Z"))).toBe(false);
+    expect(inCohort(at("2026-08-05T00:00:00Z"))).toBe(false);
+  });
+
+  it("excludes service and pulled-from-rollout accounts created inside the window", () => {
+    for (const e of ["admin@hometownlend.com", "lotest@hometownlend.com", "valeriab@hometownlend.com"]) {
+      expect(inCohort(at("2026-08-04T02:00:00Z", e))).toBe(false);
+    }
+  });
+
+  // Diana was hired after launch day. Without the include list she would get
+  // no reminders and never appear in the count.
+  it("includes a later hire on the include list, despite the date window", () => {
+    const diana = at("2026-08-08T21:00:00Z", "dianal@hometownlend.com");
+    expect(inCohort(diana)).toBe(true);
+  });
+
+  it("fails closed when an address is on both lists — exclude wins", () => {
+    const both = [...COHORT_EXCLUDE].find(e => COHORT_INCLUDE.has(e));
+    expect(both).toBeUndefined(); // no overlap today
+    // Pin the precedence directly so a future overlap can't silently start mailing
+    // someone who was deliberately pulled out.
+    COHORT_INCLUDE.add("admin@hometownlend.com");
+    try {
+      expect(inCohort(at("2026-08-08T00:00:00Z", "admin@hometownlend.com"))).toBe(false);
+    } finally {
+      COHORT_INCLUDE.delete("admin@hometownlend.com");
+    }
   });
 });
