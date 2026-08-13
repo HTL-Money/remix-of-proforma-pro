@@ -69,6 +69,7 @@ export const COHORT_EXCLUDE = new Set([
  *  and every future non-LO signup. */
 export const COHORT_INCLUDE = new Set([
   "dianal@hometownlend.com",
+  "chrisc@hometownlend.com",
 ]);
 
 /** Cohort membership for one account. Exclude is checked first on purpose: an

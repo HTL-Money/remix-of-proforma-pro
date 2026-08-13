@@ -131,11 +131,21 @@ describe("inCohort — who the rollout actually covers", () => {
     }
   });
 
-  // Diana was hired after launch day. Without the include list she would get
-  // no reminders and never appear in the count.
-  it("includes a later hire on the include list, despite the date window", () => {
-    const diana = at("2026-08-08T21:00:00Z", "dianal@hometownlend.com");
-    expect(inCohort(diana)).toBe(true);
+  // Post-launch hires would otherwise fall outside the launch-day window: no
+  // reminders, absent from the count. Asserted over the whole list rather than
+  // one address, so adding the next hire is covered without editing this test.
+  it("includes every later hire on the include list, despite the date window", () => {
+    expect(COHORT_INCLUDE.size).toBeGreaterThan(0);
+    for (const email of COHORT_INCLUDE) {
+      expect(inCohort(at("2026-08-08T21:00:00Z", email))).toBe(true);
+    }
+  });
+
+  it("has the two known post-launch hires on the include list", () => {
+    expect([...COHORT_INCLUDE].sort()).toEqual([
+      "chrisc@hometownlend.com",
+      "dianal@hometownlend.com",
+    ]);
   });
 
   it("fails closed when an address is on both lists — exclude wins", () => {
