@@ -14,7 +14,21 @@ export interface Target {
   updatedAt: string;
 }
 
-const fromRow = (r: any): Target => ({
+/** The snake_case shape target_los rows come back in. Declared rather than
+ *  inferred so a renamed column is a compile error here instead of a silent
+ *  undefined on the page. */
+interface TargetLoRow {
+  nmls: string;
+  name: string | null;
+  city: string | null;
+  state: string | null;
+  annual_volume: number | string | null;
+  annual_files: number | string | null;
+  source: string;
+  updated_at: string;
+}
+
+const fromRow = (r: TargetLoRow): Target => ({
   nmls: r.nmls,
   name: r.name,
   city: r.city,
@@ -67,5 +81,5 @@ export const listNmlsWithReports = async (): Promise<Set<string>> => {
   const sb = requireSupabase();
   const { data, error } = await sb.from("retr_reports").select("nmls");
   if (error) throw new Error(error.message);
-  return new Set((data ?? []).map((r: any) => r.nmls as string));
+  return new Set((data ?? []).map((r: { nmls: string }) => r.nmls));
 };

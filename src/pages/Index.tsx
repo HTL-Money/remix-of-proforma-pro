@@ -53,7 +53,11 @@ const loadState = (): ModelState => {
       const def = defaultState();
       return { ...def, ...parsed, buckets: parsed.buckets ?? def.buckets, employees: parsed.employees ?? def.employees };
     }
-  } catch {}
+  } catch {
+    // Corrupt or legacy JSON in localStorage: fall through to defaults rather
+    // than white-screening the calculator. Nothing to report — the saved draft
+    // is simply unrecoverable, and a fresh default state is the right recovery.
+  }
   return defaultState();
 };
 
@@ -938,11 +942,14 @@ const Index = () => {
               )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl pt-1">
                 {(["fha", "va", "conv", "nonqm"] as const).map(k => {
-                  const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" } as any;
+                  const labels: Record<typeof k, string> = { fha: "FHA", va: "VA", conv: "Conventional", nonqm: "Non-QM" };
                   const order: Array<"fha" | "va" | "conv" | "nonqm"> = ["fha", "va", "conv", "nonqm"];
                   const total = Math.max(0, Math.round(state.annualFiles || 0));
                   const counts: Record<"fha" | "va" | "conv" | "nonqm", number> = (() => {
-                    const c: any = {};
+                    // All four keys seeded, so this is a complete Record from
+                    // the start — the loop overwrites rather than fills in, and
+                    // `used` can never accumulate an undefined.
+                    const c: Record<"fha" | "va" | "conv" | "nonqm", number> = { fha: 0, va: 0, conv: 0, nonqm: 0 };
                     let used = 0;
                     order.forEach((key, i) => {
                       if (i === order.length - 1) c[key] = Math.max(0, total - used);

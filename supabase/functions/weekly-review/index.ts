@@ -384,8 +384,12 @@ const kpiRow = (label: string, week: number, prior: number): string => {
   return `<tr><td style="padding:6px 12px 6px 0;color:#4a4a4a">${escHtml(label)}</td><td style="padding:6px 12px;font-weight:600">${week}</td><td style="padding:6px 12px;color:#7a7a7a">prev ${prior}</td><td style="padding:6px 0;color:${week >= prior ? "#2f7d5d" : "#a33"}">${delta}</td></tr>`;
 };
 
-// deno-lint-ignore no-explicit-any
-const renderReport = (m: any, narrative: string, actionsTaken: string[]): string => {
+// The real shape of collectMetrics()'s return, without hand-duplicating every
+// field it computes — derived so a field rename here is a compile error at
+// both call sites instead of a silently-any pass-through.
+type Metrics = Awaited<ReturnType<typeof collectMetrics>>;
+
+const renderReport = (m: Metrics, narrative: string, actionsTaken: string[]): string => {
   const lb = (m.leaderboard as { who: string; linksCreated: number; linkUses: number; sends: number; claims: number }[])
     .map(r => `<tr><td style="padding:4px 12px 4px 0">${escHtml(r.who)}</td><td style="padding:4px 12px;text-align:center">${r.linksCreated}</td><td style="padding:4px 12px;text-align:center">${r.linkUses}</td><td style="padding:4px 12px;text-align:center">${r.sends}</td><td style="padding:4px 0;text-align:center;font-weight:600">${r.claims}</td></tr>`)
     .join("") || `<tr><td colspan="5" style="padding:8px 0;color:#7a7a7a">No team activity this week.</td></tr>`;
@@ -534,8 +538,7 @@ const remindHtml = (firstName: string): string => `
 
 /** Strips recruit-identifying fields from a metrics bundle, leaving the counts
  *  and the team-side names a narrative needs. Used for unkeyed `collect`. */
-// deno-lint-ignore no-explicit-any
-const redactPeople = (m: any) => ({
+const redactPeople = (m: Metrics) => ({
   ...m,
   funnel: {
     ...m.funnel,
