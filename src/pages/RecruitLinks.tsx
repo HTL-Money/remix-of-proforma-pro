@@ -179,8 +179,9 @@ const RecruitLinks = () => {
   };
 
   /** On NMLS blur: if someone else already holds an unexpired claim on this
-   *  recruit, say so — informational only, the send still works (the server's
-   *  first-sender-wins rule simply won't transfer credit). */
+   *  recruit, say so early rather than letting the LO fill the whole form and
+   *  get refused. Advisory only — the real enforcement is the server-side gate
+   *  in send-recap, which returns 409 and sends nothing. */
   const checkExistingClaim = async () => {
     setClaimWarning(null);
     const nmls = normalizeNmls(sendNmls);
@@ -195,7 +196,7 @@ const RecruitLinks = () => {
       let holder = String(data.sourced_by).slice(0, 8);
       const { data: dir } = await sb.from("team_directory").select("email").eq("id", data.sourced_by).maybeSingle();
       if (dir?.email) holder = String(dir.email);
-      setClaimWarning(`Already claimed by ${holder} until ${expires.toLocaleDateString()} — sending still works, but it won't transfer credit to you.`);
+      setClaimWarning(`Already sourced by ${holder} until ${expires.toLocaleDateString()} — sending is blocked. Ask an admin if you need to send anyway.`);
     } catch {
       // best-effort — a lookup hiccup never blocks the form
     }
@@ -234,14 +235,17 @@ const RecruitLinks = () => {
       };
       const calc = calculate(state);
       const displayName = state.recruitName || `NMLS ${nmls}`;
+      // The signed-in session authenticates this call — verifiedSenderId
+      // credits the HTL5 claim and BCCs this LO automatically, no token needed.
+      // Send BEFORE recording: the server can now refuse (409) when another LO
+      // holds a live claim, and recording first would leave a submission row
+      // for an email that never went out.
+      await sendFullRecap(displayName, state, calc, to);
       try {
         await recordDirectSend(displayName, state, to);
       } catch (e) {
         console.warn("Direct-send record not stored:", e);
       }
-      // The signed-in session authenticates this call — verifiedSenderId
-      // credits the HTL5 claim and BCCs this LO automatically, no token needed.
-      await sendFullRecap(displayName, state, calc, to);
       setReceipt({
         to,
         recruitName: state.recruitName || null,

@@ -16,9 +16,15 @@ describe("decideSourcingAction — HTL5 first-sender-wins", () => {
     expect(decideSourcingAction(row, SENDER_A, NOW)).toEqual({ kind: "noop" });
   });
 
-  it("protects the original recruiter: a DIFFERENT sender within the expiry window is a no-op, never an overwrite", () => {
-    const row = { nmls: "123456", sourced_by: SENDER_A, expires_at: new Date(NOW + 1000).toISOString() };
-    expect(decideSourcingAction(row, SENDER_B, NOW)).toEqual({ kind: "noop" });
+  // Re-baselined: this used to return noop, which let the send go out silently
+  // without transferring credit. The owner asked for a hard stop, so a live
+  // claim held by someone else now blocks.
+  it("BLOCKS a different sender inside the expiry window, naming the holder and the date", () => {
+    const expiresAt = new Date(NOW + 1000).toISOString();
+    const row = { nmls: "123456", sourced_by: SENDER_A, expires_at: expiresAt };
+    expect(decideSourcingAction(row, SENDER_B, NOW)).toEqual({
+      kind: "blocked", claimedBy: SENDER_A, expiresAt,
+    });
   });
 
   it("allows reassignment once the row has expired, but flags who it's taking it from", () => {
@@ -34,8 +40,11 @@ describe("decideSourcingAction — HTL5 first-sender-wins", () => {
   it("90-day window: day 89 is protected, day 91 reassigns", () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
     const claimedAt = NOW - 89 * DAY_MS;
-    const freshRow = { nmls: "123456", sourced_by: SENDER_A, expires_at: expiryTimestamp(claimedAt, 90) };
-    expect(decideSourcingAction(freshRow, SENDER_B, NOW)).toEqual({ kind: "noop" });
+    const freshExpiry = expiryTimestamp(claimedAt, 90);
+    const freshRow = { nmls: "123456", sourced_by: SENDER_A, expires_at: freshExpiry };
+    expect(decideSourcingAction(freshRow, SENDER_B, NOW)).toEqual({
+      kind: "blocked", claimedBy: SENDER_A, expiresAt: freshExpiry,
+    });
 
     const staleClaimedAt = NOW - 91 * DAY_MS;
     const staleRow = { nmls: "123456", sourced_by: SENDER_A, expires_at: expiryTimestamp(staleClaimedAt, 90) };
@@ -102,5 +111,38 @@ describe("buildReferralUrl — the PURL an LO hands out", () => {
     // recruit; RecruitLinks passes CANONICAL_ORIGIN for exactly this reason.
     expect(CANONICAL_ORIGIN).toBe("https://htlrecruit.broker");
     expect(CANONICAL_ORIGIN).not.toMatch(/vercel\.app/);
+  });
+});
+
+describe("decideSourcingAction — admin override", () => {
+  const live = () => ({ nmls: "123456", sourced_by: SENDER_A, expires_at: new Date(NOW + 1000).toISOString() });
+
+  // An admin needs a way through when the claim holder has left the company or
+  // a recruit genuinely switched LOs.
+  it("lets an admin send through a live claim held by someone else", () => {
+    expect(decideSourcingAction(live(), SENDER_B, NOW, { senderIsAdmin: true })).toEqual({ kind: "noop" });
+  });
+
+  // noop, NOT reassign: an override must not quietly move credit to whoever
+  // happened to be an admin. That is the silent overwrite this rule prevents.
+  it("does not move the claim when an admin overrides", () => {
+    const action = decideSourcingAction(live(), SENDER_B, NOW, { senderIsAdmin: true });
+    expect(action.kind).not.toBe("reassign");
+    expect(action.kind).not.toBe("insert");
+  });
+
+  it("still blocks a non-admin, and treats a missing flag as non-admin", () => {
+    expect(decideSourcingAction(live(), SENDER_B, NOW, { senderIsAdmin: false }).kind).toBe("blocked");
+    expect(decideSourcingAction(live(), SENDER_B, NOW, {}).kind).toBe("blocked");
+    expect(decideSourcingAction(live(), SENDER_B, NOW).kind).toBe("blocked");
+  });
+
+  // The flag must not create claims or resurrect expired ones.
+  it("changes nothing for the insert, same-sourcer, and expired paths", () => {
+    const admin = { senderIsAdmin: true };
+    expect(decideSourcingAction(null, SENDER_A, NOW, admin)).toEqual({ kind: "insert" });
+    expect(decideSourcingAction(live(), SENDER_A, NOW, admin)).toEqual({ kind: "noop" });
+    const expired = { nmls: "123456", sourced_by: SENDER_A, expires_at: new Date(NOW - 1000).toISOString() };
+    expect(decideSourcingAction(expired, SENDER_B, NOW, admin)).toEqual({ kind: "reassign", previousSourcedBy: SENDER_A });
   });
 });

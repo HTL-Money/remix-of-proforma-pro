@@ -662,6 +662,29 @@ const sendNegativeGainAlert = async (recap: RecapPayload, recruitTo: string, gai
   }
 };
 
+/** Is this VERIFIED sender an admin? Used only to let an admin override another
+ *  LO's live claim. app_admins is email-keyed, so the sender's address is
+ *  resolved through the Auth Admin API rather than taken from the request.
+ *
+ *  Fails CLOSED: any error returns false. An override is the permissive path, so
+ *  a lookup hiccup must deny it rather than hand it out. */
+const resolveSenderIsAdmin = async (url: string, key: string, senderId: string): Promise<boolean> => {
+  try {
+    const email = await lookupUserEmail(url, key, senderId);
+    if (!email) return false;
+    const resp = await fetch(
+      `${url}/rest/v1/app_admins?email=eq.${encodeURIComponent(email.toLowerCase())}&select=email`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!resp.ok) return false;
+    const rows = await resp.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (e) {
+    console.error("admin lookup failed (treated as non-admin)", e);
+    return false;
+  }
+};
+
 /** Records who sourced this LO, first-sender-wins with a configurable
  *  expiry. Runs AFTER a successful send. Never surfaced to the recipient —
  *  purely backend bookkeeping. */
@@ -674,8 +697,13 @@ const recordSourcing = async (supabaseUrl: string, serviceKey: string, nmls: str
     await reassignSourcingRow(supabaseUrl, serviceKey, nmls, action.previousSourcedBy, senderId);
     await sendSourcingAlert(nmls, action.previousSourcedBy, senderId);
   }
-  // "noop" — either the same sourcer sent again, or the row is still within
-  // its expiry window (protects the original recruiter from being overwritten).
+  // Nothing to write for "noop" (same sourcer resending) or "blocked".
+  //
+  // "blocked" reaching here means the pre-send gate deliberately let this
+  // through: an admin overriding someone else's live claim. Leaving the row
+  // untouched is the whole point of the override — the send is permitted, the
+  // credit stays with whoever earned it. Named explicitly so a future reader
+  // doesn't "fix" it into a reassignment.
 };
 
 Deno.serve(async (req: Request) => {
@@ -850,6 +878,43 @@ Deno.serve(async (req: Request) => {
       }
     }
     return json(200, { ok: true, suppressed: "negative_gain" });
+  }
+
+  // HTL5 claim gate. Sits with the other refuse-to-send guards, BEFORE the
+  // Graph call, because recordSourcing runs after the send and is explicitly
+  // forbidden from blocking it — a stop has to happen here or not at all.
+  //
+  // Keyed on senderId (a verified, signed-in team member), NOT attributedId:
+  // attributedId is also set when a recruit self-serves through an LO's PURL,
+  // and a recruit must never be denied their own pro forma because a colleague
+  // holds the claim. Anonymous and PURL sends therefore skip this entirely.
+  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+    const nmls = recap.nmls.trim();
+    try {
+      const existing = await getSourcingRow(supabaseUrl, serviceKey, nmls);
+      const senderIsAdmin = existing && existing.sourced_by !== senderId
+        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+        : false; // only worth a round-trip when an override could actually apply
+      const decision = decideSourcingAction(existing, senderId, Date.now(), { senderIsAdmin });
+      if (decision.kind === "blocked") {
+        const holder = (await lookupUserEmail(supabaseUrl, serviceKey, decision.claimedBy))
+          ?? decision.claimedBy.slice(0, 8);
+        console.log(`send blocked: ${nmls} claimed by ${decision.claimedBy} until ${decision.expiresAt}`);
+        // 409 Conflict: the request is well-formed, it collides with existing
+        // state. No email is sent and no claim is written.
+        return json(409, {
+          error: "already_claimed",
+          message: `This NMLS is already sourced by ${holder} until ${new Date(decision.expiresAt).toLocaleDateString("en-US")}. Ask an admin if you need to send anyway.`,
+          claimedBy: holder,
+          expiresAt: decision.expiresAt,
+        });
+      }
+    } catch (e) {
+      // Fail OPEN on an infrastructure error: a claim-lookup outage must not
+      // stop legitimate recruiting. The worst case is the old behaviour —
+      // the send goes out and recordSourcing sorts the credit out after.
+      console.error("claim gate check failed (send allowed)", e);
+    }
   }
 
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;

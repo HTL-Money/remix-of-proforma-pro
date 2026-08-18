@@ -86,6 +86,10 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
     if (ctx && typeof ctx.json === "function") {
       try {
         const body = await ctx.json();
+        // `message` before `error`: newer refusals (the HTL5 claim block) send a
+        // machine-readable code in `error` plus a sentence for the LO in
+        // `message`. Showing the code would put "already_claimed" in a toast.
+        if (body?.message) throw new Error(String(body.message));
         if (body?.error) throw new Error(body.error);
       } catch (e) {
         if (e instanceof Error && e.message && !/JSON/i.test(e.message)) throw e;
