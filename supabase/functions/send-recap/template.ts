@@ -159,6 +159,26 @@ export interface RenderOptions {
    * Unset = block omitted, so the email never claims an attachment it lacks.
    */
   documentedProformaName?: string;
+  /**
+   * How this recap came to be sent, which decides the footer's "why you got
+   * this" line. It has to be accurate per path: the old copy claimed a recap
+   * "was requested for you" on EVERY send, which is untrue when a recruiter
+   * initiated it off a public NMLS record — the recruit requested nothing. A
+   * false statement about a commercial email's origin is exactly what
+   * CAN-SPAM's deception provisions cover.
+   *
+   *   "requested" — the recipient filled in the calculator themselves
+   *                 (public self-serve, or an LO's PURL they chose to open)
+   *   "recruiter" — an HTL loan officer sent it unprompted
+   *
+   * Defaults to "requested" only because that was the original self-serve
+   * behaviour; index.ts always passes it explicitly.
+   */
+  origin?: "requested" | "recruiter";
+  /** One-click unsubscribe URL (HTTPS). When set the footer links here instead
+   *  of a mailto, so opting out is one click that suppresses the address
+   *  automatically rather than waiting on someone to read an inbox. */
+  unsubscribeUrl?: string;
 }
 
 const detailRow = (label: string, value: string) => `
@@ -251,6 +271,14 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         You already know you're leaving money on the table.<br />Here's exactly how much.
       </div>
     </td></tr>`;
+
+  // Why this email arrived, stated truthfully for the path it actually took.
+  // The recruiter wording says outright that the recipient didn't ask for it and
+  // that the figures come from a public licensing record — honest, and in
+  // practice the fastest way to defuse a "how do you have my numbers?" reply.
+  const whyThis = opts.origin === "recruiter"
+    ? "A Hometown Lending recruiter prepared and sent you this pro forma using production figures from your public NMLS licensing record. You did not request it, and this is recruiting outreach \u2014 opt out below and we won\u2019t email you again."
+    : "You\u2019re receiving this because you requested a Pro Forma recap.";
 
   // The personalized opening. Escaped like any other untrusted string — it is
   // model output, so it is treated as data, never as markup. Rendered above
@@ -414,8 +442,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${COMPANY.name} · NMLS #${COMPANY.nmls}<br />
             ${COMPANY.address}<br />
             Saved as “${esc(r.savedName)}” · All figures are illustrative and not a guarantee of income.<br />
-            You’re receiving this because a Pro Forma recap was requested for you.
-            <a href="mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe" style="color:#9fb1c8;text-decoration:underline;">Unsubscribe</a>
+            ${whyThis}
+            <a href="${esc(opts.unsubscribeUrl ?? `mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe`)}" style="color:#9fb1c8;text-decoration:underline;">Unsubscribe</a>
           </div>
         </td></tr>
 

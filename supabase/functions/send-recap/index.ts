@@ -24,6 +24,7 @@ import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts
 import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 import { SYSTEM_PROMPT, buildNarrativePrompt, validateNarrative } from "./narrativePrompt.ts";
+import { mintUnsubscribeToken } from "../unsubscribe/token.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -114,6 +115,38 @@ const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";
 // mailto in the email footer is the compliant unsubscribe mechanism.
 const UNSUBSCRIBE_MAILTO = "marketing@hometownlend.com";
 
+/** Signed one-click unsubscribe URL for this recipient, or null when the secret
+ *  isn't configured (the footer then falls back to the mailto, as before).
+ *  Built from SUPABASE_URL so it needs no separate config. */
+const unsubscribeUrlFor = async (email: string): Promise<string | null> => {
+  const secret = Deno.env.get("UNSUBSCRIBE_SECRET");
+  const base = Deno.env.get("SUPABASE_URL");
+  if (!secret || !base) return null;
+  try {
+    return `${base}/functions/v1/unsubscribe?t=${encodeURIComponent(await mintUnsubscribeToken(email, secret))}`;
+  } catch (e) {
+    console.error("unsubscribe URL mint failed (falling back to mailto)", e);
+    return null;
+  }
+};
+
+/** RFC 8058 header pair. One-Click is only legitimate alongside an HTTPS URL —
+ *  the previous version declared List-Unsubscribe=One-Click with a mailto only,
+ *  which is malformed and may be disregarded outright.
+ *
+ *  NOTE: Microsoft Graph's internetMessageHeaders only accepts custom `x-*`
+ *  names, so it cannot carry List-Unsubscribe at all. On the Graph path the
+ *  in-body footer link IS the opt-out mechanism, which is why that link had to
+ *  become a real HTTPS one-click URL rather than staying a mailto. */
+const unsubscribeHeaders = (httpsUrl: string | null): Record<string, string> =>
+  httpsUrl
+    ? {
+        "List-Unsubscribe": `<${httpsUrl}>, <mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      }
+    // No HTTPS endpoint available: advertise only what actually works.
+    : { "List-Unsubscribe": `<mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>` };
+
 /** Look up `to` on the opt-out list. The verdict logic (and the FAIL-CLOSED
  *  policy rationale) lives in suppression.ts where vitest can reach it. */
 const checkSuppression = async (supabaseUrl: string, serviceKey: string, to: string) => {
@@ -191,6 +224,10 @@ interface RecapAttachments {
   docx?: string;
   /** Base64 Gamma PDF — the "Documented Pro Forma" the recruit receives. */
   pdf?: string;
+  /** Signed one-click unsubscribe URL for this recipient. Not an attachment,
+   *  but it rides along here because it's per-send and both providers need it
+   *  at exactly the point the attachments are assembled. */
+  unsubscribeUrl?: string;
 }
 
 const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, att: RecapAttachments, bcc: string[]): Promise<void> => {
@@ -266,8 +303,7 @@ const sendViaResend = async (apiKey: string, to: string, subject: string, html: 
     html,
     reply_to: REPLY_TO,
     headers: {
-      "List-Unsubscribe": `<mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>`,
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      ...unsubscribeHeaders(att.unsubscribeUrl ?? null),
     },
   };
   if (bcc.length > 0) emailBody.bcc = bcc;
@@ -939,14 +975,23 @@ Deno.serve(async (req: Request) => {
   // It carries no figures by construction — see narrativePrompt.ts.
   const narrative = await generateNarrative(recap);
 
+  // Why the recipient got this, stated honestly in the footer. A verified
+  // senderId with no referral token means a signed-in LO pushed it out
+  // unprompted; anything else means the recipient drove it themselves (public
+  // self-serve, or choosing to open an LO's PURL).
+  const origin: "requested" | "recruiter" = senderId && !referralToken ? "recruiter" : "requested";
+  const unsubscribeUrl = (await unsubscribeUrlFor(to)) ?? undefined;
+
   const html = renderRecapHtml({ ...recap, ...(narrative ? { narrative } : {}) }, {
+    origin,
+    ...(unsubscribeUrl ? { unsubscribeUrl } : {}),
     ...(chartPng ? { chartCid: CHART_CID } : {}),
     bookingUrl,
     appOrigin,
     ...(pdf ? { documentedProformaName: DOCUMENTED_PROFORMA_FILENAME } : {}),
   });
 
-  const attachments = { chartPng, gif, docx, pdf };
+  const attachments = { chartPng, gif, docx, pdf, ...(unsubscribeUrl ? { unsubscribeUrl } : {}) };
   // Sender-copy-back: a signed-in team member automatically gets a BCC copy
   // of what they just sent — an automatic record with no manual CC needed.
   // Looked up server-side from their auth session, never client-supplied.

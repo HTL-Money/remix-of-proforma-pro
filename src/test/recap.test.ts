@@ -303,3 +303,50 @@ describe("renderRecapHtml — the personalized opening paragraph", () => {
     expect(figures(without).length).toBeGreaterThan(0);
   });
 });
+
+describe("renderRecapHtml — CAN-SPAM footer honesty", () => {
+  const p = () => buildRecapPayload("Jane — 90%", goldenState(), calculate(goldenState()));
+
+  // The old copy claimed a recap "was requested for you" on EVERY send, which
+  // was false for the 53 recruiter-initiated ones. A false statement about why a
+  // commercial email arrived is the thing CAN-SPAM's deception rules cover.
+  it("never claims the recipient requested it when a recruiter initiated the send", () => {
+    const html = renderRecapHtml(p(), { origin: "recruiter" });
+    expect(html).not.toContain("was requested for you");
+    expect(html).not.toMatch(/you requested/i);
+    expect(html).toContain("You did not request it");
+    expect(html).toContain("public NMLS licensing record");
+    expect(html).toContain("recruiting outreach");
+  });
+
+  it("says the recipient requested it on a self-serve send", () => {
+    const html = renderRecapHtml(p(), { origin: "requested" });
+    expect(html).toMatch(/you requested a Pro Forma recap/i);
+    expect(html).not.toContain("You did not request it");
+  });
+
+  it("keeps the postal address and company NMLS on both paths", () => {
+    for (const origin of ["recruiter", "requested"] as const) {
+      const html = renderRecapHtml(p(), { origin });
+      expect(html).toContain(COMPANY.address);
+      expect(html).toContain(COMPANY.nmls);
+    }
+  });
+
+  it("links the HTTPS one-click URL when given one, and never leaves a bare mailto alongside it", () => {
+    const url = "https://x.supabase.co/functions/v1/unsubscribe?t=abc.def";
+    const html = renderRecapHtml(p(), { origin: "recruiter", unsubscribeUrl: url });
+    expect(html).toContain(`href="${url}"`);
+    expect(html).not.toContain(`href="mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe"`);
+  });
+
+  it("falls back to the mailto when no URL is configured — always a working opt-out", () => {
+    const html = renderRecapHtml(p(), { origin: "recruiter" });
+    expect(html).toContain(`mailto:${UNSUBSCRIBE_EMAIL}`);
+  });
+
+  it("escapes the unsubscribe URL so it can't break out of the href", () => {
+    const html = renderRecapHtml(p(), { unsubscribeUrl: 'https://x.test/"><script>alert(1)</script>' });
+    expect(html).not.toContain("<script>alert(1)</script>");
+  });
+});
