@@ -173,7 +173,11 @@ export const buildRecapDocx = async (r: RecapPayload): Promise<Uint8Array | null
                   // Broken into short sentences and second person on purpose:
                   // the recruit reads this, not an underwriter. Same facts,
                   // same order — only the run-on is gone.
-                  text: `Based on ${usd(r.volume)} annual volume and ${num(r.files)} files at a ${r.loSplit}/${100 - Number(r.loSplit)} split: you keep ${r.loSplit}% of gross commission, Hometown Lending keeps ${100 - Number(r.loSplit)}%. Bands are set by monthly funded volume — up to $2M/month is 80/20, $2M–$4M is 85/15, above $4M is 90/10.${r.selfReported ? " These production figures were entered by hand, not pulled from RETR records." : ""} All figures are illustrative, not an offer of employment or compensation.`,
+                  // On an overridden split the tier-table sentence would state a
+                  // rule the number beside it doesn't follow — same defect class
+                  // as the old "requested for you" footer line. Say what's true
+                  // instead: this split was agreed for this offer.
+                  text: `Based on ${usd(r.volume)} annual volume and ${num(r.files)} files at a ${r.loSplit}/${100 - Number(r.loSplit)} split: you keep ${r.loSplit}% of gross commission, Hometown Lending keeps ${100 - Number(r.loSplit)}%. ${r.splitSource === "override" ? "This split reflects terms discussed for this offer rather than the standard volume tiers." : "Bands are set by monthly funded volume — up to $2M/month is 80/20, $2M–$4M is 85/15, above $4M is 90/10."}${r.selfReported ? " These production figures were entered by hand, not pulled from RETR records." : ""} All figures are illustrative, not an offer of employment or compensation.`,
                   italics: true,
                   color: GRAY,
                   size: 18,

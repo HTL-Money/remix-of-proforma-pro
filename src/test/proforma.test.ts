@@ -10,6 +10,7 @@ import {
   NONQM_FEE,
   CORR_FEE,
   SPLIT_TIERS,
+  OVERRIDE_SPLITS,
   tierForAnnualVolume,
 } from "@/lib/proforma";
 
@@ -1068,5 +1069,62 @@ describe("hydrate: legacy saves can't resurrect retired inputs", () => {
     const calc = calculate(state);
     expect(calc.loSplitPct).toBe(80); // derived from volume, not the stored 90
     expect(state.annualVolume).toBe(10_000_000); // everything else survives
+  });
+});
+
+describe("splitOverride — admin-granted band, derivation stays the default", () => {
+  const at = (annualVolume: number, splitOverride: number | null = null) =>
+    calculate({ ...defaultState(), annualVolume, annualFiles: 100, avgLoanAmount: annualVolume / 100, splitOverride });
+
+  it("derives when no override is set — all three bands, boundaries in the upper band", () => {
+    expect(at(10_000_000).loSplitPct).toBe(80);
+    expect(at(24_000_000).loSplitPct).toBe(85);
+    expect(at(48_000_000).loSplitPct).toBe(90);
+    for (const v of [10_000_000, 24_000_000, 48_000_000]) {
+      expect(at(v).splitSource).toBe("derived");
+    }
+  });
+
+  it("applies each published override regardless of volume", () => {
+    for (const pct of [80, 85, 90]) {
+      const c = at(10_000_000, pct);
+      expect(c.loSplitPct).toBe(pct);
+      expect(c.splitTier.loPct + c.splitTier.htlPct).toBe(100);
+    }
+  });
+
+  it("reports override only when it actually departs from the derived band", () => {
+    expect(at(10_000_000, 90).splitSource).toBe("override");
+    // Picking the band the volume already earns is not a departure.
+    expect(at(10_000_000, 80).splitSource).toBe("derived");
+  });
+
+  it("always exposes what the volume earns on its own, so an override can be audited", () => {
+    const c = at(10_000_000, 90);
+    expect(c.derivedTier.loPct).toBe(80);
+    expect(c.loSplitPct).toBe(90);
+  });
+
+  it("an override below the earned band is allowed — quoting under band needs no privilege", () => {
+    const c = at(48_000_000, 80);
+    expect(c.loSplitPct).toBe(80);
+    expect(c.splitSource).toBe("override");
+  });
+
+  // A bad value must never manufacture a split that isn't in the comp plan.
+  it("falls back to the derived band on a value outside the published tiers", () => {
+    for (const bad of [95, 50, 0, -10, 82]) {
+      const c = at(10_000_000, bad);
+      expect(c.loSplitPct).toBe(80);
+      expect(c.splitSource).toBe("derived");
+    }
+  });
+
+  it("actually moves the money: 90 on $10M pays more than the earned 80", () => {
+    expect(at(10_000_000, 90).finalLoNetComp).toBeGreaterThan(at(10_000_000).finalLoNetComp);
+  });
+
+  it("OVERRIDE_SPLITS is read from the tier table, never a parallel literal", () => {
+    expect(OVERRIDE_SPLITS).toEqual(SPLIT_TIERS.map(t => t.loPct));
   });
 });

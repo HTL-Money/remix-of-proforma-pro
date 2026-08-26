@@ -30,6 +30,7 @@ import { Chips } from "@/components/Chips";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import { CloudSave } from "@/components/CloudSave";
 import { PublicRecapCta } from "@/components/PublicRecapCta";
+import { OVERRIDE_SPLITS } from "@/lib/proforma";
 import { NmlsGate } from "@/components/NmlsGate";
 import { applyRetrResult } from "@/lib/retrApply";
 import {
@@ -922,6 +923,44 @@ const Index = () => {
               <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums">
                 {state.avgLoanAmount > 0 ? fmtUSD(Math.round(state.avgLoanAmount)) : <span className="text-muted-foreground text-sm">—</span>}
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>HTL LO Split</Label>
+              {/* Admin-only override across the published tiers. Chrome, not the
+                  boundary: send-recap recomputes the band from volume and
+                  refuses a better split from anyone but a verified admin, so
+                  hiding this control is UX, not security. isAdmin is tri-state
+                  (null = resolving) — render only on an explicit true. */}
+              {isAdmin === true ? (
+                <>
+                  <Chips
+                    aria-label="HTL LO split"
+                    options={OVERRIDE_SPLITS.map(pct => ({ label: `${pct}/${100 - pct}`, value: String(pct) }))}
+                    value={String(calc.loSplitPct)}
+                    onChange={v => {
+                      const pct = Number(v);
+                      // Picking the band the volume already earns clears the
+                      // override instead of storing a redundant one, so the
+                      // split keeps tracking volume again from that point.
+                      setState(s => ({ ...s, splitOverride: pct === calc.derivedTier.loPct ? null : pct }));
+                    }}
+                  />
+                  {calc.splitSource === "override" ? (
+                    <p className="text-xs font-semibold text-accent">
+                      Override — this volume earns {calc.derivedTier.loPct}/{calc.derivedTier.htlPct}. Recorded on send.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Derived from volume — $24M and $48M/yr band breaks. Pick a higher band to override.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="max-w-[200px] h-10 flex items-center px-3 rounded-md border border-input bg-muted/40 tabular-nums font-semibold">
+                    {calc.splitTier.loPct}/{calc.splitTier.htlPct}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Set by annual volume — updates live.</p>
+                </>
+              )}
             </div>
             <div className="space-y-2 md:col-span-2 lg:col-span-4">
               <Label>Loan Type Mix</Label>

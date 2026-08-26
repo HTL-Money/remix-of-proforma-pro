@@ -28,6 +28,10 @@ interface SubmissionRow {
   recruitEmail: string | null;
   annualVolume: number | null;
   loSplit: number | null;
+  /** 'override' = an admin granted a band the volume doesn't earn — badged so
+   *  "was this 90 earned or given, and by whom?" is answerable at a glance. */
+  splitSource: string | null;
+  splitOverriddenBy: string | null;
   employeeCount: number | null;
   payrollOverhead: number | null;
   derivedHoldbackPct: number | null;
@@ -65,6 +69,9 @@ const Submissions = () => {
   const [rows, setRows] = useState<SubmissionRow[]>([]);
   const [claims, setClaims] = useState<Record<string, SourcingClaim>>({});
   const [sent, setSent] = useState<Record<string, SentRecord>>({});
+  // id → email for the whole team (50 rows, team-readable) — resolves the
+  // admin behind a split override without a per-row lookup.
+  const [directory, setDirectory] = useState<Record<string, string>>({});
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   // Two-tap delete, same as CloudSave: first tap arms, second confirms.
@@ -92,7 +99,7 @@ const Submissions = () => {
         const sb = requireSupabase();
         const { data, error } = await sb
           .from("proformas")
-          .select("id, name, source, nmls, recruit_email, annual_volume, lo_split, employee_count, payroll_overhead, derived_holdback_pct, final_lo_net, updated_at")
+          .select("id, name, source, nmls, recruit_email, annual_volume, lo_split, split_source, split_overridden_by, employee_count, payroll_overhead, derived_holdback_pct, final_lo_net, updated_at")
           .order("updated_at", { ascending: false })
           .limit(200);
         if (error) throw new Error(error.message);
@@ -104,6 +111,8 @@ const Submissions = () => {
           recruitEmail: r.recruit_email == null ? null : String(r.recruit_email),
           annualVolume: num(r.annual_volume),
           loSplit: num(r.lo_split),
+          splitSource: r.split_source == null ? null : String(r.split_source),
+          splitOverriddenBy: r.split_overridden_by == null ? null : String(r.split_overridden_by),
           employeeCount: num(r.employee_count),
           payrollOverhead: num(r.payroll_overhead),
           derivedHoldbackPct: num(r.derived_holdback_pct),
@@ -111,6 +120,15 @@ const Submissions = () => {
           at: String(r.updated_at),
         }));
         setRows(mapped);
+
+        // Full directory once — tiny, and both the override badge and any
+        // future who-did-what column can resolve ids from it. Best-effort.
+        try {
+          const { data: dir } = await sb.from("team_directory").select("id, email");
+          setDirectory(Object.fromEntries((dir ?? []).map((d: Record<string, unknown>) => [String(d.id), String(d.email ?? "")])));
+        } catch (e) {
+          console.warn("Team directory unavailable:", e);
+        }
 
         // Attribution is a second, narrower fetch (only the NMLS values on
         // this page) merged client-side — keeps the main query shape simple
@@ -214,6 +232,13 @@ const Submissions = () => {
     );
   };
 
+  // The setter of an overridden split, resolved through team_directory the same
+  // way the HTL5 claim column resolves sourcers. split_overridden_by is only
+  // written server-side at send time, so a saved-but-never-sent override shows
+  // the badge with no name — accurate: nobody has sent it yet.
+  const overriderEmail = (r: SubmissionRow): string | null =>
+    r.splitOverriddenBy ? (directory[r.splitOverriddenBy] ?? r.splitOverriddenBy.slice(0, 8)) : null;
+
   const claimCell = (nmls: string | null) => {
     const claim = nmls ? claims[nmls] : undefined;
     if (!claim) return <span className="text-white/40">unclaimed</span>;
@@ -309,6 +334,15 @@ const Submissions = () => {
                     <td className="px-2 text-white/85 tabular-nums">{r.annualVolume == null ? "—" : fmtUSD(r.annualVolume, { compact: true })}</td>
                     <td className="px-2 text-white/85 tabular-nums">
                       {r.loSplit == null ? "—" : `${r.loSplit}/${100 - r.loSplit}`}
+                      {r.splitSource === "override" && (
+                        <span
+                          className="ml-1.5 text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5 font-semibold"
+                          style={{ background: "hsl(var(--accent) / 0.18)", color: "hsl(var(--accent))" }}
+                          title={`Split granted by an admin${overriderEmail(r) ? ` (${overriderEmail(r)})` : ""} — the volume-derived band did not apply.`}
+                        >
+                          override
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 text-white/65 tabular-nums">{r.employeeCount ?? "—"}</td>
                     <td className="px-2 text-white/85 tabular-nums">{usd(r.payrollOverhead)}</td>

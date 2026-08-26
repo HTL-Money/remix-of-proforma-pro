@@ -19,6 +19,8 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   // payload — the function validates it with isNum, which also closes an
   // HTML-injection hole. Do not make this nullable.
   loSplit: calc.loSplitPct,
+  splitSource: calc.splitSource,
+  derivedSplit: calc.derivedTier.loPct,
   corrActive: state.buckets.some(b => b.channel === "Correspondent" && b.active),
   current: { annual: calc.currentPlatformAnnual, monthly: calc.currentPlatformMonthly },
   htl: { annual: calc.finalLoNetComp, monthly: calc.monthlyLoNet },

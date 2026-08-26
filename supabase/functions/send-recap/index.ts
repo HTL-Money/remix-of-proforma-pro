@@ -25,6 +25,7 @@ import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow }
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 import { SYSTEM_PROMPT, buildNarrativePrompt, validateNarrative } from "./narrativePrompt.ts";
 import { mintUnsubscribeToken } from "../unsubscribe/token.ts";
+import { tierForAnnualVolume } from "./splitTiers.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -916,6 +917,39 @@ Deno.serve(async (req: Request) => {
     return json(200, { ok: true, suppressed: "negative_gain" });
   }
 
+  // Split gate. The UI only shows the 80/85/90 override to admins, but UI
+  // gating is chrome (CLAUDE.md): this function runs verify_jwt=false and the
+  // anon key ships in the bundle, so the payload's loSplit is attacker-chosen.
+  // Recompute the band the volume actually earns and refuse a better claimed
+  // split from anyone but a VERIFIED admin. A worse-than-earned split is always
+  // allowed — quoting below band harms nobody and needs no privilege.
+  //
+  // Refuse rather than clamp: silently downgrading would email the recruit
+  // different numbers than the sender saw on screen, which is worse than a
+  // clear error. All the payload's comp figures were computed client-side at
+  // the claimed split, so no honest email exists to salvage here.
+  let splitOverrideBy: string | null = null;
+  {
+    // Same annualization as calculate(): a 6-month $15M pull is a $30M/yr pace.
+    const months = typeof recap.periodMonths === "number" && recap.periodMonths > 0 ? recap.periodMonths : 12;
+    const derived = tierForAnnualVolume((recap.volume ?? 0) * (12 / months)).loPct;
+    if (recap.loSplit > derived) {
+      const senderIsAdmin = senderId && supabaseUrl && serviceKey
+        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+        : false;
+      if (!senderIsAdmin) {
+        console.warn(`split gate: refused ${recap.loSplit}% on volume earning ${derived}% (sender ${senderId ?? "anonymous"})`);
+        return json(403, {
+          error: "split_not_earned",
+          message: `A ${recap.loSplit}/${100 - recap.loSplit} split needs an admin — this volume qualifies for ${derived}/${100 - derived} under the published tiers.`,
+          derivedSplit: derived,
+        });
+      }
+      splitOverrideBy = senderId;
+      console.log(`split gate: admin ${senderId} overrode ${derived}% -> ${recap.loSplit}%`);
+    }
+  }
+
   // HTL5 claim gate. Sits with the other refuse-to-send guards, BEFORE the
   // Graph call, because recordSourcing runs after the send and is explicitly
   // forbidden from blocking it — a stop has to happen here or not at all.
@@ -1068,6 +1102,24 @@ Deno.serve(async (req: Request) => {
     }
   } catch (e) {
     console.error("recap_emails log failed (non-fatal)", e);
+  }
+
+  // Split-override audit: stamp WHO granted the non-standard split onto the
+  // proforma row, service-role and post-send only — the client's split_source
+  // is display, this is the trusted record. Best-effort like the rest of the
+  // tail: the email already went, bookkeeping must not surface a failure.
+  if (splitOverrideBy && supabaseUrl && serviceKey && UUID_RE.test(recap.proformaId ?? "")) {
+    try {
+      const resp = await fetch(`${supabaseUrl}/rest/v1/proformas?id=eq.${encodeURIComponent(recap.proformaId!)}`, {
+        method: "PATCH",
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ split_source: "override", split_overridden_by: splitOverrideBy }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!resp.ok) console.error("split audit write failed", resp.status, await resp.text().catch(() => ""));
+    } catch (e) {
+      console.error("split audit write failed (non-fatal)", e);
+    }
   }
 
   // HTL5 referral-sourcing: a signed-in team member's send, or a recruit

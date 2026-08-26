@@ -350,3 +350,23 @@ describe("renderRecapHtml — CAN-SPAM footer honesty", () => {
     expect(html).not.toContain("<script>alert(1)</script>");
   });
 });
+
+describe("renderRecapHtml — overridden split wording", () => {
+  const p = () => buildRecapPayload("Jane — 90%", goldenState(), calculate(goldenState()));
+
+  it("marks an overridden split as agreed for this offer", () => {
+    const html = renderRecapHtml({ ...p(), loSplit: 90, splitSource: "override", derivedSplit: 85 }, {});
+    expect(html).toContain("90/10 — you keep 90% (agreed for this offer)");
+  });
+
+  it("says nothing extra on a derived split — today's behaviour unchanged", () => {
+    const html = renderRecapHtml(p(), {});
+    expect(html).not.toContain("agreed for this offer");
+  });
+
+  it("treats a payload predating the feature as derived", () => {
+    const legacy = { ...p() };
+    delete legacy.splitSource;
+    expect(renderRecapHtml(legacy, {})).not.toContain("agreed for this offer");
+  });
+});

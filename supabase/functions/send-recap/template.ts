@@ -44,6 +44,15 @@ export interface RecapPayload {
    *  "self-reported" note so a hand-entered pro forma is never mistaken for
    *  verified data. Optional for backward-compat → old payloads are RETR-era. */
   selfReported?: boolean;
+  /** How the split was arrived at. "override" = an admin granted a band the
+   *  volume doesn't earn on its own; the documents then stop asserting the
+   *  tier table (its sentence would contradict the number beside it) and say
+   *  the split was agreed for this offer instead. Absent = "derived" — every
+   *  payload predating the override feature. */
+  splitSource?: "derived" | "override";
+  /** The band the volume earns by itself — travels alongside so the server can
+   *  cross-check and an audit never has to re-derive it. */
+  derivedSplit?: number;
 }
 
 const usd = (n: number) =>
@@ -385,7 +394,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${detailRow(`${periodTitle(months)} funded volume`, usd(r.volume))}
             ${detailRow(`${periodTitle(months)} funded files`, num(r.files))}
             ${detailRow("Average loan amount", usd(r.avgLoan))}
-            ${detailRow("HTL LO split", `${Number(r.loSplit)}/${100 - Number(r.loSplit)} — you keep ${Number(r.loSplit)}%`)}
+            ${detailRow("HTL LO split", `${Number(r.loSplit)}/${100 - Number(r.loSplit)} — you keep ${Number(r.loSplit)}%${r.splitSource === "override" ? " (agreed for this offer)" : ""}`)}
             ${detailRow("Channel strategy", r.corrActive ? "Broker + Correspondent" : "Broker Only")}
             ${r.currentBps != null ? detailRow("Current platform comp", `${Number(r.currentBps)} BPS`) : ""}
           </table>
