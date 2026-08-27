@@ -231,6 +231,36 @@ const RecruitLinks = () => {
     }
     setSending(true);
     try {
+      // Non-admin path: the owner's consent rule. LOs don't send the pro forma
+      // cold any more — they send the figure-free INVITE, and the recap unlocks
+      // when the recruit clicks. The server enforces this regardless (send-recap
+      // refuses no-consent sends with 403), so this branch is the honest UI for
+      // the rule, not the rule itself. Admins keep the direct send.
+      if (isAdmin !== true) {
+        const sb = requireSupabase();
+        const { data, error } = await sb.functions.invoke("recruit-optin", {
+          body: { action: "invite", nmls, email: to, name: sendName.trim() || undefined },
+        });
+        if (error) {
+          const ctx = (error as { context?: Response }).context;
+          let msg = error.message || "The invite couldn't be sent.";
+          if (ctx && typeof ctx.json === "function") {
+            try { const b = await ctx.json(); msg = b?.message || b?.error || msg; } catch { /* keep msg */ }
+          }
+          throw new Error(msg);
+        }
+        if (data?.suppressed) {
+          toast({ title: "This recruit has unsubscribed", description: "They're on the do-not-email list, so no invite was sent.", variant: "destructive" });
+        } else if (data?.alreadyConsented) {
+          toast({ title: "Already opted in", description: "This recruit already said yes — ask an admin to send the pro forma directly." });
+        } else {
+          toast({ title: "Invite sent", description: `${to} gets the figure-free invitation — the pro forma unlocks the moment they click it. Replies come to you.` });
+        }
+        setSendNmls(""); setSendEmail(""); setSendName(""); setSendBps("");
+        setClaimWarning(null);
+        return;
+      }
+
       // Live production pull — a direct send is only worth sending with real
       // numbers. No data → point the LO at Share a Link so the recruit can
       // enter production themselves.

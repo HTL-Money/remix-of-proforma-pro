@@ -1004,6 +1004,38 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // Opt-in gate — the owner's consent rule: an LO-initiated recap only goes to
+  // a recruit who clicked the invitation (recruit_optins, 12-month window; the
+  // 53 pre-gate recipients are deliberately NOT grandfathered). Internal
+  // recipients are previews and stay open; anonymous/PURL sends ARE the recruit
+  // requesting it themselves, which is the consent this gate exists to collect.
+  // Admin override, same shape as every other gate; fail OPEN on infrastructure
+  // errors, fail CLOSED on the admin lookup.
+  if (senderId && supabaseUrl && serviceKey && !normalizeEmail(to).endsWith("@hometownlend.com")) {
+    try {
+      const resp = await fetch(
+        `${supabaseUrl}/rest/v1/recruit_optins?recruit_email=eq.${encodeURIComponent(normalizeEmail(to))}` +
+          `&consented_at=not.is.null&consent_expires_at=gt.${encodeURIComponent(new Date().toISOString())}` +
+          `&select=consented_at&limit=1`,
+        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(10_000) },
+      );
+      if (!resp.ok) throw new Error(`optin lookup ${resp.status}`);
+      const consent = await resp.json();
+      if (!Array.isArray(consent) || consent.length === 0) {
+        const senderIsAdmin = await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId);
+        if (!senderIsAdmin) {
+          console.log(`optin gate: refused send to ${normalizeEmail(to)} — no live consent (sender ${senderId})`);
+          return json(403, {
+            error: "no_optin",
+            message: "This recruit hasn't opted in yet. Send them an invite from the Links page — the pro forma unlocks the moment they click it.",
+          });
+        }
+      }
+    } catch (e) {
+      console.error("optin gate check failed (send allowed)", e);
+    }
+  }
+
   // Repeat gate — the owner's strict rule, chosen after the first week's live
   // data: one pro forma per NMLS, full stop. The claim gate above only stops
   // OTHER LOs; this blocks a second send even from the original sender, so a
