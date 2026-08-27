@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE } from "../../supabase/functions/send-recap/sourcing";
+import { decideRepeatSend, decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE } from "../../supabase/functions/send-recap/sourcing";
 import { REFERRAL_TOKEN_RE as CLIENT_RE, buildReferralUrl, CANONICAL_ORIGIN } from "@/lib/referral";
 
 const SENDER_A = "11111111-1111-1111-1111-111111111111";
@@ -144,5 +144,27 @@ describe("decideSourcingAction — admin override", () => {
     expect(decideSourcingAction(live(), SENDER_A, NOW, admin)).toEqual({ kind: "noop" });
     const expired = { nmls: "123456", sourced_by: SENDER_A, expires_at: new Date(NOW - 1000).toISOString() };
     expect(decideSourcingAction(expired, SENDER_B, NOW, admin)).toEqual({ kind: "reassign", previousSourcedBy: SENDER_A });
+  });
+});
+
+describe("decideRepeatSend — one pro forma per NMLS, strict by owner's decision", () => {
+  it("allows the first send", () => {
+    expect(decideRepeatSend(null)).toEqual({ kind: "allow" });
+  });
+
+  // The strict rule's whole point: the ORIGINAL sender is blocked too. The
+  // claim gate already stopped other LOs; this stops repeats outright.
+  it("blocks a repeat for a non-admin, carrying when the first send happened", () => {
+    expect(decideRepeatSend("2026-08-21T15:16:00Z")).toEqual({
+      kind: "blocked_repeat", lastSentAt: "2026-08-21T15:16:00Z",
+    });
+    expect(decideRepeatSend("2026-08-21T15:16:00Z", {})).toEqual({
+      kind: "blocked_repeat", lastSentAt: "2026-08-21T15:16:00Z",
+    });
+    expect(decideRepeatSend("2026-08-21T15:16:00Z", { senderIsAdmin: false }).kind).toBe("blocked_repeat");
+  });
+
+  it("lets an admin through — the override shape every gate shares", () => {
+    expect(decideRepeatSend("2026-08-21T15:16:00Z", { senderIsAdmin: true })).toEqual({ kind: "allow" });
   });
 });

@@ -53,6 +53,24 @@ export const decideSourcingAction = (
   return { kind: "reassign", previousSourcedBy: existing.sourced_by }; // expired — allowed, but must be logged/alerted
 };
 
+/** The strict one-per-NMLS rule, chosen by the owner after the first week's
+ *  live data (233 sends from one LO, ~27% unsubscribe rate): once ANY pro
+ *  forma has gone to an external recipient for this NMLS, a further send needs
+ *  an admin — including from the original sender. This sits on top of the
+ *  claim gate, which only stops OTHER LOs; this one stops repeats outright.
+ *
+ *  Pure and injected like decideSourcingAction, so the rule is unit-testable:
+ *  callers pass the timestamp of the last external send (or null) and the
+ *  verified admin flag. */
+export const decideRepeatSend = (
+  lastExternalSentAt: string | null,
+  opts: { senderIsAdmin?: boolean } = {},
+): { kind: "allow" } | { kind: "blocked_repeat"; lastSentAt: string } => {
+  if (!lastExternalSentAt) return { kind: "allow" };
+  if (opts.senderIsAdmin) return { kind: "allow" };
+  return { kind: "blocked_repeat", lastSentAt: lastExternalSentAt };
+};
+
 export const expiryTimestamp = (nowMs: number, expiryDays: number): string =>
   new Date(nowMs + expiryDays * 24 * 60 * 60 * 1000).toISOString();
 

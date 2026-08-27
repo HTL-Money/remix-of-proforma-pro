@@ -21,7 +21,7 @@
 // rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
-import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
+import { decideRepeatSend, decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 import { SYSTEM_PROMPT, buildNarrativePrompt, validateNarrative } from "./narrativePrompt.ts";
 import { mintUnsubscribeToken } from "../unsubscribe/token.ts";
@@ -722,6 +722,23 @@ const resolveSenderIsAdmin = async (url: string, key: string, senderId: string):
   }
 };
 
+/** When a recap last went to an EXTERNAL recipient for this NMLS, or null.
+ *  Internal (@hometownlend.com) sends are previews and tests — they must not
+ *  lock an NMLS, or an admin test-sending to themselves would freeze the real
+ *  recruit behind an override. recap_emails.payload->>'nmls' is unindexed;
+ *  fine at hundreds of rows, worth an expression index past ~50k. */
+const lastExternalSendFor = async (url: string, key: string, nmls: string): Promise<string | null> => {
+  const resp = await fetch(
+    `${url}/rest/v1/recap_emails?select=created_at&payload->>nmls=eq.${encodeURIComponent(nmls)}` +
+      `&status=eq.sent&sent_to=not.ilike.${encodeURIComponent("*@hometownlend.com")}` +
+      `&order=created_at.desc&limit=1`,
+    { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+  );
+  if (!resp.ok) throw new Error(`recap_emails lookup ${resp.status}`);
+  const rows = await resp.json();
+  return Array.isArray(rows) && rows[0]?.created_at ? String(rows[0].created_at) : null;
+};
+
 /** Records who sourced this LO, first-sender-wins with a configurable
  *  expiry. Runs AFTER a successful send. Never surfaced to the recipient —
  *  purely backend bookkeeping. */
@@ -984,6 +1001,36 @@ Deno.serve(async (req: Request) => {
       // stop legitimate recruiting. The worst case is the old behaviour —
       // the send goes out and recordSourcing sorts the credit out after.
       console.error("claim gate check failed (send allowed)", e);
+    }
+  }
+
+  // Repeat gate — the owner's strict rule, chosen after the first week's live
+  // data: one pro forma per NMLS, full stop. The claim gate above only stops
+  // OTHER LOs; this blocks a second send even from the original sender, so a
+  // follow-up re-send goes through an admin. Same senderId keying as the other
+  // gates: anonymous/PURL recruits re-requesting their own pro forma are never
+  // blocked, and the same fail-open posture on infrastructure errors.
+  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+    const nmls = recap.nmls.trim();
+    try {
+      const lastSent = await lastExternalSendFor(supabaseUrl, serviceKey, nmls);
+      const senderIsAdmin = lastSent
+        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+        : false; // only worth the round-trip when a prior send exists
+      const decision = decideRepeatSend(lastSent, { senderIsAdmin });
+      if (decision.kind === "blocked_repeat") {
+        console.log(`repeat gate: refused resend for ${nmls}, first sent ${decision.lastSentAt} (sender ${senderId})`);
+        // Deliberately carries the date but NOT the recipient address —
+        // recap_emails is own-or-admin, and this message may be shown to a
+        // different LO than the original sender.
+        return json(409, {
+          error: "already_sent",
+          message: `A pro forma already went out for NMLS ${nmls} on ${new Date(decision.lastSentAt).toLocaleDateString("en-US")}. Repeat sends need an admin.`,
+          lastSentAt: decision.lastSentAt,
+        });
+      }
+    } catch (e) {
+      console.error("repeat gate check failed (send allowed)", e);
     }
   }
 

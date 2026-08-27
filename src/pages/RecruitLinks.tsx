@@ -178,16 +178,32 @@ const RecruitLinks = () => {
     }
   };
 
-  /** On NMLS blur: if someone else already holds an unexpired claim on this
-   *  recruit, say so early rather than letting the LO fill the whole form and
-   *  get refused. Advisory only — the real enforcement is the server-side gate
-   *  in send-recap, which returns 409 and sends nothing. */
+  /** On NMLS blur: if this send is going to be refused, say so early rather
+   *  than letting the LO fill the whole form. Two checks, both advisory only —
+   *  the real enforcement is server-side in send-recap:
+   *    1. someone else holds an unexpired claim (409 already_claimed), and
+   *    2. the strict one-per-NMLS rule — a recap already went out, including
+   *       the LO's own (409 already_sent). RLS only shows the LO their OWN
+   *       prior sends, so a repeat of someone else's send surfaces only at the
+   *       server; the claim warning usually covers that case anyway. */
   const checkExistingClaim = async () => {
     setClaimWarning(null);
     const nmls = normalizeNmls(sendNmls);
     if (!nmls) return;
     try {
       const sb = requireSupabase();
+      const { data: prior } = await sb
+        .from("recap_emails")
+        .select("created_at")
+        .eq("payload->>nmls", nmls)
+        .eq("status", "sent")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (prior) {
+        setClaimWarning(`You already sent this NMLS a pro forma on ${new Date(String(prior.created_at)).toLocaleDateString()} — repeat sends are blocked. Ask an admin if they need a fresh one.`);
+        return;
+      }
       const { data } = await sb.from("lo_sourcing").select("sourced_by, expires_at").eq("nmls", nmls).maybeSingle();
       if (!data) return;
       const expires = new Date(String(data.expires_at));
