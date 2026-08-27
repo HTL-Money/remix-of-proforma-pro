@@ -21,8 +21,11 @@
 // rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
-import { decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
+import { decideRepeatSend, decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
+import { SYSTEM_PROMPT, buildNarrativePrompt, validateNarrative } from "./narrativePrompt.ts";
+import { mintUnsubscribeToken } from "../unsubscribe/token.ts";
+import { tierForAnnualVolume } from "./splitTiers.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -113,6 +116,38 @@ const REPLY_TO = Deno.env.get("RECAP_REPLY_TO") || "aryanj@hometownlend.com";
 // mailto in the email footer is the compliant unsubscribe mechanism.
 const UNSUBSCRIBE_MAILTO = "marketing@hometownlend.com";
 
+/** Signed one-click unsubscribe URL for this recipient, or null when the secret
+ *  isn't configured (the footer then falls back to the mailto, as before).
+ *  Built from SUPABASE_URL so it needs no separate config. */
+const unsubscribeUrlFor = async (email: string): Promise<string | null> => {
+  const secret = Deno.env.get("UNSUBSCRIBE_SECRET");
+  const base = Deno.env.get("SUPABASE_URL");
+  if (!secret || !base) return null;
+  try {
+    return `${base}/functions/v1/unsubscribe?t=${encodeURIComponent(await mintUnsubscribeToken(email, secret))}`;
+  } catch (e) {
+    console.error("unsubscribe URL mint failed (falling back to mailto)", e);
+    return null;
+  }
+};
+
+/** RFC 8058 header pair. One-Click is only legitimate alongside an HTTPS URL —
+ *  the previous version declared List-Unsubscribe=One-Click with a mailto only,
+ *  which is malformed and may be disregarded outright.
+ *
+ *  NOTE: Microsoft Graph's internetMessageHeaders only accepts custom `x-*`
+ *  names, so it cannot carry List-Unsubscribe at all. On the Graph path the
+ *  in-body footer link IS the opt-out mechanism, which is why that link had to
+ *  become a real HTTPS one-click URL rather than staying a mailto. */
+const unsubscribeHeaders = (httpsUrl: string | null): Record<string, string> =>
+  httpsUrl
+    ? {
+        "List-Unsubscribe": `<${httpsUrl}>, <mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      }
+    // No HTTPS endpoint available: advertise only what actually works.
+    : { "List-Unsubscribe": `<mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>` };
+
 /** Look up `to` on the opt-out list. The verdict logic (and the FAIL-CLOSED
  *  policy rationale) lives in suppression.ts where vitest can reach it. */
 const checkSuppression = async (supabaseUrl: string, serviceKey: string, to: string) => {
@@ -190,6 +225,10 @@ interface RecapAttachments {
   docx?: string;
   /** Base64 Gamma PDF — the "Documented Pro Forma" the recruit receives. */
   pdf?: string;
+  /** Signed one-click unsubscribe URL for this recipient. Not an attachment,
+   *  but it rides along here because it's per-send and both providers need it
+   *  at exactly the point the attachments are assembled. */
+  unsubscribeUrl?: string;
 }
 
 const sendViaGraph = async (cfg: GraphConfig, to: string, subject: string, html: string, att: RecapAttachments, bcc: string[]): Promise<void> => {
@@ -265,8 +304,7 @@ const sendViaResend = async (apiKey: string, to: string, subject: string, html: 
     html,
     reply_to: REPLY_TO,
     headers: {
-      "List-Unsubscribe": `<mailto:${UNSUBSCRIBE_MAILTO}?subject=Unsubscribe>`,
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      ...unsubscribeHeaders(att.unsubscribeUrl ?? null),
     },
   };
   if (bcc.length > 0) emailBody.bcc = bcc;
@@ -324,6 +362,69 @@ const toBase64 = (bytes: Uint8Array): string => {
  * null as "send the email without the attachment" — a recap email going out
  * plain is always better than no email at all.
  */
+/** Writes the one personalized opening paragraph via the Claude API.
+ *
+ *  Best-effort by design, and the failure mode is deliberately boring: every
+ *  problem — no API key, HTTP error, timeout, malformed response, or text that
+ *  breaks the no-figures rule — returns null, and the email renders without the
+ *  paragraph. Nothing downstream depends on it, because every number in the
+ *  recap comes from the validated payload instead.
+ *
+ *  ANTHROPIC_API_KEY unset is the normal "feature off" state, not an error, so
+ *  it doesn't log. */
+const generateNarrative = async (recap: RecapPayload): Promise<string | null> => {
+  const key = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!key) return null;
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: Deno.env.get("NARRATIVE_MODEL") || "claude-sonnet-5",
+        max_tokens: 300,
+        system: SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: buildNarrativePrompt({
+            loName: recap.loName,
+            volume: recap.volume,
+            files: recap.files,
+            // Team payroll is what makes the summary a three-way split rather
+            // than a two-way one; same trigger the Gamma deck uses.
+            hasTeam: (recap.totals?.brokerPaidTotal ?? 0) > 0,
+            selfReported: recap.selfReported === true,
+          }),
+        }],
+      }),
+      // Short on purpose: this rides in front of a send the recruit is waiting
+      // on. Better a plain email now than a personalized one a minute late.
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!resp.ok) {
+      console.error("narrative http", resp.status, await resp.text().catch(() => ""));
+      return null;
+    }
+    const data = await resp.json() as { content?: { type?: string; text?: string }[] };
+    const text = (data.content ?? [])
+      .filter(b => b?.type === "text")
+      .map(b => b.text ?? "")
+      .join("")
+      .trim();
+    // validateNarrative is the enforcement, not the prompt. A model that
+    // ignores the brief gets dropped rather than printed.
+    const ok = validateNarrative(text);
+    if (!ok) console.error("narrative rejected by validator", JSON.stringify(text).slice(0, 200));
+    return ok;
+  } catch (e) {
+    console.error("narrative failed", e);
+    return null;
+  }
+};
+
 const fetchDocumentedProforma = async (
   supabaseUrl: string,
   serviceKey: string,
@@ -598,6 +699,46 @@ const sendNegativeGainAlert = async (recap: RecapPayload, recruitTo: string, gai
   }
 };
 
+/** Is this VERIFIED sender an admin? Used only to let an admin override another
+ *  LO's live claim. app_admins is email-keyed, so the sender's address is
+ *  resolved through the Auth Admin API rather than taken from the request.
+ *
+ *  Fails CLOSED: any error returns false. An override is the permissive path, so
+ *  a lookup hiccup must deny it rather than hand it out. */
+const resolveSenderIsAdmin = async (url: string, key: string, senderId: string): Promise<boolean> => {
+  try {
+    const email = await lookupUserEmail(url, key, senderId);
+    if (!email) return false;
+    const resp = await fetch(
+      `${url}/rest/v1/app_admins?email=eq.${encodeURIComponent(email.toLowerCase())}&select=email`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!resp.ok) return false;
+    const rows = await resp.json();
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (e) {
+    console.error("admin lookup failed (treated as non-admin)", e);
+    return false;
+  }
+};
+
+/** When a recap last went to an EXTERNAL recipient for this NMLS, or null.
+ *  Internal (@hometownlend.com) sends are previews and tests — they must not
+ *  lock an NMLS, or an admin test-sending to themselves would freeze the real
+ *  recruit behind an override. recap_emails.payload->>'nmls' is unindexed;
+ *  fine at hundreds of rows, worth an expression index past ~50k. */
+const lastExternalSendFor = async (url: string, key: string, nmls: string): Promise<string | null> => {
+  const resp = await fetch(
+    `${url}/rest/v1/recap_emails?select=created_at&payload->>nmls=eq.${encodeURIComponent(nmls)}` +
+      `&status=eq.sent&sent_to=not.ilike.${encodeURIComponent("*@hometownlend.com")}` +
+      `&order=created_at.desc&limit=1`,
+    { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
+  );
+  if (!resp.ok) throw new Error(`recap_emails lookup ${resp.status}`);
+  const rows = await resp.json();
+  return Array.isArray(rows) && rows[0]?.created_at ? String(rows[0].created_at) : null;
+};
+
 /** Records who sourced this LO, first-sender-wins with a configurable
  *  expiry. Runs AFTER a successful send. Never surfaced to the recipient —
  *  purely backend bookkeeping. */
@@ -610,8 +751,13 @@ const recordSourcing = async (supabaseUrl: string, serviceKey: string, nmls: str
     await reassignSourcingRow(supabaseUrl, serviceKey, nmls, action.previousSourcedBy, senderId);
     await sendSourcingAlert(nmls, action.previousSourcedBy, senderId);
   }
-  // "noop" — either the same sourcer sent again, or the row is still within
-  // its expiry window (protects the original recruiter from being overwritten).
+  // Nothing to write for "noop" (same sourcer resending) or "blocked".
+  //
+  // "blocked" reaching here means the pre-send gate deliberately let this
+  // through: an admin overriding someone else's live claim. Leaving the row
+  // untouched is the whole point of the override — the send is permitted, the
+  // credit stays with whoever earned it. Named explicitly so a future reader
+  // doesn't "fix" it into a reassignment.
 };
 
 Deno.serve(async (req: Request) => {
@@ -788,6 +934,106 @@ Deno.serve(async (req: Request) => {
     return json(200, { ok: true, suppressed: "negative_gain" });
   }
 
+  // Split gate. The UI only shows the 80/85/90 override to admins, but UI
+  // gating is chrome (CLAUDE.md): this function runs verify_jwt=false and the
+  // anon key ships in the bundle, so the payload's loSplit is attacker-chosen.
+  // Recompute the band the volume actually earns and refuse a better claimed
+  // split from anyone but a VERIFIED admin. A worse-than-earned split is always
+  // allowed — quoting below band harms nobody and needs no privilege.
+  //
+  // Refuse rather than clamp: silently downgrading would email the recruit
+  // different numbers than the sender saw on screen, which is worse than a
+  // clear error. All the payload's comp figures were computed client-side at
+  // the claimed split, so no honest email exists to salvage here.
+  let splitOverrideBy: string | null = null;
+  {
+    // Same annualization as calculate(): a 6-month $15M pull is a $30M/yr pace.
+    const months = typeof recap.periodMonths === "number" && recap.periodMonths > 0 ? recap.periodMonths : 12;
+    const derived = tierForAnnualVolume((recap.volume ?? 0) * (12 / months)).loPct;
+    if (recap.loSplit > derived) {
+      const senderIsAdmin = senderId && supabaseUrl && serviceKey
+        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+        : false;
+      if (!senderIsAdmin) {
+        console.warn(`split gate: refused ${recap.loSplit}% on volume earning ${derived}% (sender ${senderId ?? "anonymous"})`);
+        return json(403, {
+          error: "split_not_earned",
+          message: `A ${recap.loSplit}/${100 - recap.loSplit} split needs an admin — this volume qualifies for ${derived}/${100 - derived} under the published tiers.`,
+          derivedSplit: derived,
+        });
+      }
+      splitOverrideBy = senderId;
+      console.log(`split gate: admin ${senderId} overrode ${derived}% -> ${recap.loSplit}%`);
+    }
+  }
+
+  // HTL5 claim gate. Sits with the other refuse-to-send guards, BEFORE the
+  // Graph call, because recordSourcing runs after the send and is explicitly
+  // forbidden from blocking it — a stop has to happen here or not at all.
+  //
+  // Keyed on senderId (a verified, signed-in team member), NOT attributedId:
+  // attributedId is also set when a recruit self-serves through an LO's PURL,
+  // and a recruit must never be denied their own pro forma because a colleague
+  // holds the claim. Anonymous and PURL sends therefore skip this entirely.
+  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+    const nmls = recap.nmls.trim();
+    try {
+      const existing = await getSourcingRow(supabaseUrl, serviceKey, nmls);
+      const senderIsAdmin = existing && existing.sourced_by !== senderId
+        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+        : false; // only worth a round-trip when an override could actually apply
+      const decision = decideSourcingAction(existing, senderId, Date.now(), { senderIsAdmin });
+      if (decision.kind === "blocked") {
+        const holder = (await lookupUserEmail(supabaseUrl, serviceKey, decision.claimedBy))
+          ?? decision.claimedBy.slice(0, 8);
+        console.log(`send blocked: ${nmls} claimed by ${decision.claimedBy} until ${decision.expiresAt}`);
+        // 409 Conflict: the request is well-formed, it collides with existing
+        // state. No email is sent and no claim is written.
+        return json(409, {
+          error: "already_claimed",
+          message: `This NMLS is already sourced by ${holder} until ${new Date(decision.expiresAt).toLocaleDateString("en-US")}. Ask an admin if you need to send anyway.`,
+          claimedBy: holder,
+          expiresAt: decision.expiresAt,
+        });
+      }
+    } catch (e) {
+      // Fail OPEN on an infrastructure error: a claim-lookup outage must not
+      // stop legitimate recruiting. The worst case is the old behaviour —
+      // the send goes out and recordSourcing sorts the credit out after.
+      console.error("claim gate check failed (send allowed)", e);
+    }
+  }
+
+  // Repeat gate — the owner's strict rule, chosen after the first week's live
+  // data: one pro forma per NMLS, full stop. The claim gate above only stops
+  // OTHER LOs; this blocks a second send even from the original sender, so a
+  // follow-up re-send goes through an admin. Same senderId keying as the other
+  // gates: anonymous/PURL recruits re-requesting their own pro forma are never
+  // blocked, and the same fail-open posture on infrastructure errors.
+  if (senderId && supabaseUrl && serviceKey && typeof recap.nmls === "string" && recap.nmls.trim()) {
+    const nmls = recap.nmls.trim();
+    try {
+      const lastSent = await lastExternalSendFor(supabaseUrl, serviceKey, nmls);
+      const senderIsAdmin = lastSent
+        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+        : false; // only worth the round-trip when a prior send exists
+      const decision = decideRepeatSend(lastSent, { senderIsAdmin });
+      if (decision.kind === "blocked_repeat") {
+        console.log(`repeat gate: refused resend for ${nmls}, first sent ${decision.lastSentAt} (sender ${senderId})`);
+        // Deliberately carries the date but NOT the recipient address —
+        // recap_emails is own-or-admin, and this message may be shown to a
+        // different LO than the original sender.
+        return json(409, {
+          error: "already_sent",
+          message: `A pro forma already went out for NMLS ${nmls} on ${new Date(decision.lastSentAt).toLocaleDateString("en-US")}. Repeat sends need an admin.`,
+          lastSentAt: decision.lastSentAt,
+        });
+      }
+    } catch (e) {
+      console.error("repeat gate check failed (send allowed)", e);
+    }
+  }
+
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
   // BOOKING_URL secret (Microsoft Bookings page) turns on the "Book a
   // recruiting call" button in the email; unset = button omitted.
@@ -804,14 +1050,29 @@ Deno.serve(async (req: Request) => {
     pdf = (await fetchDocumentedProforma(supabaseUrl, serviceKey, presentationHash)) ?? undefined;
   }
 
-  const html = renderRecapHtml(recap, {
+  // One personalized opening paragraph. Best-effort, exactly like the chart,
+  // the GIF, the docx and the Gamma PDF above: a model hiccup must never keep a
+  // recap from reaching a recruit, so every failure path just leaves it out.
+  // It carries no figures by construction — see narrativePrompt.ts.
+  const narrative = await generateNarrative(recap);
+
+  // Why the recipient got this, stated honestly in the footer. A verified
+  // senderId with no referral token means a signed-in LO pushed it out
+  // unprompted; anything else means the recipient drove it themselves (public
+  // self-serve, or choosing to open an LO's PURL).
+  const origin: "requested" | "recruiter" = senderId && !referralToken ? "recruiter" : "requested";
+  const unsubscribeUrl = (await unsubscribeUrlFor(to)) ?? undefined;
+
+  const html = renderRecapHtml({ ...recap, ...(narrative ? { narrative } : {}) }, {
+    origin,
+    ...(unsubscribeUrl ? { unsubscribeUrl } : {}),
     ...(chartPng ? { chartCid: CHART_CID } : {}),
     bookingUrl,
     appOrigin,
     ...(pdf ? { documentedProformaName: DOCUMENTED_PROFORMA_FILENAME } : {}),
   });
 
-  const attachments = { chartPng, gif, docx, pdf };
+  const attachments = { chartPng, gif, docx, pdf, ...(unsubscribeUrl ? { unsubscribeUrl } : {}) };
   // Sender-copy-back: a signed-in team member automatically gets a BCC copy
   // of what they just sent — an automatic record with no manual CC needed.
   // Looked up server-side from their auth session, never client-supplied.
@@ -888,6 +1149,24 @@ Deno.serve(async (req: Request) => {
     }
   } catch (e) {
     console.error("recap_emails log failed (non-fatal)", e);
+  }
+
+  // Split-override audit: stamp WHO granted the non-standard split onto the
+  // proforma row, service-role and post-send only — the client's split_source
+  // is display, this is the trusted record. Best-effort like the rest of the
+  // tail: the email already went, bookkeeping must not surface a failure.
+  if (splitOverrideBy && supabaseUrl && serviceKey && UUID_RE.test(recap.proformaId ?? "")) {
+    try {
+      const resp = await fetch(`${supabaseUrl}/rest/v1/proformas?id=eq.${encodeURIComponent(recap.proformaId!)}`, {
+        method: "PATCH",
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ split_source: "override", split_overridden_by: splitOverrideBy }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!resp.ok) console.error("split audit write failed", resp.status, await resp.text().catch(() => ""));
+    } catch (e) {
+      console.error("split audit write failed (non-fatal)", e);
+    }
   }
 
   // HTL5 referral-sourcing: a signed-in team member's send, or a recruit

@@ -53,6 +53,12 @@ export interface ModelState {
   // total for that shorter/longer window — calculate() reads this to keep
   // "monthly" and employee-salary proration honest for any period.
   productionPeriodMonths: number;
+  // Admin-granted split override: one of the published tiers' LO percentages
+  // (80/85/90), or null/undefined for the normal volume-derived band. UI-gated
+  // to admins AND enforced server-side in send-recap — a non-admin payload
+  // claiming a better split than the volume earns is refused, so this field is
+  // a request, not an entitlement.
+  splitOverride?: number | null;
   // True only when the production figures above came from a real RETR pull.
   // Drives two things: (1) volume/files/mix stay LOCKED read-only in the UI
   // (Part J's data-integrity decision), and (2) anything sent (recap email,
@@ -61,38 +67,21 @@ export interface ModelState {
   retrSourced: boolean;
 }
 
-// HTL LO split tiers. The band is a function of ANNUAL funded volume — that is
-// the real test; monthly equivalents are just ÷12 for readers who think in months.
-// "90/10" means the LO keeps 90% of gross commission and HTL keeps 10%.
+// HTL LO split tiers. The table itself now lives in
+// supabase/functions/send-recap/splitTiers.ts, because since the admin split
+// override shipped it is ALSO the server's authorization rule — send-recap
+// recomputes the tier from the payload's volume and refuses a better claimed
+// split from anyone but a verified admin. Re-exported here so app code keeps
+// its import path.
 //
-// The published rule, verbatim:
-//   up to $23,999,999/yr → 80/20
-//   $24,000,000 – $47,999,999/yr → 85/15
-//   $48,000,000/yr and up → 90/10
-// Boundaries land in the UPPER band: exactly $24M is 85/15, exactly $48M is 90/10.
-//
-// The split is NOT an input: calculate() derives the band from the entered
-// volume via tierForAnnualVolume(), so the number on screen can never
-// contradict the published tier table. It updates live as volume changes and
-// is displayed read-only (see the "How the HTL LO Split Works" section).
-export interface SplitTier {
-  loPct: number;
-  htlPct: number;
-  /** Inclusive lower bound on annual funded volume. */
-  minAnnual: number;
-  /** Exclusive upper bound on annual funded volume; null = no ceiling. */
-  maxAnnual: number | null;
-}
-
-export const SPLIT_TIERS: SplitTier[] = [
-  { loPct: 80, htlPct: 20, minAnnual: 0,          maxAnnual: 24_000_000 },
-  { loPct: 85, htlPct: 15, minAnnual: 24_000_000, maxAnnual: 48_000_000 },
-  { loPct: 90, htlPct: 10, minAnnual: 48_000_000, maxAnnual: null },
-];
-
-/** The tier a given annual funded volume qualifies for. Boundaries land in the UPPER band. */
-export const tierForAnnualVolume = (annualVolume: number): SplitTier =>
-  SPLIT_TIERS.find(t => t.maxAnnual == null || annualVolume < t.maxAnnual) ?? SPLIT_TIERS[SPLIT_TIERS.length - 1];
+// The split derives from volume BY DEFAULT and departs only through an
+// explicit admin override (ModelState.splitOverride, limited to the published
+// tiers, flagged in /submissions and enforced server-side). For everyone who
+// is not an admin the original guarantee still holds: the number on screen
+// cannot contradict the published tier table.
+export { SPLIT_TIERS, OVERRIDE_SPLITS, tierForAnnualVolume } from "../../supabase/functions/send-recap/splitTiers";
+export type { SplitTier } from "../../supabase/functions/send-recap/splitTiers";
+import { SPLIT_TIERS, tierForAnnualVolume, type SplitTier } from "../../supabase/functions/send-recap/splitTiers";
 
 export const BROKER_CAP = 2.75;
 export const CORR_MIN = 2.0;
@@ -160,6 +149,7 @@ export const defaultState = (): ModelState => ({
   buckets: defaultBuckets(),
   employees: defaultEmployees(),
   productionPeriodMonths: 12,
+  splitOverride: null,
   retrSourced: false,
 });
 
@@ -191,9 +181,13 @@ export interface Calc {
     nonQmFiles: number;
     totalActiveFiles: number;
   };
-  // The split band this volume qualifies for — derived, never chosen.
+  // The split band in force: the volume-derived band, unless an admin override
+  // replaced it (splitSource says which).
   splitTier: SplitTier;
   loSplitPct: number;
+  /** The band the volume earns on its own, always derived — what an override departed from. */
+  derivedTier: SplitTier;
+  splitSource: "derived" | "override";
   brokerPaidSalaries: number;
   brokerPaidBonuses: number;
   htlPaidSalaries: number;
@@ -259,7 +253,16 @@ export const calculate = (s: ModelState): Calc => {
   // 12/periodMonths (not using the raw total) keeps a partial-period RETR pull
   // honest: a 6-month, $15M pull is a $30M/yr pace, not a $15M/yr pace.
   const annualizedVolume = s.annualVolume * (12 / periodMonths);
-  const splitTier = tierForAnnualVolume(annualizedVolume);
+  const derivedTier = tierForAnnualVolume(annualizedVolume);
+  // An override must name a published tier; anything else falls back to the
+  // derived band rather than throwing — a bad value must never manufacture a
+  // split that doesn't exist in the comp plan.
+  const overrideTier = s.splitOverride != null
+    ? SPLIT_TIERS.find(t => t.loPct === s.splitOverride) ?? null
+    : null;
+  const splitTier = overrideTier ?? derivedTier;
+  const splitSource: "derived" | "override" =
+    overrideTier && overrideTier.loPct !== derivedTier.loPct ? "override" : "derived";
   const allocation = allocateFiles(s);
   // Force broker buckets always active (FHA + default Non-QM live there). Apply correct per-channel fee.
   const bucketsResolved: Bucket[] = s.buckets.map(b => ({
@@ -373,7 +376,7 @@ export const calculate = (s: ModelState): Calc => {
   return {
     buckets: bucketCalcs,
     totals,
-    splitTier, loSplitPct: splitTier.loPct,
+    splitTier, loSplitPct: splitTier.loPct, derivedTier, splitSource,
     brokerPaidSalaries, brokerPaidBonuses, htlPaidSalaries, htlPaidBonuses,
     brokerPaidTotal, htlPaidTotal, extraBonusTotal, salaryObligations,
     holdbackSurplus, finalLoNetComp, monthlyLoNet, requiredHoldbackPct,

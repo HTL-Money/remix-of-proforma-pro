@@ -19,6 +19,8 @@ export const buildRecapPayload = (savedName: string, state: ModelState, calc: Ca
   // payload — the function validates it with isNum, which also closes an
   // HTML-injection hole. Do not make this nullable.
   loSplit: calc.loSplitPct,
+  splitSource: calc.splitSource,
+  derivedSplit: calc.derivedTier.loPct,
   corrActive: state.buckets.some(b => b.channel === "Correspondent" && b.active),
   current: { annual: calc.currentPlatformAnnual, monthly: calc.currentPlatformMonthly },
   htl: { annual: calc.finalLoNetComp, monthly: calc.monthlyLoNet },
@@ -86,6 +88,10 @@ export const sendRecap = async (to: string, recap: RecapPayload, chartPng?: stri
     if (ctx && typeof ctx.json === "function") {
       try {
         const body = await ctx.json();
+        // `message` before `error`: newer refusals (the HTL5 claim block) send a
+        // machine-readable code in `error` plus a sentence for the LO in
+        // `message`. Showing the code would put "already_claimed" in a toast.
+        if (body?.message) throw new Error(String(body.message));
         if (body?.error) throw new Error(body.error);
       } catch (e) {
         if (e instanceof Error && e.message && !/JSON/i.test(e.message)) throw e;

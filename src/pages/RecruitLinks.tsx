@@ -178,15 +178,32 @@ const RecruitLinks = () => {
     }
   };
 
-  /** On NMLS blur: if someone else already holds an unexpired claim on this
-   *  recruit, say so — informational only, the send still works (the server's
-   *  first-sender-wins rule simply won't transfer credit). */
+  /** On NMLS blur: if this send is going to be refused, say so early rather
+   *  than letting the LO fill the whole form. Two checks, both advisory only —
+   *  the real enforcement is server-side in send-recap:
+   *    1. someone else holds an unexpired claim (409 already_claimed), and
+   *    2. the strict one-per-NMLS rule — a recap already went out, including
+   *       the LO's own (409 already_sent). RLS only shows the LO their OWN
+   *       prior sends, so a repeat of someone else's send surfaces only at the
+   *       server; the claim warning usually covers that case anyway. */
   const checkExistingClaim = async () => {
     setClaimWarning(null);
     const nmls = normalizeNmls(sendNmls);
     if (!nmls) return;
     try {
       const sb = requireSupabase();
+      const { data: prior } = await sb
+        .from("recap_emails")
+        .select("created_at")
+        .eq("payload->>nmls", nmls)
+        .eq("status", "sent")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (prior) {
+        setClaimWarning(`You already sent this NMLS a pro forma on ${new Date(String(prior.created_at)).toLocaleDateString()} — repeat sends are blocked. Ask an admin if they need a fresh one.`);
+        return;
+      }
       const { data } = await sb.from("lo_sourcing").select("sourced_by, expires_at").eq("nmls", nmls).maybeSingle();
       if (!data) return;
       const expires = new Date(String(data.expires_at));
@@ -195,7 +212,7 @@ const RecruitLinks = () => {
       let holder = String(data.sourced_by).slice(0, 8);
       const { data: dir } = await sb.from("team_directory").select("email").eq("id", data.sourced_by).maybeSingle();
       if (dir?.email) holder = String(dir.email);
-      setClaimWarning(`Already claimed by ${holder} until ${expires.toLocaleDateString()} — sending still works, but it won't transfer credit to you.`);
+      setClaimWarning(`Already sourced by ${holder} until ${expires.toLocaleDateString()} — sending is blocked. Ask an admin if you need to send anyway.`);
     } catch {
       // best-effort — a lookup hiccup never blocks the form
     }
@@ -234,14 +251,17 @@ const RecruitLinks = () => {
       };
       const calc = calculate(state);
       const displayName = state.recruitName || `NMLS ${nmls}`;
+      // The signed-in session authenticates this call — verifiedSenderId
+      // credits the HTL5 claim and BCCs this LO automatically, no token needed.
+      // Send BEFORE recording: the server can now refuse (409) when another LO
+      // holds a live claim, and recording first would leave a submission row
+      // for an email that never went out.
+      await sendFullRecap(displayName, state, calc, to);
       try {
         await recordDirectSend(displayName, state, to);
       } catch (e) {
         console.warn("Direct-send record not stored:", e);
       }
-      // The signed-in session authenticates this call — verifiedSenderId
-      // credits the HTL5 claim and BCCs this LO automatically, no token needed.
-      await sendFullRecap(displayName, state, calc, to);
       setReceipt({
         to,
         recruitName: state.recruitName || null,

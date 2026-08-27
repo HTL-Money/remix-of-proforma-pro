@@ -65,6 +65,11 @@ const economicsColumns = (state: ModelState) => {
     payroll_overhead: calc.brokerPaidSalaries + calc.brokerPaidBonuses,
     derived_holdback_pct: calc.requiredHoldbackPct,
     final_lo_net: calc.finalLoNetComp,
+    // Display value only. split_overridden_by (who granted it) is written
+    // exclusively server-side by send-recap from a verified JWT — a client
+    // could lie here, but it can't SEND an override without an admin token,
+    // and the send is where the audit row gets confirmed.
+    split_source: calc.splitSource,
   };
 };
 

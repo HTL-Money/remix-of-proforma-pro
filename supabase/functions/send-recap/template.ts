@@ -30,6 +30,12 @@ export interface RecapPayload {
     finalLoNetComp: number;
   };
   proformaId?: string;
+  /** One personalized opening paragraph, written per recruit. Carries NO
+   *  figures by construction — every number in this email is rendered from the
+   *  fields above, so the comp claims stay deterministic and reviewable.
+   *  Generated best-effort (see narrativePrompt.ts + index.ts); absent whenever
+   *  generation failed, timed out, or produced text that broke the rules. */
+  narrative?: string;
   /** Months the production figures cover (the RETR pull window). 12 = a true
    *  year. Optional for backward-compat with older payloads → defaults to 12. */
   periodMonths?: number;
@@ -38,6 +44,15 @@ export interface RecapPayload {
    *  "self-reported" note so a hand-entered pro forma is never mistaken for
    *  verified data. Optional for backward-compat → old payloads are RETR-era. */
   selfReported?: boolean;
+  /** How the split was arrived at. "override" = an admin granted a band the
+   *  volume doesn't earn on its own; the documents then stop asserting the
+   *  tier table (its sentence would contradict the number beside it) and say
+   *  the split was agreed for this offer instead. Absent = "derived" — every
+   *  payload predating the override feature. */
+  splitSource?: "derived" | "override";
+  /** The band the volume earns by itself — travels alongside so the server can
+   *  cross-check and an audit never has to re-derive it. */
+  derivedSplit?: number;
 }
 
 const usd = (n: number) =>
@@ -153,6 +168,26 @@ export interface RenderOptions {
    * Unset = block omitted, so the email never claims an attachment it lacks.
    */
   documentedProformaName?: string;
+  /**
+   * How this recap came to be sent, which decides the footer's "why you got
+   * this" line. It has to be accurate per path: the old copy claimed a recap
+   * "was requested for you" on EVERY send, which is untrue when a recruiter
+   * initiated it off a public NMLS record — the recruit requested nothing. A
+   * false statement about a commercial email's origin is exactly what
+   * CAN-SPAM's deception provisions cover.
+   *
+   *   "requested" — the recipient filled in the calculator themselves
+   *                 (public self-serve, or an LO's PURL they chose to open)
+   *   "recruiter" — an HTL loan officer sent it unprompted
+   *
+   * Defaults to "requested" only because that was the original self-serve
+   * behaviour; index.ts always passes it explicitly.
+   */
+  origin?: "requested" | "recruiter";
+  /** One-click unsubscribe URL (HTTPS). When set the footer links here instead
+   *  of a mailto, so opting out is one click that suppresses the address
+   *  automatically rather than waiting on someone to read an inbox. */
+  unsubscribeUrl?: string;
 }
 
 const detailRow = (label: string, value: string) => `
@@ -246,6 +281,24 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
       </div>
     </td></tr>`;
 
+  // Why this email arrived, stated truthfully for the path it actually took.
+  // The recruiter wording says outright that the recipient didn't ask for it and
+  // that the figures come from a public licensing record — honest, and in
+  // practice the fastest way to defuse a "how do you have my numbers?" reply.
+  const whyThis = opts.origin === "recruiter"
+    ? "A Hometown Lending recruiter prepared and sent you this pro forma using production figures from your public NMLS licensing record. You did not request it, and this is recruiting outreach \u2014 opt out below and we won\u2019t email you again."
+    : "You\u2019re receiving this because you requested a Pro Forma recap.";
+
+  // The personalized opening. Escaped like any other untrusted string — it is
+  // model output, so it is treated as data, never as markup. Rendered above
+  // every figure so it reads as the framing, not as a caption on the math.
+  const narrativeBlock = r.narrative
+    ? `
+    <tr><td style="padding:22px 24px 0 24px;">
+      <div style="color:${GRAY_DARK};font-size:15px;line-height:1.65;">${esc(r.narrative)}</div>
+    </td></tr>`
+    : "";
+
   // Closing block: names the attached PDF so the recruit knows the file in
   // their client IS the deliverable. Rendered only when a PDF actually rode
   // along, so the email can never promise an attachment that isn't there.
@@ -256,8 +309,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         <tr><td style="padding:18px 20px;">
           <div style="color:${NAVY};font-size:15px;font-weight:800;">Documented Pro Forma</div>
           <div style="color:${GRAY_MID};font-size:13px;margin-top:6px;line-height:1.6;">
-            Attached to this email as <strong style="color:${NAVY};">${esc(opts.documentedProformaName)}</strong> — the full
-            breakdown of the numbers above, yours to keep and review on your own time.
+            It's attached as <strong style="color:${NAVY};">${esc(opts.documentedProformaName)}</strong> — the same
+            numbers as above, in full, yours to keep.
           </div>
         </td></tr>
       </table>
@@ -328,6 +381,7 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
         </td></tr>
 
         ${presentationHero}
+        ${narrativeBlock}
 
         ${comparisonSection}
 
@@ -340,13 +394,13 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${detailRow(`${periodTitle(months)} funded volume`, usd(r.volume))}
             ${detailRow(`${periodTitle(months)} funded files`, num(r.files))}
             ${detailRow("Average loan amount", usd(r.avgLoan))}
-            ${detailRow("HTL LO split", `${Number(r.loSplit)}/${100 - Number(r.loSplit)} — you keep ${Number(r.loSplit)}%`)}
+            ${detailRow("HTL LO split", `${Number(r.loSplit)}/${100 - Number(r.loSplit)} — you keep ${Number(r.loSplit)}%${r.splitSource === "override" ? " (agreed for this offer)" : ""}`)}
             ${detailRow("Channel strategy", r.corrActive ? "Broker + Correspondent" : "Broker Only")}
             ${r.currentBps != null ? detailRow("Current platform comp", `${Number(r.currentBps)} BPS`) : ""}
           </table>
           ${
             r.selfReported
-              ? `<div style="color:${GRAY_MID};font-size:11px;margin-top:8px;">Production figures were self-reported by the recipient and have not been verified against RETR records.</div>`
+              ? `<div style="color:${GRAY_MID};font-size:11px;margin-top:8px;">These production figures were entered by hand, not pulled from RETR records.</div>`
               : ""
           }
         </td></tr>
@@ -397,8 +451,8 @@ export const renderRecapHtml = (r: RecapPayload, opts: RenderOptions = {}): stri
             ${COMPANY.name} · NMLS #${COMPANY.nmls}<br />
             ${COMPANY.address}<br />
             Saved as “${esc(r.savedName)}” · All figures are illustrative and not a guarantee of income.<br />
-            You’re receiving this because a Pro Forma recap was requested for you.
-            <a href="mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe" style="color:#9fb1c8;text-decoration:underline;">Unsubscribe</a>
+            ${whyThis}
+            <a href="${esc(opts.unsubscribeUrl ?? `mailto:${UNSUBSCRIBE_EMAIL}?subject=Unsubscribe`)}" style="color:#9fb1c8;text-decoration:underline;">Unsubscribe</a>
           </div>
         </td></tr>
 
