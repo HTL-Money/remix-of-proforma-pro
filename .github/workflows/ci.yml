@@ -1,0 +1,39 @@
+# Runs on every push and pull request. The build step comes BEFORE the tests
+# on purpose: src/test/security.test.ts has a bundle-hygiene check (no JWT in
+# dist/ other than the public anon key) that can only run against a built
+# dist/. Without the build it silently skipped on every fresh checkout, so the
+# one automated secret-leak guard had never actually run in CI. With CI=true
+# in the environment the test fails instead of skipping when dist/ is absent.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc -p tsconfig.app.json --noEmit
+      - name: Lint
+        run: npx eslint .
+      - name: Build (no secrets — the app runs unconfigured, which is all the bundle test needs)
+        run: npx vite build
+      - name: Test (includes bundle hygiene against dist/)
+        run: npx vitest run
+      - name: Audit production dependencies
+        # Build-only packages are devDependencies, so --omit=dev is the real
+        # runtime surface. High+ fails the job; moderate is reported only.
+        run: npm audit --omit=dev --audit-level=high

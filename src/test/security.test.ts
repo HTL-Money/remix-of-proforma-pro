@@ -172,6 +172,92 @@ describe("RLS invariants (net state across all migrations)", () => {
     }
     expect(publicState).toBe(false);
   });
+
+  // The role split made retr_reports (the table) admin-only on writes; the
+  // bucket that holds the PDFs has to match, or any signed-in LO can plant a
+  // "verified" report for an NMLS that the shared store then serves to the team.
+  it("storage writes to the retr-reports bucket require is_admin()", () => {
+    const writes = policies.filter(
+      p => p.table === "storage.objects" && ["insert", "update", "delete", "all"].includes(p.cmd),
+    );
+    expect(writes.length).toBeGreaterThan(0);
+    for (const p of writes) {
+      expect(p.body, `${p.name} (${p.cmd})`).toMatch(/is_admin\(\)/);
+    }
+  });
+
+  // CLAUDE.md calls is_admin() the CRM boundary. The role check above only
+  // proves a policy targets `authenticated`; this proves the body actually
+  // gates on admin membership (or on the row's owner where the table is
+  // own-or-admin), so a migration reopening target_los with `using (true)`
+  // can't pass the suite.
+  it("the CRM tables are gated on is_admin() in the policy body", () => {
+    const adminOnly: Array<[string, string[]]> = [
+      ["public.target_los", ["select", "insert", "update", "delete", "all"]],
+      ["public.stage_events", ["select", "insert", "update", "delete", "all"]],
+      ["public.proformas", ["update", "delete"]],
+      ["public.recap_emails", ["delete"]],
+      ["public.retr_reports", ["insert", "update", "delete"]],
+      ["public.proforma_snapshots", ["select"]],
+      ["public.metrics_snapshots", ["select"]],
+    ];
+    for (const [table, cmds] of adminOnly) {
+      const ps = policies.filter(p => p.table === table && cmds.includes(p.cmd) && !p.roles.includes("anon"));
+      expect(ps.length, `${table} has a policy for ${cmds.join("/")}`).toBeGreaterThan(0);
+      for (const p of ps) expect(p.body, `${table} ${p.cmd} (${p.name})`).toMatch(/is_admin\(\)/);
+    }
+    const ownOrAdmin: Array<[string, string[]]> = [
+      ["public.proformas", ["select"]],
+      ["public.recap_emails", ["select"]],
+      ["public.referral_links", ["select"]],
+      ["public.recruit_optins", ["select"]],
+    ];
+    for (const [table, cmds] of ownOrAdmin) {
+      const ps = policies.filter(p => p.table === table && cmds.includes(p.cmd) && !p.roles.includes("anon"));
+      expect(ps.length, `${table} has a policy for ${cmds.join("/")}`).toBeGreaterThan(0);
+      for (const p of ps) expect(p.body, `${table} ${p.cmd} (${p.name})`).toMatch(/auth\.uid\(\)/);
+    }
+  });
+
+  // SECURITY DEFINER functions run as their owner, so PostgREST exposing
+  // them under /rest/v1/rpc/ to anon is a privilege escalation waiting for
+  // a body. Supabase grants EXECUTE to anon by default on every function in
+  // public; every definer function therefore needs an explicit revoke.
+  it("every SECURITY DEFINER function is revoked from anon in the migrations", () => {
+    const dir = join(ROOT, "supabase", "migrations");
+    const sql = readdirSync(dir)
+      .filter(f => f.endsWith(".sql"))
+      .sort()
+      .map(f => readFileSync(join(dir, f), "utf8").replace(/--[^\n]*/g, ""))
+      .join("\n");
+    // Segment the SQL at each function definition so "security definer" is
+    // attributed to the function whose body contains it, not an earlier one.
+    const starts = [...sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?(\w+)\s*\(/gi)];
+    const definers = new Set<string>();
+    starts.forEach((m, i) => {
+      const segment = sql.slice(m.index!, i + 1 < starts.length ? starts[i + 1].index : undefined);
+      if (/security\s+definer/i.test(segment)) definers.add(m[1].toLowerCase());
+    });
+    expect(definers.size).toBeGreaterThan(0);
+    for (const fn of definers) {
+      const revoked = new RegExp(`revoke\\s+execute\\s+on\\s+function[^;]*\\b${fn}\\s*\\([^;]*\\bfrom\\b[^;]*\\banon\\b`, "i");
+      expect(sql, `revoke execute on function ${fn}() ... from anon`).toMatch(revoked);
+    }
+  });
+
+  // The ledger on the live project is keyed on the 14-digit filename prefix;
+  // a stray name here would be a migration the ledger can never record.
+  it("migration filenames are ledger-shaped and unique by version", () => {
+    const dir = join(ROOT, "supabase", "migrations");
+    const files = readdirSync(dir).filter(f => f.endsWith(".sql"));
+    const versions = new Set<string>();
+    for (const f of files) {
+      expect(f).toMatch(/^\d{14}_[a-z0-9_]+\.sql$/);
+      const v = f.slice(0, 14);
+      expect(versions.has(v), `duplicate version ${v}`).toBe(false);
+      versions.add(v);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -247,7 +333,14 @@ describe("payload isolation — the outbound boundary", () => {
 
 describe("bundle hygiene (runs only when dist/ exists)", () => {
   const dist = join(ROOT, "dist");
-  const it_ = existsSync(dist) ? it : it.skip;
+  // Locally a missing dist/ just skips (run `npm run test:ci` to include it).
+  // Under CI a missing dist/ is a pipeline bug — the build step must run
+  // first — so the test fails rather than quietly passing the suite.
+  const hasDist = existsSync(dist);
+  if (!hasDist && !process.env.CI) {
+    console.warn("bundle hygiene skipped: no dist/ — run `npm run test:ci` to build first");
+  }
+  const it_ = hasDist || process.env.CI ? it : it.skip;
 
   it_("dist/ contains no JWT other than the public anon key", () => {
     // The anon key is expected in the bundle (public by design). Any OTHER
