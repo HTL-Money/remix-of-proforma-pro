@@ -74,7 +74,7 @@ const Dashboard = () => {
     setRows(rs => rs.map(r => (r.nmls === t.nmls ? { ...r, stage: to } : r))); // optimistic
     try {
       await setStage(t.nmls, to, t.stage);
-      setActivity(a => [{ kind: "stage", at: new Date().toISOString(), text: `NMLS ${t.nmls} moved ${stageLabel(t.stage)} → ${stageLabel(to)}` }, ...a].slice(0, 15));
+      setActivity(a => [{ kind: "stage" as const, at: new Date().toISOString(), text: `NMLS ${t.nmls} moved ${stageLabel(t.stage)} → ${stageLabel(to)}` }, ...a].slice(0, 15));
     } catch (e) {
       // Revert only this card — a snapshot restore would also undo other
       // moves that succeeded while this request was in flight.

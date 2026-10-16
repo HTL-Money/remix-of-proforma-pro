@@ -84,3 +84,44 @@ export const renderExpiredHtml = (appOrigin: string): string => `<!doctype html>
 <p style="margin:0 0 16px;color:#4a4a4a;font-size:15px;line-height:1.6;">No problem — you can run your own comparison any time, no link needed.</p>
 <a href="${esc(appOrigin)}" style="display:inline-block;padding:12px 26px;background:#4F8F77;border-radius:8px;color:#fff;font-weight:700;text-decoration:none;font-size:15px;">Open the calculator</a>
 </div></body></html>`;
+
+/** The page behind the invite's link. Nothing is recorded by opening it:
+ *  corporate link scanners follow every URL in a delivered email (three of the
+ *  first ten "consents" on this project arrived between midnight and 4 a.m.
+ *  from the same employer's mail gateway), so consent is only recorded when
+ *  the button below is pressed — a POST, which scanners never send. */
+export const renderConsentConfirmHtml = (f: { actionUrl: string; token: string; appOrigin: string }): string =>
+  `<!doctype html><html><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" /><meta name="robots" content="noindex" />
+<title>Hometown Lending</title></head>
+<body style="margin:0;background:#13294B;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
+<div style="max-width:520px;margin:12vh auto;padding:32px 28px;background:#fff;border-radius:12px;">
+<div style="color:#4F8F77;font-size:22px;font-weight:800;font-family:Georgia,'Times New Roman',serif;margin:0 0 14px;">Hometown Lending</div>
+<h1 style="margin:0 0 12px;font-size:20px;color:#13294B;">Your comparison is one click away</h1>
+<p style="margin:0 0 10px;color:#4a4a4a;font-size:15px;line-height:1.6;">It opens with your funded production from the public NMLS records already filled in, side by side with what the same volume pays on our split. Nothing is shared with anyone, and there's no call or commitment attached.</p>
+<p style="margin:0 0 18px;color:#4a4a4a;font-size:15px;line-height:1.6;">Pressing the button is you asking to see it — that's the only thing it records.</p>
+<form method="post" action="${esc(f.actionUrl)}" style="margin:0;">
+<input type="hidden" name="action" value="consent" />
+<input type="hidden" name="t" value="${esc(f.token)}" />
+<button type="submit" style="display:inline-block;padding:13px 30px;background:#4F8F77;border:0;border-radius:8px;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Show me my comparison</button>
+</form>
+<p style="margin:18px 0 0;color:#7a7a7a;font-size:13px;line-height:1.6;">Changed your mind? Just close this page. You can also run your own comparison any time at <a href="${esc(f.appOrigin)}" style="color:#4F8F77;">${esc(f.appOrigin.replace(/^https?:\/\//, ""))}</a>.</p>
+</div></body></html>`;
+
+export const CONSENT_NOTICE_SUBJECT = "Your recruit opened their comparison";
+
+/** To the INVITING LO, the moment their recruit confirms. Figure-free: the LO
+ *  sees the numbers in the app, this is just the nudge to follow up — until
+ *  now nobody was told, and no consent was ever followed by a send. */
+export const renderConsentNoticeHtml = (f: { recruitEmail: string; recruitName?: string | null; nmls: string; linksUrl: string }): string => {
+  const who = f.recruitName?.trim() ? `${esc(f.recruitName.trim())} (${esc(f.recruitEmail)})` : esc(f.recruitEmail);
+  return `<!doctype html><html><body style="margin:0;padding:24px;background:#eef1f5;font-family:Arial,Helvetica,sans-serif;color:#333;font-size:15px;line-height:1.7;">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:10px;padding:24px 28px;">
+<p style="margin:0 0 12px;"><strong>${who}</strong> just opened their comparison — NMLS ${esc(f.nmls)}.</p>
+<p style="margin:0 0 12px;">That's their opt-in: the pro forma is unlocked for ${CONSENT_MONTHS_LABEL}, and they're looking at it right now. A same-day follow-up is the whole game here.</p>
+<p style="margin:0 0 16px;"><a href="${esc(f.linksUrl)}" style="display:inline-block;padding:11px 22px;background:#4F8F77;border-radius:8px;color:#fff;font-weight:700;text-decoration:none;">Open the Links page</a></p>
+<p style="margin:0;color:#7a7a7a;font-size:12px;">Automatic notice from ProFarmA. Replies to this message go nowhere useful — reply to the recruit instead.</p>
+</div></body></html>`;
+};
+
+const CONSENT_MONTHS_LABEL = "12 months";

@@ -9,7 +9,7 @@ export default tseslint.config(
   // than hand-edited — linting it flags patterns (empty interfaces used as
   // type aliases) that are correct for that generator and just get re-added
   // on the next `npx shadcn add`.
-  { ignores: ["dist", "src/components/ui/**"] },
+  { ignores: ["dist", "src/components/ui/**", ".claude/**"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

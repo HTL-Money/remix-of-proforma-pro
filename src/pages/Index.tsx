@@ -39,6 +39,7 @@ import {
 import { RetrDateRange, RETR_DEFAULT_RANGE, RETR_RANGE_OPTIONS, periodLabel, periodLabelTitle } from "@/lib/retrApi";
 import { useAuth } from "@/lib/auth";
 import { storeReferralToken } from "@/lib/referral";
+import { bpsToSplit } from "@/lib/bps";
 
 const STORAGE_KEY = "htl_lo_proforma_v7"; // v7: zeroed-out defaults (drop pre-filled v6 drafts)
 const GATE_KEY = "htl_nmls_gate_v1";
@@ -396,10 +397,14 @@ const TeamSupportDialog = ({ open, onOpenChange, employees, calc, onAdd, onUpdat
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkNmls = normalizeNmls(searchParams.get("nmls") ?? "");
+  // The consent redirect carries the recruit's current comp (typed by the
+  // inviting LO) so the comparison they asked for has a "today" column.
+  const deepLinkSplit = bpsToSplit(searchParams.get("bps") ?? "");
+  const deepLinkRef = searchParams.get("ref");
   // Recruit-PURL: stash ?ref= for the whole session BEFORE anything strips
   // query params (the deep-link effect below replaces them), so the token
   // survives the gate and rides along when the recap is sent.
-  storeReferralToken(searchParams.get("ref"));
+  storeReferralToken(deepLinkRef);
   const { authRequired, loading: authLoading, user, isAdmin, signOut } = useAuth();
   // Cloud saves, recap email, and the team RETR lookup all touch the
   // database — which RLS restricts to authenticated users. When Supabase
@@ -409,6 +414,10 @@ const Index = () => {
   const [gated, setGated] = useState(() => !sessionStorage.getItem(GATE_KEY) && !deepLinkNmls);
   const [retrPdfUrl, setRetrPdfUrl] = useState<string | null>(null);
   const [pullingRetr, setPullingRetr] = useState(false);
+  // What the deep-link pull produced. "none"/"error" with no production on the
+  // page means the recruit is looking at a $0 calculator — the CTA card says
+  // so instead of "your pro forma is ready to send".
+  const [deepLinkPull, setDeepLinkPull] = useState<"idle" | "ok" | "none" | "error">("idle");
   // Live-pull window. Defaults to 12 months (a true annual view); shorter
   // windows show their own actual totals, never annualized (see retrApi.ts).
   const [retrRange, setRetrRange] = useState<RetrDateRange>(RETR_DEFAULT_RANGE);
@@ -447,21 +456,30 @@ const Index = () => {
         // team-only (its RLS is authenticated-only and would just fail).
         try {
           const report = await lookupRetrReport(deepLinkNmls, { sharedStore: isTeamMember });
-          if (report) applyStoredReport(deepLinkNmls, report);
-          else {
+          if (report) {
+            applyStoredReport(deepLinkNmls, report);
+            setDeepLinkPull("ok");
+          } else {
             setState({ ...defaultState(), nmls: deepLinkNmls });
+            setDeepLinkPull("none");
             toast(isTeamMember
               ? { title: "No RETR report on file", description: `No production on file yet for NMLS ${deepLinkNmls}.` }
               : { title: "No RETR data found", description: `No live RETR data for NMLS ${deepLinkNmls} yet.` });
           }
         } catch (e) {
           setState({ ...defaultState(), nmls: deepLinkNmls });
+          setDeepLinkPull("error");
           toast({ title: "Lookup failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
         }
       } else {
         setState({ ...defaultState(), nmls: deepLinkNmls });
       }
-      setSearchParams({}, { replace: true });
+      // The invite carried their current comp: apply it on top of whatever the
+      // pull produced, so the comparison has a current column from the start.
+      if (deepLinkSplit != null) setState(s => ({ ...s, currentSplit: deepLinkSplit }));
+      // Strip nmls/bps (consumed) but KEEP ?ref= in the address bar, so a
+      // reload or a copied URL still carries the attribution.
+      setSearchParams(deepLinkRef ? { ref: deepLinkRef } : {}, { replace: true });
     })();
   }, [deepLinkNmls, authLoading]); // eslint-disable-line
 
@@ -775,15 +793,27 @@ const Index = () => {
         {/* Promoted conversion CTA — the ONE action for an anonymous recruit,
             above everything else. Their info is captured when they send. */}
         {isCloudConfigured() && !isTeamMember && (
-          <div className="premium-card border-accent/40 p-4 md:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-semibold text-primary">Your pro forma is ready to send.</p>
+          (deepLinkPull === "none" || deepLinkPull === "error") && state.annualVolume === 0 ? (
+            // Honest empty state: the pull found nothing, so there is no pro
+            // forma to send yet — only a $0 calculator. Asking for the email
+            // here would mail an empty recap.
+            <div className="premium-card border-accent/40 p-4 md:p-5">
+              <p className="font-semibold text-primary">We couldn't pull your production{state.nmls ? ` for NMLS ${state.nmls}` : ""}.</p>
               <p className="text-sm text-muted-foreground">
-                Get the full recap — comparison, production buckets, and your personalized report — in your inbox.
+                Enter your annual volume and file count below and the comparison builds from those — the "Email me this recap" button appears as soon as there are numbers to send.
               </p>
             </div>
-            <PublicRecapCta state={state} calc={calc} prominent />
-          </div>
+          ) : (
+            <div className="premium-card border-accent/40 p-4 md:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-primary">Your pro forma is ready to send.</p>
+                <p className="text-sm text-muted-foreground">
+                  Get the full recap — comparison, production buckets, and your personalized report — in your inbox.
+                </p>
+              </div>
+              <PublicRecapCta state={state} calc={calc} prominent />
+            </div>
+          )
         )}
 
         {/* Headline KPIs */}

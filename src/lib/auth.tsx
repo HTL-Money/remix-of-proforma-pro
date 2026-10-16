@@ -67,10 +67,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   //   - Treat an rpc failure as unknown, not as demotion. A transient network
   //     error must not quietly turn an admin into an LO; retry, then leave it
   //     unresolved rather than answer wrongly.
+  const userId = user?.id;
   useEffect(() => {
     if (!supabase) { setIsAdmin(true); return; }
     if (loading) { setIsAdmin(null); return; }
-    if (!user) { setIsAdmin(false); return; }
+    if (!userId) { setIsAdmin(false); return; }
 
     let cancelled = false;
     setIsAdmin(null);
@@ -87,7 +88,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // way, so the worst case is a reload.
     })();
     return () => { cancelled = true; };
-  }, [loading, user?.id]);
+  }, [loading, userId]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabase) throw new Error("Supabase is not configured.");
@@ -137,4 +138,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
+// The hook lives beside its provider on purpose: ten call sites and a vi.mock
+// path import it from "@/lib/auth", and splitting the file buys nothing but
+// churn. The only cost is Fast Refresh falling back to a full reload when this
+// file changes, which is fine for an auth provider.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

@@ -3,9 +3,10 @@
 // Two-phase design so an AI session can write the narrative between phases:
 //   { action: "collect", key? }                    → computed metrics JSON;
 //     without the key, recruit emails and NMLS numbers are redacted out
-//   { action: "send", narrative?, actionsTaken?, cadence? }  → emails the
-//     report to the admin; cadence "daily" (the 21-day launch monitoring
-//     window) skips the snapshot write so trend rows stay Monday-only
+//   { action: "send", key, narrative?, actionsTaken?, cadence? }  → emails
+//     the report to the admin; cadence "daily" (the 21-day launch monitoring
+//     window) skips the snapshot write so trend rows stay Monday-only. Keyed:
+//     the narrative is caller-supplied text that lands in the admin's inbox.
 //   { action: "signinReport", key }                → adoption report: who has
 //     set their own password and who is still on the temporary one
 //   { action: "announce", key }                    → the LO rollout email
@@ -600,6 +601,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   if (body.action === "send") {
+    // Keyed like every other mail-sending action. `verify_jwt` is satisfied by
+    // the public anon key, so without this anyone with the browser bundle could
+    // mail the admin unlimited "reports" carrying 8,000 chars of their own text
+    // and overwrite this week's snapshot. The review routine reads the key
+    // from Vault (admin_task_key) and passes it here.
+    if (!adminKeyOk(body.key)) return json(403, { error: "Forbidden." });
     const narrative = typeof body.narrative === "string" ? body.narrative.slice(0, 8_000) : "";
     const actionsTaken = Array.isArray(body.actionsTaken)
       ? body.actionsTaken.filter((a): a is string => typeof a === "string").slice(0, 20)

@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   COMPANY_FOOTER,
+  CONSENT_NOTICE_SUBJECT,
   INVITE_SUBJECT,
+  renderConsentConfirmHtml,
+  renderConsentNoticeHtml,
   renderExpiredHtml,
   renderInviteHtml,
 } from "../../supabase/functions/recruit-optin/copy";
@@ -71,5 +74,58 @@ describe("the expired-link page", () => {
     expect(html.toLowerCase()).not.toContain("invalid");
     expect(html.toLowerCase()).not.toContain("token");
     expect(html).toContain('href="https://htlrecruit.broker"');
+  });
+});
+
+describe("the consent confirmation page — a button, not a side effect", () => {
+  const html = renderConsentConfirmHtml({
+    actionUrl: "https://x.supabase.co/functions/v1/recruit-optin",
+    token: "0123456789abcdef0123456789abcdef",
+    appOrigin: "https://htlrecruit.broker",
+  });
+  const visibleText = (h: string) => h.replace(/<[^>]*>/g, " ");
+
+  it("posts the consent action with the token — scanners follow GETs, never submit forms", () => {
+    expect(html).toContain('<form method="post" action="https://x.supabase.co/functions/v1/recruit-optin"');
+    expect(html).toContain('<input type="hidden" name="action" value="consent" />');
+    expect(html).toContain('<input type="hidden" name="t" value="0123456789abcdef0123456789abcdef" />');
+    expect(html).toContain("Show me my comparison");
+  });
+
+  it("shows no dollar figure and no percentage", () => {
+    const text = visibleText(html);
+    expect(text).not.toMatch(/\$\s*\d/);
+    expect(text).not.toMatch(/\d\s*%/);
+  });
+
+  it("says plainly what pressing the button records", () => {
+    expect(html).toContain("Pressing the button is you asking to see it");
+  });
+
+  it("escapes a hostile token", () => {
+    const out = renderConsentConfirmHtml({ actionUrl: "https://x", token: '"><script>', appOrigin: "https://x" });
+    expect(out).not.toContain('"><script>');
+  });
+});
+
+describe("the consent notice to the inviting LO", () => {
+  const html = renderConsentNoticeHtml({ recruitEmail: "jane@example.com", recruitName: "Jane", nmls: "123456", linksUrl: "https://htlrecruit.broker/links" });
+
+  it("names the recruit and the NMLS, and links the Links page", () => {
+    expect(html).toContain("Jane (jane@example.com)");
+    expect(html).toContain("NMLS 123456");
+    expect(html).toContain('href="https://htlrecruit.broker/links"');
+    expect(CONSENT_NOTICE_SUBJECT).not.toMatch(/[$%]/);
+  });
+
+  it("carries no figures — the LO sees those in the app", () => {
+    const text = html.replace(/<[^>]*>/g, " ");
+    expect(text).not.toMatch(/\$\s*\d/);
+    expect(text).not.toMatch(/\d\s*%/);
+  });
+
+  it("escapes a hostile name", () => {
+    const out = renderConsentNoticeHtml({ recruitEmail: "j@x.com", recruitName: "<img src=x onerror=1>", nmls: "1", linksUrl: "https://x" });
+    expect(out).not.toContain("<img src=x");
   });
 });

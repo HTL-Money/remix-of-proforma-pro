@@ -15,6 +15,7 @@
 // recipient's browser, neither of which carries a session. The signed token in
 // the URL is the authorisation — see token.ts.
 import { verifyUnsubscribeToken } from "./token.ts";
+import { renderUnsubscribeConfirmHtml, renderUnsubscribeErrorHtml, renderUnsubscribedHtml } from "./page.ts";
 
 // Same local declaration the other functions use — the Deno types aren't
 // available to the repo's tsc invocation, only to the deploy runtime.
@@ -26,21 +27,19 @@ const CORS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
-/** Always the same page, whatever happened. A recipient who clicks unsubscribe
- *  should never be told "invalid token" — that reads as "we're still going to
- *  email you", and it leaks whether an address is on file. */
-const page = (title: string, body: string): Response =>
-  new Response(
-    `<!doctype html><html><head><meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>${title}</title></head>
-<body style="margin:0;background:#13294B;font-family:-apple-system,Segoe UI,Arial,sans-serif;">
-<div style="max-width:520px;margin:12vh auto;padding:32px 28px;background:#fff;border-radius:12px;">
-<h1 style="margin:0 0 12px;font-size:20px;color:#13294B;">${title}</h1>
-<p style="margin:0;color:#4a4a4a;font-size:15px;line-height:1.6;">${body}</p>
-</div></body></html>`,
-    { status: 200, headers: { ...CORS, "Content-Type": "text/html; charset=utf-8" } },
-  );
+const html = (body: string, status = 200): Response =>
+  new Response(body, { status, headers: { ...CORS, "Content-Type": "text/html; charset=utf-8" } });
+
+/** This function's public URL, for the confirmation form's action. Built from
+ *  SUPABASE_URL, not from req.url: inside the edge runtime the request arrives
+ *  rewritten (http scheme, `/functions/v1` stripped), so a form built from
+ *  req.url posted to a URL that does not exist from the outside. */
+const selfUrl = (req: Request): string => {
+  const base = Deno.env.get("SUPABASE_URL");
+  if (base) return `${base.replace(/\/$/, "")}/functions/v1/unsubscribe`;
+  const u = new URL(req.url);
+  return `${u.origin}${u.pathname}`;
+};
 
 const suppress = async (email: string, source: string): Promise<boolean> => {
   const url = Deno.env.get("SUPABASE_URL");
@@ -55,9 +54,11 @@ const suppress = async (email: string, source: string): Promise<boolean> => {
       apikey: key,
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      // Idempotent: a provider may POST once and the human click again. A
-      // repeat opt-out is a success, not a duplicate-key error.
-      Prefer: "resolution=merge-duplicates,return=minimal",
+      // Idempotent: a provider may POST once and the human press the button
+      // too. A repeat opt-out is a success, not a duplicate-key error — and
+      // ignore-duplicates (not merge) keeps the FIRST row, so the record of
+      // HOW someone opted out survives a later click.
+      Prefer: "resolution=ignore-duplicates,return=minimal",
     },
     body: JSON.stringify({ email, source }),
     signal: AbortSignal.timeout(10_000),
@@ -72,33 +73,36 @@ Deno.serve(async (req: Request) => {
   const secret = Deno.env.get("UNSUBSCRIBE_SECRET");
   if (!secret) {
     console.error("unsubscribe: UNSUBSCRIBE_SECRET unset — cannot verify tokens");
-    return page("Something went wrong", "We couldn't process that just now. Email marketing@hometownlend.com and we'll remove you by hand.");
+    return html(renderUnsubscribeErrorHtml(), 503);
   }
 
-  // Token may arrive as ?t= (our footer link) or in a POSTed form body, which is
-  // what RFC 8058 one-click clients send.
   const url = new URL(req.url);
-  let token = url.searchParams.get("t") ?? "";
-  if (!token && req.method === "POST") {
-    try {
-      const raw = await req.text();
-      token = new URLSearchParams(raw).get("t") ?? raw.trim();
-    } catch { /* fall through to the invalid-token path */ }
+  const queryToken = url.searchParams.get("t") ?? "";
+
+  // GET = the footer link = whatever a link scanner fetches. It renders the
+  // confirmation page and writes NOTHING. The page is identical for a valid
+  // and an invalid token, so a GET never reveals whether an address is on file.
+  if (req.method === "GET") {
+    return html(renderUnsubscribeConfirmHtml(selfUrl(req), queryToken));
   }
+  if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: CORS });
+
+  // POST = the confirmation button (form-encoded t=) or an RFC 8058 one-click
+  // client (body "List-Unsubscribe=One-Click", token in the URL).
+  let bodyText = "";
+  try { bodyText = await req.text(); } catch { /* fall through with an empty body */ }
+  const params = new URLSearchParams(bodyText);
+  const token = queryToken || params.get("t") || bodyText.trim();
+  const oneClick = params.get("List-Unsubscribe") === "One-Click";
 
   const email = await verifyUnsubscribeToken(token, secret);
   if (!email) {
     // Deliberately indistinguishable from success to the person reading it.
     console.warn("unsubscribe: invalid or missing token");
-    return page("You're unsubscribed", "You won't receive further pro forma emails from Hometown Lending. If anything still arrives, reply to it and we'll sort it out.");
+    return html(renderUnsubscribedHtml(null));
   }
 
-  const ok = await suppress(email, req.method === "POST" ? "one-click-post" : "one-click-link");
-  console.log(`unsubscribe: ${ok ? "suppressed" : "FAILED"} ${email} via ${req.method}`);
-  return page(
-    "You're unsubscribed",
-    ok
-      ? `<strong>${email}</strong> has been removed. You won't receive further pro forma emails from Hometown Lending.`
-      : "We've recorded your request. If anything still arrives, reply to it and we'll remove you by hand.",
-  );
+  const ok = await suppress(email, oneClick ? "one-click-post" : "confirm-page");
+  console.log(`unsubscribe: ${ok ? "suppressed" : "FAILED"} ${email} via ${oneClick ? "one-click" : "confirm page"}`);
+  return html(renderUnsubscribedHtml(ok ? email : null));
 });

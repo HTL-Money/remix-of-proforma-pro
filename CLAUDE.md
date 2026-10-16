@@ -5,18 +5,36 @@ Vercel, Supabase (Postgres + RLS + Deno edge functions), M365 Graph for email.
 
 ## Verify before you claim
 
-`npx vitest run` · `npx tsc -p tsconfig.app.json --noEmit` · `npx vite build`
-
-`src/pages/Dashboard.tsx` has one pre-existing `ActivityItem` type error. It is
-not yours; leave it and say so rather than reporting a clean typecheck.
+`npx vitest run` · `npx tsc -p tsconfig.app.json --noEmit` · `npx eslint .` ·
+`npx vite build` — all four are what `.github/workflows/ci.yml` runs, and all
+four exit 0 on main. `npm run test:ci` builds first so the bundle-hygiene test
+runs instead of skipping. There is no Deno here; `npx tsc --noEmit
+--allowImportingTsExtensions --module esnext --moduleResolution bundler
+--target es2022 --lib es2022,dom,dom.iterable --skipLibCheck --strict
+supabase/functions/<fn>/index.ts` is the closest check for an edge function.
 
 ## This container's two traps
 
-**The Supabase CLI does not work here** (the egress proxy breaks its transport).
-Use the Management API with `$SUPABASE_ACCESS_TOKEN`: `POST
-/v1/projects/{ref}/database/query` for SQL, `POST
-/v1/projects/{ref}/functions/deploy?slug=X` (multipart) to deploy a function.
-Project ref: `bmdikaxkzlgqxcibmqon`.
+**The Supabase CLI does not work here** (the egress proxy breaks its transport),
+and `$SUPABASE_ACCESS_TOKEN` (Management API) has been expired since at least
+2026-10-16. Use the Supabase MCP tools: `execute_sql` for SQL,
+`deploy_edge_function` (pass every file the entrypoint imports, including
+`../unsubscribe/token.ts`-style cross-function files, and keep each function's
+existing `verify_jwt`: send-recap, recruit-optin, unsubscribe and auth-email are
+`false`). Project ref: `bmdikaxkzlgqxcibmqon`. Two MCP limits found the hard
+way: any statement containing `drop` or `delete` is held for an interactive
+confirmation that never arrives in an unattended run (the call times out at
+60 s and nothing is applied — use `alter policy`, `create … if not exists`,
+or leave the step for the owner), and `storage.objects` policies can only be
+changed by the storage admin role (Dashboard → Storage → Policies).
+
+**Migrations are recorded by hand.** The ledger
+(`supabase_migrations.schema_migrations`) was created on 2026-10-16 and
+backfilled; `apply_migration` would record its own timestamp as the version,
+which never matches the file. So: write the file as `YYYYMMDDHHMMSS_name.sql`,
+apply its statements with `execute_sql`, then `insert into
+supabase_migrations.schema_migrations (version, name)` with the filename's
+version. `list_migrations` must equal the file count.
 
 **Chromium cannot reach supabase.co through the proxy** — calls die with
 `ERR_CONNECTION_RESET`, and a browser test will look like it "just didn't send".
@@ -69,15 +87,27 @@ mid-session once. One-shots should unschedule themselves.
 ## Where the sharp edges are
 
 - **`is_admin()` gates the CRM.** `app_admins` holds the roster; RLS on
-  `target_los`, `proformas` (select/update/delete), `recap_emails`,
-  `proforma_snapshots`, `stage_events` and `retr_reports` (writes) is
-  admin-only. LOs keep the calculator, their own `referral_links`, `retr_reports`
-  reads, and the `lo_sourcing` claim-check. `useAuth().isAdmin` is tri-state
-  (`null` = still resolving) and is chrome only — never the boundary.
+  `target_los`, `stage_events`, `proformas` (update/delete), `recap_emails`
+  (delete), both snapshot tables (select) and `retr_reports` (writes) is
+  admin-only; SELECT on `proformas`, `recap_emails`, `referral_links` and
+  `recruit_optins` is own-row-or-admin. LOs keep the calculator, their own
+  links and invites, `retr_reports` reads, and the `lo_sourcing` claim-check.
+  `useAuth().isAdmin` is tri-state (`null` = still resolving) and is chrome
+  only — never the boundary. `security/rls-audit.md` is the table.
 - **`verify_jwt` is not authorization.** It only proves the caller has the anon
-  key, which ships in the browser bundle. Anything that sends mail with
-  caller-influenced content, or to a non-admin, additionally checks
-  `ADMIN_TASK_KEY`.
+  key, which ships in the browser bundle. `weekly-review` checks
+  `ADMIN_TASK_KEY` on every action but `collect`; `send-recap` and
+  `recruit-optin` resolve the caller through `/auth/v1/user` and gate on that.
+  `ADMIN_TASK_KEY` lives in two places that must match: the function secret
+  and Vault `admin_task_key` (the pg_cron jobs read Vault). Rotate both.
+- **No GET writes.** The consent link and the unsubscribe link render a page
+  with one button; the POST records. Corporate link scanners follow every URL
+  in a delivered email (9 of the first 10 "consents" and a third of the
+  unsubscribes were scanners), so a mutating GET is a bot-driven mutation.
+- **The send gates are pure functions.** `send-recap/sourcing.ts` decides
+  split, claim, opt-in and repeat; `recruit-optin/rules.ts` decides invites
+  and consent expiry. Change the rule there, with its test — not inline in
+  the handler. `edgeGates.test.ts` pins the handler's gate order.
 - **The recap email's ceiling graphic** overlays numbers onto the owner's
   artwork (`public/email/ceiling-template.jpg`). The artwork is never edited at
   runtime; `SLOTS` in `src/lib/ceilingVisual.ts` is the only thing to
@@ -85,6 +115,13 @@ mid-session once. One-shots should unschedule themselves.
   `tools/build-ceiling-template.py` is how placeholders get erased offline.
 - **First sender wins the 90-day HTL5 claim** (`lo_sourcing`), so attribution is
   taken from a verified JWT, never a client-supplied id.
+
+## Open owner steps from the 2026-10-16 audit
+
+`security/owner-steps-2026-10-16.md`: three policy drops, the storage bucket
+write policies, `pg_net` out of `public`, purging the old cron run logs, the
+`ADMIN_TASK_KEY` rotation, a fresh `SUPABASE_ACCESS_TOKEN`, Dependabot, Vercel
+project access, and un-suppressing the owner's own address.
 
 ## Excluding someone from the announcement does not change their password
 
