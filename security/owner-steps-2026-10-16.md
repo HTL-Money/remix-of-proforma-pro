@@ -74,9 +74,9 @@ environment variable.
 
 ## 6. Routines
 
-* **ProFarmA Daily Check-In** (`trig_01RHELr1QWM4BRFd28VWEjms`) still fires
+* ~~**ProFarmA Daily Check-In** (`trig_01RHELr1QWM4BRFd28VWEjms`) still fires
   every day and exits on its own "after 2026-08-24, do nothing" rule. Disable
-  it.
+  it.~~ Done 2026-10-16 (disabled, not deleted, at the owner's word).
 * **ProFarmA Weekly Review** (`trig_01MJfVerj5WaALvQ92vsWvAj`): prompt updated
   in this change to pass the key; needs step 5.
 
