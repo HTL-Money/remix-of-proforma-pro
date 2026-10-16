@@ -8,19 +8,37 @@
 export const REFERRAL_TOKEN_RE = /^[0-9a-f]{16}$/;
 
 const REF_KEY = "htl_ref_token_v1";
+// sessionStorage is per tab: a recruit who comes back later, or whose mail app
+// opened the link in a webview and then handed it to the browser, arrived with
+// no attribution. The token is mirrored to localStorage with a TTL as the
+// fallback — long enough to cover "I'll look at this next week", short enough
+// that a shared machine doesn't credit one LO forever.
+const REF_LOCAL_KEY = "htl_ref_token_v2";
+export const REF_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Validates and stashes a ?ref= value for the session. Bad shapes are
- *  dropped silently — a mangled link still gets a working calculator. */
-export const storeReferralToken = (raw: string | null): void => {
+/** Validates and stashes a ?ref= value for the session (and, with a TTL, for
+ *  later visits). Bad shapes are dropped silently — a mangled link still gets
+ *  a working calculator. */
+export const storeReferralToken = (raw: string | null, nowMs: number = Date.now()): void => {
   if (raw && REFERRAL_TOKEN_RE.test(raw)) {
     try { sessionStorage.setItem(REF_KEY, raw); } catch { /* storage disabled — un-referred visit */ }
+    try { localStorage.setItem(REF_LOCAL_KEY, JSON.stringify({ t: raw, exp: nowMs + REF_TTL_MS })); } catch { /* same */ }
   }
 };
 
-export const getReferralToken = (): string | null => {
+export const getReferralToken = (nowMs: number = Date.now()): string | null => {
   try {
     const t = sessionStorage.getItem(REF_KEY);
-    return t && REFERRAL_TOKEN_RE.test(t) ? t : null;
+    if (t && REFERRAL_TOKEN_RE.test(t)) return t;
+  } catch { /* fall through to the mirror */ }
+  try {
+    const raw = localStorage.getItem(REF_LOCAL_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { t?: unknown; exp?: unknown };
+    if (typeof parsed.t === "string" && REFERRAL_TOKEN_RE.test(parsed.t) && typeof parsed.exp === "number" && parsed.exp > nowMs) {
+      return parsed.t;
+    }
+    return null;
   } catch {
     return null;
   }

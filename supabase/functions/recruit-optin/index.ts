@@ -10,19 +10,29 @@
 //     email; admins may re-invite).
 //
 //   GET ?t=<token>
-//     The recruit's click. No auth — the token is the authorization, like the
-//     unsubscribe link. Records consent (12 months, the owner's choice), mints
-//     a referral link crediting the inviting LO, and 302-redirects to the
-//     calculator with the recruit's NMLS prefilled: from there they email the
-//     recap to themselves, so its footer's "you requested this" is literally
-//     true. An unknown or lapsed token gets a friendly page pointing at the
-//     public calculator — never "invalid token".
+//     The recruit's click. READ-ONLY: it renders a page with one button.
+//     Corporate link scanners (Safe Links, Proofpoint) follow every URL in a
+//     delivered email, and when this GET recorded consent directly, 9 of the
+//     first 10 invites "consented" — three of them between midnight and
+//     4 a.m. from one employer's gateway — and none ever reached the
+//     calculator. An unknown or lapsed token gets a friendly page pointing at
+//     the public calculator — never "invalid token".
 //
-// Deployed verify_jwt=false: the GET carries no session, and the POST verifies
-// its own bearer the same way send-recap does.
+//   POST action=consent&t=<token>   (the button on that page; form-encoded)
+//     Records consent (12 months, the owner's choice), mints a referral link
+//     crediting the inviting LO (once per invite — stored on the row and
+//     reused), counts it as a link use, tells the inviting LO, and
+//     302-redirects to the calculator with the recruit's NMLS and current
+//     comp prefilled: from there they email the recap to themselves, so its
+//     footer's "you requested this" is literally true.
+//
+// Deployed verify_jwt=false: the GET and the form POST carry no session, and
+// the invite POST verifies its own bearer the same way send-recap does.
 import { normalizeEmail, suppressionVerdict } from "../send-recap/suppression.ts";
+import { decideSourcingAction } from "../send-recap/sourcing.ts";
 import { mintUnsubscribeToken } from "../unsubscribe/token.ts";
-import { INVITE_SUBJECT, renderExpiredHtml, renderInviteHtml } from "./copy.ts";
+import { CONSENT_NOTICE_SUBJECT, INVITE_SUBJECT, renderConsentConfirmHtml, renderConsentNoticeHtml, renderExpiredHtml, renderInviteHtml } from "./copy.ts";
+import { consentExpiry, consentRedirectUrl, decideInvite, parseBps, tokenState } from "./rules.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -33,12 +43,18 @@ const CORS = {
 };
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+const html = (body: string, status = 200) =>
+  new Response(body, { status, headers: { ...CORS, "Content-Type": "text/html; charset=utf-8" } });
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TOKEN_RE = /^[0-9a-f]{32}$/;
 
 const APP_ORIGIN = () => Deno.env.get("APP_ORIGIN") || "https://htlrecruit.broker";
+/** This function's public URL, for the consent form's action and the invite
+ *  email's link. From SUPABASE_URL, never req.url: inside the edge runtime the
+ *  request arrives rewritten (http scheme, `/functions/v1` stripped). */
+const SELF_URL = () => `${(Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "")}/functions/v1/recruit-optin`;
 
 // ---- Graph (same client-credentials flow as weekly-review, module-cached) ----
 let graphToken: { token: string; expiresAt: number } | null = null;
@@ -123,6 +139,10 @@ const inviteFlow = async (req: Request, body: Record<string, unknown>): Promise<
   const nmls = String(body.nmls ?? "").replace(/\D/g, "");
   const to = normalizeEmail(String(body.email ?? ""));
   const name = typeof body.name === "string" ? body.name.slice(0, 120) : null;
+  // The recruit's current comp, if the LO knows it. Optional: the invite is
+  // still worth sending without it, but with it the comparison the recruit
+  // lands on has a "today" column and a gain figure instead of "—".
+  const bps = parseBps(body.bps);
   if (!nmls) return json(400, { error: "A recruit NMLS number is required." });
   if (!EMAIL_RE.test(to)) return json(400, { error: "That doesn't look like a valid email address." });
 
@@ -141,30 +161,33 @@ const inviteFlow = async (req: Request, body: Record<string, unknown>): Promise<
   const senderIsAdmin = senderEmail ? await isAdminEmail(senderEmail) : false;
 
   // Another LO's live claim covers invites too — first sender wins the recruit.
-  const claim = await rest(`lo_sourcing?nmls=eq.${encodeURIComponent(nmls)}&select=sourced_by,expires_at`)
+  // Same decision function as send-recap's claim gate, not a second copy of it.
+  const claim = await rest(`lo_sourcing?nmls=eq.${encodeURIComponent(nmls)}&select=nmls,sourced_by,expires_at`)
     .then(r => r.ok ? r.json() : []).catch(() => []);
-  const c = Array.isArray(claim) ? claim[0] : null;
-  if (c && c.sourced_by !== senderId && new Date(String(c.expires_at)).getTime() > Date.now() && !senderIsAdmin) {
-    const holder = (await lookupUserEmail(String(c.sourced_by))) ?? String(c.sourced_by).slice(0, 8);
-    return json(409, { error: "already_claimed", message: `This NMLS is already sourced by ${holder} until ${new Date(String(c.expires_at)).toLocaleDateString("en-US")}.` });
+  const c = Array.isArray(claim) && claim[0] ? claim[0] : null;
+  const claimDecision = decideSourcingAction(c, senderId, Date.now(), { senderIsAdmin });
+  if (claimDecision.kind === "blocked") {
+    const holder = (await lookupUserEmail(claimDecision.claimedBy)) ?? claimDecision.claimedBy.slice(0, 8);
+    return json(409, { error: "already_claimed", message: `This NMLS is already sourced by ${holder} until ${new Date(claimDecision.expiresAt).toLocaleDateString("en-US")}.` });
   }
 
   // One invite per mailbox per 30 days: a re-invite is a second unsolicited
   // email. Admins may re-invite (someone asked on a call to have it resent).
   const prior = await rest(`recruit_optins?recruit_email=eq.${encodeURIComponent(to)}&order=invited_at.desc&limit=1&select=invited_at,consented_at,consent_expires_at`)
     .then(r => r.ok ? r.json() : []).catch(() => []);
-  const p = Array.isArray(prior) ? prior[0] : null;
-  if (p?.consented_at && new Date(String(p.consent_expires_at)).getTime() > Date.now()) {
+  const p = Array.isArray(prior) && prior[0] ? prior[0] : null;
+  const decision = decideInvite(p, Date.now(), { senderIsAdmin });
+  if (decision.kind === "already_consented") {
     return json(200, { ok: true, alreadyConsented: true, message: "This recruit already opted in — you can send the pro forma directly." });
   }
-  if (p && !senderIsAdmin && Date.now() - new Date(String(p.invited_at)).getTime() < 30 * 86_400_000) {
-    return json(409, { error: "already_invited", message: `An invite already went to this recruit on ${new Date(String(p.invited_at)).toLocaleDateString("en-US")}. Re-invites inside 30 days need an admin.` });
+  if (decision.kind === "already_invited") {
+    return json(409, { error: "already_invited", message: `An invite already went to this recruit on ${new Date(decision.invitedAt).toLocaleDateString("en-US")}. Re-invites inside 30 days need an admin.` });
   }
 
   const ins = await rest(`recruit_optins`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ nmls, recruit_email: to, invited_by: senderId }),
+    body: JSON.stringify({ nmls, recruit_email: to, invited_by: senderId, current_bps: bps }),
   });
   if (!ins.ok) return json(500, { error: "Couldn't record the invite." });
   const token = String((await ins.json())[0]?.token ?? "");
@@ -176,67 +199,163 @@ const inviteFlow = async (req: Request, body: Record<string, unknown>): Promise<
     ? `${base}/functions/v1/unsubscribe?t=${encodeURIComponent(await mintUnsubscribeToken(to, secret))}`
     : `mailto:marketing@hometownlend.com?subject=Unsubscribe`;
 
-  await graphSend(to, senderEmail, INVITE_SUBJECT, renderInviteHtml({
-    recruitName: name,
-    loName: senderEmail?.split("@")[0] ?? "the recruiting team",
-    loEmail: senderEmail ?? "aryanj@hometownlend.com",
-    consentUrl: `${base}/functions/v1/recruit-optin?t=${token}`,
-    unsubscribeUrl,
-  }));
+  try {
+    await graphSend(to, senderEmail, INVITE_SUBJECT, renderInviteHtml({
+      recruitName: name,
+      loName: senderEmail?.split("@")[0] ?? "the recruiting team",
+      loEmail: senderEmail ?? "aryanj@hometownlend.com",
+      consentUrl: `${SELF_URL()}?t=${token}`,
+      unsubscribeUrl,
+    }));
+  } catch (e) {
+    // The row went in before the send so the token existed to put in the
+    // email. If the email never left, the row must not stay: it would hold
+    // the recruit behind the 30-day re-invite rule for an invite they never got.
+    console.error("invite email failed — removing the invite row", e);
+    await rest(`recruit_optins?token=eq.${token}`, { method: "DELETE", headers: { Prefer: "return=minimal" } })
+      .catch(err => console.error("invite row cleanup failed", err));
+    return json(502, { error: "The invite email couldn't be sent, so nothing was recorded. Try again in a moment." });
+  }
   console.log(`optin invite sent: nmls=${nmls} by ${senderEmail ?? senderId}`);
   return json(200, { ok: true, invited: to });
 };
 
-const consentFlow = async (token: string): Promise<Response> => {
-  const expired = () => new Response(renderExpiredHtml(APP_ORIGIN()), { status: 200, headers: { ...CORS, "Content-Type": "text/html; charset=utf-8" } });
-  if (!TOKEN_RE.test(token)) return expired();
-  const rows = await rest(`recruit_optins?token=eq.${token}&select=nmls,recruit_email,invited_by,consented_at,consent_expires_at`)
+interface InviteRow {
+  nmls: string; recruit_email: string; invited_by: string;
+  consented_at: string | null; consent_expires_at: string | null;
+  current_bps: number | null; referral_token: string | null;
+}
+
+const loadInvite = async (token: string): Promise<InviteRow | null> => {
+  if (!TOKEN_RE.test(token)) return null;
+  const rows = await rest(`recruit_optins?token=eq.${token}&select=nmls,recruit_email,invited_by,consented_at,consent_expires_at,current_bps,referral_token`)
     .then(r => r.ok ? r.json() : []).catch(() => []);
-  const row = Array.isArray(rows) ? rows[0] : null;
-  if (!row) return expired();
-  // Consented long ago and lapsed → the link no longer proves fresh consent.
-  if (row.consented_at && new Date(String(row.consent_expires_at)).getTime() <= Date.now()) return expired();
+  return Array.isArray(rows) && rows[0] ? rows[0] as InviteRow : null;
+};
 
-  if (!row.consented_at) {
-    const now = new Date();
-    const expiresAt = new Date(now.getTime()); expiresAt.setMonth(expiresAt.getMonth() + 12);
-    await rest(`recruit_optins?token=eq.${token}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({ consented_at: now.toISOString(), consent_expires_at: expiresAt.toISOString(), consented_via: "link_click" }),
-    });
-    console.log(`optin consent recorded: nmls=${row.nmls} email=${row.recruit_email}`);
-  }
+const expiredPage = () => html(renderExpiredHtml(APP_ORIGIN()));
 
-  // Attribution rides the existing referral machinery: the redirect carries a
-  // referral token created for the INVITING LO, so the recap the recruit sends
-  // themselves credits whoever did the outreach — same as a shared PURL.
-  let ref = "";
+/** GET: the page behind the emailed link. Writes nothing — see the header. */
+const consentPage = async (token: string): Promise<Response> => {
+  const row = await loadInvite(token);
+  const state = tokenState(row, Date.now());
+  if (state === "unknown" || state === "lapsed") return expiredPage();
+  return html(renderConsentConfirmHtml({ actionUrl: SELF_URL(), token, appOrigin: APP_ORIGIN() }));
+};
+
+/** Mint the referral link ONCE per invite and remember it on the row, so a
+ *  second press of the button (or a second visit) reuses it. Returns the
+ *  token, or null when minting failed (the redirect then proceeds unattributed). */
+const referralTokenFor = async (token: string, row: InviteRow): Promise<string | null> => {
+  if (row.referral_token) return row.referral_token;
   try {
     const link = await rest(`referral_links`, {
       method: "POST",
       headers: { Prefer: "return=representation" },
       body: JSON.stringify({ created_by: row.invited_by, recruit_email: row.recruit_email }),
     });
-    if (link.ok) ref = String((await link.json())[0]?.token ?? "");
+    if (!link.ok) return null;
+    const ref = String((await link.json())[0]?.token ?? "");
+    if (!ref) return null;
+    await rest(`recruit_optins?token=eq.${token}`, {
+      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ referral_token: ref }),
+    }).catch(e => console.error("referral token not stored on the invite (non-fatal)", e));
+    return ref;
   } catch (e) {
     console.error("referral link mint failed (redirect proceeds unattributed)", e);
+    return null;
+  }
+};
+
+/** A confirmed consent IS a use of the link: the recruit arrived through it.
+ *  Until this, use_count only moved on an anonymous self-serve send, so every
+ *  link on /links read 0 and weekly-review flagged them all stale. */
+const bumpReferralUse = async (ref: string): Promise<void> => {
+  try {
+    const r = await rest(`referral_links?token=eq.${encodeURIComponent(ref)}&select=use_count`);
+    const rows = r.ok ? await r.json() : null;
+    const current = Array.isArray(rows) && rows[0] ? Number(rows[0].use_count) || 0 : 0;
+    await rest(`referral_links?token=eq.${encodeURIComponent(ref)}`, {
+      method: "PATCH", headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ use_count: current + 1, last_used_at: new Date().toISOString() }),
+    });
+  } catch (e) {
+    console.error("referral use bump failed (non-fatal)", e);
+  }
+};
+
+/** Tell the inviting LO. Best-effort: a Graph hiccup must never cost the
+ *  recruit their redirect. No figures in the notice — the LO has the app. */
+const notifyInviter = async (row: InviteRow): Promise<void> => {
+  try {
+    const loEmail = await lookupUserEmail(row.invited_by);
+    if (!loEmail) return;
+    await graphSend(loEmail, null, CONSENT_NOTICE_SUBJECT, renderConsentNoticeHtml({
+      recruitEmail: row.recruit_email, nmls: row.nmls, linksUrl: `${APP_ORIGIN()}/links`,
+    }));
+  } catch (e) {
+    console.error("consent notice to the inviting LO failed (non-fatal)", e);
+  }
+};
+
+/** POST action=consent: the only path that records anything. */
+const consentFlow = async (token: string): Promise<Response> => {
+  const row = await loadInvite(token);
+  const state = tokenState(row, Date.now());
+  if (!row || state === "unknown" || state === "lapsed") return expiredPage();
+
+  if (state === "fresh") {
+    const now = Date.now();
+    const patch = await rest(`recruit_optins?token=eq.${token}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ consented_at: new Date(now).toISOString(), consent_expires_at: consentExpiry(now), consented_via: "confirm_post" }),
+    });
+    if (!patch.ok) {
+      console.error("consent PATCH failed", patch.status, await patch.text().catch(() => ""));
+      return html(renderExpiredHtml(APP_ORIGIN()), 503);
+    }
+    console.log(`optin consent recorded: nmls=${row.nmls} email=${row.recruit_email}`);
+    await notifyInviter(row);
   }
 
-  const dest = `${APP_ORIGIN()}/?${ref ? `ref=${ref}&` : ""}nmls=${encodeURIComponent(String(row.nmls))}`;
+  // Attribution rides the existing referral machinery: the redirect carries a
+  // referral token created for the INVITING LO, so the recap the recruit sends
+  // themselves credits whoever did the outreach — same as a shared PURL.
+  const ref = await referralTokenFor(token, row);
+  if (ref && state === "fresh") await bumpReferralUse(ref);
+
+  const dest = consentRedirectUrl(APP_ORIGIN(), String(row.nmls), ref, row.current_bps);
   return new Response(null, { status: 302, headers: { ...CORS, Location: dest } });
+};
+
+/** The consent button posts a form; the app posts JSON. Both become one map. */
+const readBody = async (req: Request): Promise<Record<string, unknown> | null> => {
+  const ct = (req.headers.get("content-type") ?? "").toLowerCase();
+  try {
+    if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
+      const form = await req.formData();
+      const out: Record<string, unknown> = {};
+      form.forEach((v, k) => { out[k] = typeof v === "string" ? v : String(v); });
+      return out;
+    }
+    return await req.json();
+  } catch {
+    return null;
+  }
 };
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     if (req.method === "GET") {
-      return await consentFlow(new URL(req.url).searchParams.get("t") ?? "");
+      return await consentPage(new URL(req.url).searchParams.get("t") ?? "");
     }
     if (req.method === "POST") {
-      let body: Record<string, unknown>;
-      try { body = await req.json(); } catch { return json(400, { error: "Invalid JSON." }); }
+      const body = await readBody(req);
+      if (!body) return json(400, { error: "Invalid request body." });
       if (body.action === "invite") return await inviteFlow(req, body);
+      if (body.action === "consent") return await consentFlow(String(body.t ?? ""));
       return json(400, { error: "Unknown action." });
     }
     return json(405, { error: "Method not allowed" });

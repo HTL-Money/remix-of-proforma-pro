@@ -5,6 +5,9 @@
 // The actual database reads/writes and the alert email live in index.ts;
 // this file only decides WHAT should happen given the current state.
 
+import { normalizeEmail } from "./suppression.ts";
+import { tierForAnnualVolume } from "./splitTiers.ts";
+
 export interface SourcingRow {
   nmls: string;
   sourced_by: string;
@@ -79,3 +82,62 @@ export const expiryTimestamp = (nowMs: number, expiryDays: number): string =>
  *  server-side before the token ever reaches a PostgREST filter. Lives here
  *  (not index.ts) so vitest can reach it. */
 export const REFERRAL_TOKEN_RE = /^[0-9a-f]{16}$/;
+
+// ---- Canonical identifiers --------------------------------------------------
+
+/** NMLS numbers arrive from a client-built payload. The claim, repeat and
+ *  sourcing gates all key on the string, so "0207433", "207-433" and
+ *  "207433 " must collapse to one recruit — otherwise the same person could be
+ *  sent to three times while the email showed "their" number each time. */
+export const normalizeNmls = (raw: unknown): string => String(raw ?? "").replace(/\D/g, "");
+
+/** The longest NMLS ID the registry issues is well under this; anything longer
+ *  is a crafted payload. */
+export const NMLS_MAX_DIGITS = 12;
+
+/** Internal addresses are previews and tests: they never consume consent, a
+ *  claim, or the one-per-NMLS rule. One definition, used by every gate and by
+ *  the PostgREST filter in the repeat lookup. */
+export const INTERNAL_DOMAIN = "@hometownlend.com";
+export const isInternalRecipient = (email: string): boolean => normalizeEmail(email).endsWith(INTERNAL_DOMAIN);
+
+// ---- Opt-in gate -----------------------------------------------------------
+
+/** The owner's consent rule for LO-initiated sends: no live recruit_optins row,
+ *  no send — unless a VERIFIED admin is the sender. Pure so the admin override
+ *  and the consent requirement are tested rather than trusted. */
+export const decideOptinSend = (
+  hasLiveConsent: boolean,
+  opts: { senderIsAdmin?: boolean } = {},
+): { kind: "allow" } | { kind: "blocked_no_optin" } =>
+  hasLiveConsent || opts.senderIsAdmin ? { kind: "allow" } : { kind: "blocked_no_optin" };
+
+// ---- Split gate ------------------------------------------------------------
+
+/** Same annualization as calculate(): a 6-month $15M pull is a $30M/yr pace. */
+export const annualizedVolume = (volume: number | null | undefined, periodMonths: number | null | undefined): number => {
+  const months = typeof periodMonths === "number" && periodMonths > 0 ? periodMonths : 12;
+  return (volume ?? 0) * (12 / months);
+};
+
+export type SplitDecision =
+  | { kind: "allow"; derived: number }
+  /** A verified admin granted a better split than the volume earns; recorded
+   *  on the pro forma row as the override audit. */
+  | { kind: "override"; derived: number }
+  | { kind: "blocked_split"; derived: number };
+
+/** The payload's loSplit is attacker-chosen (the anon key ships in the
+ *  bundle), so the band the volume actually earns is recomputed here and a
+ *  better claimed split is refused from anyone but a verified admin. A worse
+ *  split is always allowed — quoting below band harms nobody. */
+export const decideSplit = (
+  loSplit: number,
+  volume: number | null | undefined,
+  periodMonths: number | null | undefined,
+  opts: { senderIsAdmin?: boolean } = {},
+): SplitDecision => {
+  const derived = tierForAnnualVolume(annualizedVolume(volume, periodMonths)).loPct;
+  if (loSplit <= derived) return { kind: "allow", derived };
+  return opts.senderIsAdmin ? { kind: "override", derived } : { kind: "blocked_split", derived };
+};

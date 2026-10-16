@@ -21,11 +21,13 @@
 // rate-limits per recipient below, so it can't be used as an open relay.
 
 import { renderRecapHtml, RecapPayload, CHART_CID, GIF_CID } from "./template.ts";
-import { decideRepeatSend, decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE, SourcingRow } from "./sourcing.ts";
+import {
+  decideOptinSend, decideRepeatSend, decideSourcingAction, decideSplit, expiryTimestamp,
+  INTERNAL_DOMAIN, isInternalRecipient, NMLS_MAX_DIGITS, normalizeNmls, REFERRAL_TOKEN_RE, SourcingRow,
+} from "./sourcing.ts";
 import { normalizeEmail, suppressionVerdict } from "./suppression.ts";
 import { SYSTEM_PROMPT, buildNarrativePrompt, validateNarrative } from "./narrativePrompt.ts";
 import { mintUnsubscribeToken } from "../unsubscribe/token.ts";
-import { tierForAnnualVolume } from "./splitTiers.ts";
 
 declare const Deno: { env: { get(k: string): string | undefined }; serve(h: (req: Request) => Promise<Response> | Response): void };
 
@@ -154,7 +156,7 @@ const checkSuppression = async (supabaseUrl: string, serviceKey: string, to: str
   try {
     const resp = await fetch(
       `${supabaseUrl}/rest/v1/email_suppressions?select=email&email=eq.${encodeURIComponent(normalizeEmail(to))}`,
-      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }, signal: AbortSignal.timeout(10_000) },
     );
     return suppressionVerdict({ ok: resp.ok, rows: resp.ok ? await resp.json() : null });
   } catch (e) {
@@ -163,13 +165,16 @@ const checkSuppression = async (supabaseUrl: string, serviceKey: string, to: str
   }
 };
 
-/** True if `to` is still under the send cap. Fails open on error — a rate-limit outage must never block a legitimate send. */
+/** True if `to` is still under the send cap. Fails open on error — a rate-limit outage must never block a legitimate send.
+ *  Keyed on the NORMALIZED address: audit rows are written normalized too (see
+ *  the inserts below), so `Bob@x.com` and `bob@x.com` share one bucket instead
+ *  of each getting the full cap. */
 const withinRateLimit = async (supabaseUrl: string, serviceKey: string, to: string): Promise<boolean> => {
   try {
     const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
     const resp = await fetch(
-      `${supabaseUrl}/rest/v1/recap_emails?select=id&sent_to=eq.${encodeURIComponent(to)}&created_at=gte.${encodeURIComponent(since)}`,
-      { method: "HEAD", headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Prefer: "count=exact" } },
+      `${supabaseUrl}/rest/v1/recap_emails?select=id&sent_to=eq.${encodeURIComponent(normalizeEmail(to))}&created_at=gte.${encodeURIComponent(since)}`,
+      { method: "HEAD", headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Prefer: "count=exact" }, signal: AbortSignal.timeout(10_000) },
     );
     const range = resp.headers.get("content-range"); // "0-4/12" or "*/0"
     const count = range ? Number(range.split("/")[1]) : NaN;
@@ -177,6 +182,25 @@ const withinRateLimit = async (supabaseUrl: string, serviceKey: string, to: stri
   } catch (e) {
     console.error("rate limit check failed (fail-open)", e);
     return true;
+  }
+};
+
+/** How many negative-gain alerts fired in the last hour (recap_emails rows
+ *  with status=negative_gain). The alert is internal, so a lookup error counts
+ *  as zero rather than silencing it. */
+const NEGATIVE_GAIN_ALERT_CAP = 10;
+const negativeGainAlertsLastHour = async (supabaseUrl: string, serviceKey: string): Promise<number> => {
+  try {
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const resp = await fetch(
+      `${supabaseUrl}/rest/v1/recap_emails?select=id&status=eq.negative_gain&created_at=gte.${encodeURIComponent(since)}`,
+      { method: "HEAD", headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, Prefer: "count=exact" }, signal: AbortSignal.timeout(10_000) },
+    );
+    const range = resp.headers.get("content-range");
+    const count = range ? Number(range.split("/")[1]) : NaN;
+    return Number.isFinite(count) ? count : 0;
+  } catch {
+    return 0;
   }
 };
 
@@ -730,7 +754,7 @@ const resolveSenderIsAdmin = async (url: string, key: string, senderId: string):
 const lastExternalSendFor = async (url: string, key: string, nmls: string): Promise<string | null> => {
   const resp = await fetch(
     `${url}/rest/v1/recap_emails?select=created_at&payload->>nmls=eq.${encodeURIComponent(nmls)}` +
-      `&status=eq.sent&sent_to=not.ilike.${encodeURIComponent("*@hometownlend.com")}` +
+      `&status=eq.sent&sent_to=not.ilike.${encodeURIComponent(`*${INTERNAL_DOMAIN}`)}` +
       `&order=created_at.desc&limit=1`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) },
   );
@@ -816,6 +840,21 @@ Deno.serve(async (req: Request) => {
     ) {
       return json(400, { error: "Invalid recap payload." });
     }
+    // The free-text fields reach the subject line and the internal alert. The
+    // client never sends more than a name; longer is a crafted payload.
+    if (recap.savedName.length > 200 || (recap.loName != null && (typeof recap.loName !== "string" || recap.loName.length > 200))) {
+      return json(400, { error: "Invalid recap payload." });
+    }
+    // NMLS is canonicalized ONCE here (digits only) and written back, so the
+    // claim, repeat and sourcing gates — and the audit row — all key on the
+    // same string. "0207433", "207-433" and "207433 " used to be three
+    // different recruits to the gates while the email showed "their" number.
+    if (recap.nmls != null) {
+      if (typeof recap.nmls !== "string") return json(400, { error: "Invalid recap payload." });
+      const digits = normalizeNmls(recap.nmls);
+      if (recap.nmls.trim() && (!digits || digits.length > NMLS_MAX_DIGITS)) return json(400, { error: "Invalid NMLS number." });
+      recap.nmls = digits;
+    }
     // Binary artifacts ride beside recap, never inside it — the only
     // legitimate producer is our client, so anything malformed is a hard 400
     // (matching the posture on `to`/`recap`), not a silently degraded email.
@@ -894,7 +933,8 @@ Deno.serve(async (req: Request) => {
             "Content-Type": "application/json",
             Prefer: "return=minimal",
           },
-          body: JSON.stringify({ sent_to: to, sent_by: senderId, status: "suppressed", payload: null }),
+          body: JSON.stringify({ sent_to: normalizeEmail(to), sent_by: senderId, status: "suppressed", payload: null }),
+          signal: AbortSignal.timeout(10_000),
         });
       } catch (e) {
         console.error("suppressed-send audit log failed (non-fatal)", e);
@@ -905,33 +945,6 @@ Deno.serve(async (req: Request) => {
 
   if (supabaseUrl && serviceKey && !(await withinRateLimit(supabaseUrl, serviceKey, to))) {
     return json(429, { error: "Too many recap emails sent to this address recently. Try again in a bit." });
-  }
-
-  // Zero/negative-gain guard — SERVER-side and recomputed from the raw
-  // figures (never trusting the client's recap.gain), so no client can
-  // accidentally send a "your ceiling just moved" email over a number that
-  // moved down. No BPS entered (current.annual == null) means there is no
-  // comparison to lose — those send normally.
-  const gainAnnual = recap.current.annual != null ? recap.htl.annual - recap.current.annual : null;
-  if (gainAnnual != null && gainAnnual <= 0) {
-    await sendNegativeGainAlert(recap, to, gainAnnual);
-    if (supabaseUrl && serviceKey) {
-      try {
-        await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
-          method: "POST",
-          headers: {
-            apikey: serviceKey,
-            Authorization: `Bearer ${serviceKey}`,
-            "Content-Type": "application/json",
-            Prefer: "return=minimal",
-          },
-          body: JSON.stringify({ sent_to: to, sent_by: senderId, status: "negative_gain", payload: null }),
-        });
-      } catch (e) {
-        console.error("negative-gain audit log failed (non-fatal)", e);
-      }
-    }
-    return json(200, { ok: true, suppressed: "negative_gain" });
   }
 
   // Split gate. The UI only shows the 80/85/90 override to admins, but UI
@@ -947,23 +960,22 @@ Deno.serve(async (req: Request) => {
   // the claimed split, so no honest email exists to salvage here.
   let splitOverrideBy: string | null = null;
   {
-    // Same annualization as calculate(): a 6-month $15M pull is a $30M/yr pace.
-    const months = typeof recap.periodMonths === "number" && recap.periodMonths > 0 ? recap.periodMonths : 12;
-    const derived = tierForAnnualVolume((recap.volume ?? 0) * (12 / months)).loPct;
-    if (recap.loSplit > derived) {
-      const senderIsAdmin = senderId && supabaseUrl && serviceKey
-        ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
-        : false;
-      if (!senderIsAdmin) {
-        console.warn(`split gate: refused ${recap.loSplit}% on volume earning ${derived}% (sender ${senderId ?? "anonymous"})`);
-        return json(403, {
-          error: "split_not_earned",
-          message: `A ${recap.loSplit}/${100 - recap.loSplit} split needs an admin — this volume qualifies for ${derived}/${100 - derived} under the published tiers.`,
-          derivedSplit: derived,
-        });
-      }
+    const first = decideSplit(recap.loSplit, recap.volume, recap.periodMonths);
+    const senderIsAdmin = first.kind === "blocked_split" && senderId && supabaseUrl && serviceKey
+      ? await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId)
+      : false; // only worth the round-trip when the claimed split beats the band
+    const split = decideSplit(recap.loSplit, recap.volume, recap.periodMonths, { senderIsAdmin });
+    if (split.kind === "blocked_split") {
+      console.warn(`split gate: refused ${recap.loSplit}% on volume earning ${split.derived}% (sender ${senderId ?? "anonymous"})`);
+      return json(403, {
+        error: "split_not_earned",
+        message: `A ${recap.loSplit}/${100 - recap.loSplit} split needs an admin — this volume qualifies for ${split.derived}/${100 - split.derived} under the published tiers.`,
+        derivedSplit: split.derived,
+      });
+    }
+    if (split.kind === "override") {
       splitOverrideBy = senderId;
-      console.log(`split gate: admin ${senderId} overrode ${derived}% -> ${recap.loSplit}%`);
+      console.log(`split gate: admin ${senderId} overrode ${split.derived}% -> ${recap.loSplit}%`);
     }
   }
 
@@ -1011,7 +1023,7 @@ Deno.serve(async (req: Request) => {
   // requesting it themselves, which is the consent this gate exists to collect.
   // Admin override, same shape as every other gate; fail OPEN on infrastructure
   // errors, fail CLOSED on the admin lookup.
-  if (senderId && supabaseUrl && serviceKey && !normalizeEmail(to).endsWith("@hometownlend.com")) {
+  if (senderId && supabaseUrl && serviceKey && !isInternalRecipient(to)) {
     try {
       const resp = await fetch(
         `${supabaseUrl}/rest/v1/recruit_optins?recruit_email=eq.${encodeURIComponent(normalizeEmail(to))}` +
@@ -1021,15 +1033,14 @@ Deno.serve(async (req: Request) => {
       );
       if (!resp.ok) throw new Error(`optin lookup ${resp.status}`);
       const consent = await resp.json();
-      if (!Array.isArray(consent) || consent.length === 0) {
-        const senderIsAdmin = await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId);
-        if (!senderIsAdmin) {
-          console.log(`optin gate: refused send to ${normalizeEmail(to)} — no live consent (sender ${senderId})`);
-          return json(403, {
-            error: "no_optin",
-            message: "This recruit hasn't opted in yet. Send them an invite from the Links page — the pro forma unlocks the moment they click it.",
-          });
-        }
+      const hasLiveConsent = Array.isArray(consent) && consent.length > 0;
+      const senderIsAdmin = hasLiveConsent ? false : await resolveSenderIsAdmin(supabaseUrl, serviceKey, senderId);
+      if (decideOptinSend(hasLiveConsent, { senderIsAdmin }).kind === "blocked_no_optin") {
+        console.log(`optin gate: refused send to ${normalizeEmail(to)} — no live consent (sender ${senderId})`);
+        return json(403, {
+          error: "no_optin",
+          message: "This recruit hasn't opted in yet. Send them an invite from the Links page — the pro forma unlocks the moment they click it.",
+        });
       }
     } catch (e) {
       console.error("optin gate check failed (send allowed)", e);
@@ -1064,6 +1075,41 @@ Deno.serve(async (req: Request) => {
     } catch (e) {
       console.error("repeat gate check failed (send allowed)", e);
     }
+  }
+
+  // Zero/negative-gain guard — SERVER-side and recomputed from the raw
+  // figures (never trusting the client's recap.gain), so no client can
+  // accidentally send a "your ceiling just moved" email over a number that
+  // moved down. No BPS entered (current.annual == null) means there is no
+  // comparison to lose — those send normally.
+  //
+  // Sits AFTER the split/claim/opt-in/repeat gates on purpose: it fires an
+  // internal email, and when it ran first an anonymous caller could trigger
+  // one per request just by varying `to`. Now only a send that every gate
+  // would have allowed can raise it, and it is capped per hour besides.
+  const gainAnnual = recap.current.annual != null ? recap.htl.annual - recap.current.annual : null;
+  if (gainAnnual != null && gainAnnual <= 0) {
+    const recentAlerts = supabaseUrl && serviceKey ? await negativeGainAlertsLastHour(supabaseUrl, serviceKey) : 0;
+    if (recentAlerts < NEGATIVE_GAIN_ALERT_CAP) await sendNegativeGainAlert(recap, to, gainAnnual);
+    else console.warn(`negative-gain alert skipped: ${recentAlerts} in the last hour (cap ${NEGATIVE_GAIN_ALERT_CAP})`);
+    if (supabaseUrl && serviceKey) {
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/recap_emails`, {
+          method: "POST",
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ sent_to: normalizeEmail(to), sent_by: senderId, status: "negative_gain", payload: null }),
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (e) {
+        console.error("negative-gain audit log failed (non-fatal)", e);
+      }
+    }
+    return json(200, { ok: true, suppressed: "negative_gain" });
   }
 
   const subject = `Your Pro Forma Recap${recap.loName ? ` — ${recap.loName}` : ""} | Hometown Lending`;
@@ -1172,10 +1218,11 @@ Deno.serve(async (req: Request) => {
         // would make Postgres reject the row, silently skipping the audit trail.
         body: JSON.stringify({
           proforma_id: UUID_RE.test(recap.proformaId ?? "") ? recap.proformaId : null,
-          sent_to: to,
+          sent_to: normalizeEmail(to),
           sent_by: senderId,
           payload: { ...recap, chartPng: undefined, gif: undefined, docx: undefined, chart, gifMeta, docxMeta },
         }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!logResp.ok) console.error("recap_emails log failed", logResp.status, await logResp.text().catch(() => ""));
     }

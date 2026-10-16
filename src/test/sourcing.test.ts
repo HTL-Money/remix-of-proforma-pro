@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { decideRepeatSend, decideSourcingAction, expiryTimestamp, REFERRAL_TOKEN_RE } from "../../supabase/functions/send-recap/sourcing";
+import {
+  annualizedVolume, decideOptinSend, decideRepeatSend, decideSourcingAction, decideSplit, expiryTimestamp,
+  INTERNAL_DOMAIN, isInternalRecipient, NMLS_MAX_DIGITS, normalizeNmls, REFERRAL_TOKEN_RE,
+} from "../../supabase/functions/send-recap/sourcing";
+import { tierForAnnualVolume } from "../../supabase/functions/send-recap/splitTiers";
 import { REFERRAL_TOKEN_RE as CLIENT_RE, buildReferralUrl, CANONICAL_ORIGIN } from "@/lib/referral";
 
 const SENDER_A = "11111111-1111-1111-1111-111111111111";
@@ -166,5 +170,79 @@ describe("decideRepeatSend — one pro forma per NMLS, strict by owner's decisio
 
   it("lets an admin through — the override shape every gate shares", () => {
     expect(decideRepeatSend("2026-08-21T15:16:00Z", { senderIsAdmin: true })).toEqual({ kind: "allow" });
+  });
+});
+
+describe("normalizeNmls — one recruit, one string", () => {
+  it("collapses padding, dashes and letters to digits", () => {
+    expect(normalizeNmls("0207433")).toBe("0207433");
+    expect(normalizeNmls(" 207-433 ")).toBe("207433");
+    expect(normalizeNmls("207433x")).toBe("207433");
+    expect(normalizeNmls("NMLS #207433")).toBe("207433");
+  });
+  it("is empty for nothing at all", () => {
+    expect(normalizeNmls(undefined)).toBe("");
+    expect(normalizeNmls(null)).toBe("");
+    expect(normalizeNmls("abc")).toBe("");
+  });
+  it("has a sane ceiling the validator can apply", () => {
+    expect(NMLS_MAX_DIGITS).toBe(12);
+  });
+});
+
+describe("isInternalRecipient — previews and tests never consume a gate", () => {
+  it("matches the company domain case-insensitively", () => {
+    expect(INTERNAL_DOMAIN).toBe("@hometownlend.com");
+    expect(isInternalRecipient("Admin@HomeTownLend.com")).toBe(true);
+    expect(isInternalRecipient(" jamesm@hometownlend.com ")).toBe(true);
+  });
+  it("does not match look-alikes", () => {
+    expect(isInternalRecipient("x@hometownlend.com.evil.com")).toBe(false);
+    expect(isInternalRecipient("x@nothometownlend.com")).toBe(false);
+    expect(isInternalRecipient("hometownlend.com@gmail.com")).toBe(false);
+  });
+});
+
+describe("decideOptinSend — the owner's consent rule", () => {
+  it("allows with a live consent", () => {
+    expect(decideOptinSend(true)).toEqual({ kind: "allow" });
+  });
+  it("blocks without one", () => {
+    expect(decideOptinSend(false)).toEqual({ kind: "blocked_no_optin" });
+    expect(decideOptinSend(false, { senderIsAdmin: false })).toEqual({ kind: "blocked_no_optin" });
+  });
+  it("lets a verified admin through without consent (the only override)", () => {
+    expect(decideOptinSend(false, { senderIsAdmin: true })).toEqual({ kind: "allow" });
+  });
+});
+
+describe("decideSplit — the claimed split must be earned, or granted by an admin", () => {
+  const volume = 30_000_000;
+  const derived = tierForAnnualVolume(volume).loPct;
+
+  it("annualizes a partial-year pull the way calculate() does", () => {
+    expect(annualizedVolume(15_000_000, 6)).toBe(30_000_000);
+    expect(annualizedVolume(15_000_000, 12)).toBe(15_000_000);
+    expect(annualizedVolume(15_000_000, undefined)).toBe(15_000_000);
+    expect(annualizedVolume(null, 6)).toBe(0);
+  });
+
+  it("allows the earned band and anything below it", () => {
+    expect(decideSplit(derived, volume, 12)).toEqual({ kind: "allow", derived });
+    expect(decideSplit(derived - 5, volume, 12)).toEqual({ kind: "allow", derived });
+  });
+
+  it("blocks a better split from a non-admin, naming the band the volume earns", () => {
+    expect(decideSplit(derived + 5, volume, 12)).toEqual({ kind: "blocked_split", derived });
+    expect(decideSplit(derived + 5, volume, 12, { senderIsAdmin: false })).toEqual({ kind: "blocked_split", derived });
+  });
+
+  it("records an override when a verified admin grants it", () => {
+    expect(decideSplit(derived + 5, volume, 12, { senderIsAdmin: true })).toEqual({ kind: "override", derived });
+  });
+
+  it("judges a 6-month pull on its annualized pace", () => {
+    const half = decideSplit(derived, 15_000_000, 6);
+    expect(half.derived).toBe(derived);
   });
 });

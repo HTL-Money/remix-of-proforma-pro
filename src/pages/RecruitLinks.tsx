@@ -132,7 +132,6 @@ const RecruitLinks = () => {
   useEffect(() => {
     if (!configured) { setLoading(false); return; }
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configured]);
 
   const create = async () => {
@@ -239,7 +238,9 @@ const RecruitLinks = () => {
       if (isAdmin !== true) {
         const sb = requireSupabase();
         const { data, error } = await sb.functions.invoke("recruit-optin", {
-          body: { action: "invite", nmls, email: to, name: sendName.trim() || undefined },
+          // Their current comp rides along so the comparison they land on has a
+          // "today" column; the server stores it and passes it on the redirect.
+          body: { action: "invite", nmls, email: to, name: sendName.trim() || undefined, bps: sendBps.trim() || undefined },
         });
         if (error) {
           const ctx = (error as { context?: Response }).context;
